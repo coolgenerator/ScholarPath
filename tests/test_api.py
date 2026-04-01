@@ -6,6 +6,7 @@ Uses an in-memory SQLite database and mocked embedding service.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import pytest
 import pytest_asyncio
@@ -478,7 +479,111 @@ class TestReportAPI:
 
 
 # =========================================================================
-# 7. Health Check / App Startup
+# 7. Usage API
+# =========================================================================
+
+class TestUsageAPI:
+    async def test_usage_summary_days_filter(self, client, session):
+        from scholarpath.db.models.token_usage import TokenUsage
+
+        now = datetime.now(timezone.utc)
+        session.add_all(
+            [
+                TokenUsage(
+                    created_at=now - timedelta(hours=2),
+                    model="gpt-5.4-mini",
+                    provider="zai",
+                    caller="search.web_extract",
+                    method="complete_json",
+                    prompt_tokens=100,
+                    completion_tokens=40,
+                    total_tokens=140,
+                    error=None,
+                    latency_ms=1200,
+                ),
+                TokenUsage(
+                    created_at=now - timedelta(days=10),
+                    model="gpt-5.4-mini",
+                    provider="zai",
+                    caller="search.internal_web_search",
+                    method="complete_json",
+                    prompt_tokens=200,
+                    completion_tokens=80,
+                    total_tokens=280,
+                    error="timeout",
+                    latency_ms=2100,
+                ),
+            ]
+        )
+        await session.commit()
+
+        all_resp = await client.get("/api/usage/summary")
+        assert all_resp.status_code == 200, all_resp.text
+        all_payload = all_resp.json()
+        assert all_payload["total_calls"] == 2
+        assert all_payload["total_tokens"] == 420
+        assert all_payload["error_count"] == 1
+
+        day_resp = await client.get("/api/usage/summary", params={"days": 1})
+        assert day_resp.status_code == 200, day_resp.text
+        day_payload = day_resp.json()
+        assert day_payload["total_calls"] == 1
+        assert day_payload["total_tokens"] == 140
+        assert day_payload["error_count"] == 0
+        assert day_payload["by_caller"]["search.web_extract"]["calls"] == 1
+        assert "search.internal_web_search" not in day_payload["by_caller"]
+
+        month_resp = await client.get("/api/usage/summary", params={"days": 30})
+        assert month_resp.status_code == 200, month_resp.text
+        month_payload = month_resp.json()
+        assert month_payload["total_calls"] == 2
+        assert month_payload["total_tokens"] == 420
+        assert month_payload["error_count"] == 1
+
+    async def test_usage_summary_rejects_invalid_days(self, client):
+        resp = await client.get("/api/usage/summary", params={"days": 0})
+        assert resp.status_code == 422
+
+    async def test_usage_llm_endpoint_health(self, client, monkeypatch):
+        class _FakeLLM:
+            async def endpoint_health(self, *, window_seconds: int = 60) -> dict:
+                return {
+                    "window_seconds": window_seconds,
+                    "observer_enabled": True,
+                    "observer_error": None,
+                    "endpoints": [
+                        {
+                            "index": 0,
+                            "key_id": "abc123",
+                            "requests_total": 42,
+                            "errors_total": 2,
+                            "rate_limit_total": 1,
+                            "timeout_total": 0,
+                            "requests_window": 10.0,
+                            "errors_window": 1.0,
+                            "rate_limit_window": 1.0,
+                            "timeout_window": 0.0,
+                            "latency_ms_avg": 820.5,
+                            "cooldown_active": False,
+                        },
+                    ],
+                }
+
+        monkeypatch.setattr(
+            "scholarpath.llm.client.get_llm_client",
+            lambda: _FakeLLM(),
+        )
+
+        resp = await client.get("/api/usage/llm-endpoints", params={"window_seconds": 120})
+        assert resp.status_code == 200, resp.text
+        payload = resp.json()
+        assert payload["window_seconds"] == 120
+        assert payload["observer_enabled"] is True
+        assert payload["endpoints"][0]["requests_total"] == 42
+
+
+# =========================================================================
+# 8. Health Check / App Startup
 # =========================================================================
 
 class TestAppStartup:

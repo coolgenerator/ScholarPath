@@ -174,7 +174,11 @@ class ConflictDetector:
                         ),
                     },
                 ]
-                result = await self._llm.complete_json(messages, temperature=0.1)
+                result = await self._llm.complete_json(
+                    messages,
+                    temperature=0.1,
+                    caller="search.conflict_assess",
+                )
                 severity = result.get("severity", "low")
                 resolution = result.get("recommended_resolution", resolution)
             except Exception:

@@ -1,0 +1,144 @@
+{
+  "dataset_id": "deepsearch_live_coldmix_v1",
+  "version": "1.0.0",
+  "required_fields_default": [
+    "acceptance_rate",
+    "sat_math_mid",
+    "sat_reading_mid",
+    "act_25",
+    "act_75",
+    "tuition_out_of_state",
+    "avg_net_price",
+    "median_earnings_10yr",
+    "graduation_rate",
+    "overall_grade",
+    "academics_grade",
+    "campus_grade",
+    "safety_grade",
+    "intl_student_pct",
+    "campus_setting",
+    "city",
+    "state"
+  ],
+  "rules_default": {
+    "acceptance_rate": { "kind": "numeric_range", "min": 0, "max": 100 },
+    "sat_math_mid": { "kind": "numeric_range", "min": 200, "max": 800 },
+    "sat_reading_mid": { "kind": "numeric_range", "min": 200, "max": 800 },
+    "act_25": { "kind": "numeric_range", "min": 1, "max": 36 },
+    "act_75": { "kind": "numeric_range", "min": 1, "max": 36 },
+    "tuition_out_of_state": { "kind": "numeric_range", "min": 1000, "max": 120000 },
+    "avg_net_price": { "kind": "numeric_range", "min": 1000, "max": 120000 },
+    "median_earnings_10yr": { "kind": "numeric_range", "min": 10000, "max": 300000 },
+    "graduation_rate": { "kind": "numeric_range", "min": 0, "max": 100 },
+    "overall_grade": { "kind": "enum", "allowed": ["A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D+", "D", "D-", "F"] },
+    "academics_grade": { "kind": "enum", "allowed": ["A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D+", "D", "D-", "F"] },
+    "campus_grade": { "kind": "enum", "allowed": ["A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D+", "D", "D-", "F"] },
+    "safety_grade": { "kind": "enum", "allowed": ["A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D+", "D", "D-", "F"] },
+    "intl_student_pct": { "kind": "numeric_range", "min": 0, "max": 100 },
+    "campus_setting": { "kind": "enum", "allowed": ["urban", "suburban", "rural", "college_town"] },
+    "city": { "kind": "non_empty_text" },
+    "state": { "kind": "non_empty_text" }
+  },
+  "schools": [
+    {
+      "school_name": "Massachusetts Institute of Technology",
+      "aliases": ["MIT", "麻省理工学院"],
+      "cohort": "in_db"
+    },
+    {
+      "school_name": "Stanford University",
+      "aliases": ["Stanford", "斯坦福大学"],
+      "cohort": "in_db"
+    },
+    {
+      "school_name": "Harvard University",
+      "aliases": ["Harvard", "哈佛大学"],
+      "cohort": "in_db"
+    },
+    {
+      "school_name": "Princeton University",
+      "aliases": ["Princeton", "普林斯顿大学"],
+      "cohort": "in_db"
+    },
+    {
+      "school_name": "Yale University",
+      "aliases": ["Yale", "耶鲁大学"],
+      "cohort": "in_db"
+    },
+    {
+      "school_name": "Columbia University",
+      "aliases": ["Columbia", "哥伦比亚大学"],
+      "cohort": "in_db"
+    },
+    {
+      "school_name": "University of Pennsylvania",
+      "aliases": ["UPenn", "宾夕法尼亚大学"],
+      "cohort": "in_db"
+    },
+    {
+      "school_name": "Cornell University",
+      "aliases": ["Cornell", "康奈尔大学"],
+      "cohort": "in_db"
+    },
+    {
+      "school_name": "Duke University",
+      "aliases": ["Duke", "杜克大学"],
+      "cohort": "in_db"
+    },
+    {
+      "school_name": "Northwestern University",
+      "aliases": ["Northwestern", "西北大学"],
+      "cohort": "in_db"
+    },
+    {
+      "school_name": "Brown University",
+      "aliases": ["Brown", "布朗大学"],
+      "cohort": "out_db"
+    },
+    {
+      "school_name": "Dartmouth College",
+      "aliases": ["Dartmouth", "达特茅斯学院"],
+      "cohort": "out_db"
+    },
+    {
+      "school_name": "Rice University",
+      "aliases": ["Rice", "莱斯大学"],
+      "cohort": "out_db"
+    },
+    {
+      "school_name": "University of Notre Dame",
+      "aliases": ["Notre Dame", "圣母大学"],
+      "cohort": "out_db"
+    },
+    {
+      "school_name": "Vanderbilt University",
+      "aliases": ["Vanderbilt", "范德堡大学"],
+      "cohort": "out_db"
+    },
+    {
+      "school_name": "Georgetown University",
+      "aliases": ["Georgetown", "乔治城大学"],
+      "cohort": "out_db"
+    },
+    {
+      "school_name": "University of North Carolina at Chapel Hill",
+      "aliases": ["UNC Chapel Hill", "UNC", "北卡罗来纳大学教堂山分校"],
+      "cohort": "out_db"
+    },
+    {
+      "school_name": "University of Virginia",
+      "aliases": ["UVA", "弗吉尼亚大学"],
+      "cohort": "out_db"
+    },
+    {
+      "school_name": "Washington University in St. Louis",
+      "aliases": ["WashU in St. Louis", "WashU", "圣路易斯华盛顿大学"],
+      "cohort": "out_db"
+    },
+    {
+      "school_name": "New York University",
+      "aliases": ["NYU", "纽约大学"],
+      "cohort": "out_db"
+    }
+  ]
+}

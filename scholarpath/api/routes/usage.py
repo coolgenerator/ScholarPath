@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Query
@@ -43,49 +43,90 @@ class UsageEntry(BaseModel):
     latency_ms: int | None = None
 
 
+class LLMEndpointWindowStats(BaseModel):
+    index: int
+    key_id: str
+    requests_total: int
+    errors_total: int
+    rate_limit_total: int
+    timeout_total: int
+    requests_window: float
+    errors_window: float
+    rate_limit_window: float
+    timeout_window: float
+    latency_ms_avg: float
+    cooldown_active: bool
+
+
+class LLMEndpointHealth(BaseModel):
+    window_seconds: int
+    observer_enabled: bool
+    observer_error: str | None = None
+    endpoints: list[LLMEndpointWindowStats]
+
+
 @router.get("/summary", response_model=UsageSummary)
-async def get_usage_summary(session: SessionDep) -> dict:
+async def get_usage_summary(
+    session: SessionDep,
+    days: int | None = Query(
+        default=None,
+        ge=1,
+        description="Optional time window in days. Omit to return all records.",
+    ),
+) -> dict:
     """Get aggregated token usage summary."""
+    filters = []
+    if days is not None:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        filters.append(TokenUsage.created_at >= cutoff)
+
     # Total counts
-    totals = await session.execute(
-        select(
-            func.count(TokenUsage.id).label("calls"),
-            func.coalesce(func.sum(TokenUsage.prompt_tokens), 0).label("prompt"),
-            func.coalesce(func.sum(TokenUsage.completion_tokens), 0).label("completion"),
-            func.coalesce(func.sum(TokenUsage.total_tokens), 0).label("total"),
-            func.count(TokenUsage.error).label("errors"),
-        )
+    totals_stmt = select(
+        func.count(TokenUsage.id).label("calls"),
+        func.coalesce(func.sum(TokenUsage.prompt_tokens), 0).label("prompt"),
+        func.coalesce(func.sum(TokenUsage.completion_tokens), 0).label("completion"),
+        func.coalesce(func.sum(TokenUsage.total_tokens), 0).label("total"),
+        func.count(TokenUsage.error).label("errors"),
     )
+    if filters:
+        totals_stmt = totals_stmt.where(*filters)
+    totals = await session.execute(totals_stmt)
     row = totals.one()
 
     # By provider
-    by_provider_q = await session.execute(
-        select(
-            TokenUsage.provider,
-            func.count(TokenUsage.id).label("calls"),
-            func.coalesce(func.sum(TokenUsage.total_tokens), 0).label("tokens"),
-        ).group_by(TokenUsage.provider)
+    by_provider_stmt = select(
+        TokenUsage.provider,
+        func.count(TokenUsage.id).label("calls"),
+        func.coalesce(func.sum(TokenUsage.total_tokens), 0).label("tokens"),
     )
+    if filters:
+        by_provider_stmt = by_provider_stmt.where(*filters)
+    by_provider_stmt = by_provider_stmt.group_by(TokenUsage.provider)
+    by_provider_q = await session.execute(by_provider_stmt)
     by_provider = {r.provider: {"calls": r.calls, "tokens": int(r.tokens)} for r in by_provider_q.all()}
 
     # By caller
-    by_caller_q = await session.execute(
-        select(
-            TokenUsage.caller,
-            func.count(TokenUsage.id).label("calls"),
-            func.coalesce(func.sum(TokenUsage.total_tokens), 0).label("tokens"),
-        ).group_by(TokenUsage.caller)
+    by_caller_stmt = select(
+        TokenUsage.caller,
+        func.count(TokenUsage.id).label("calls"),
+        func.coalesce(func.sum(TokenUsage.total_tokens), 0).label("tokens"),
     )
+    if filters:
+        by_caller_stmt = by_caller_stmt.where(*filters)
+    by_caller_stmt = by_caller_stmt.group_by(TokenUsage.caller)
+    by_caller_q = await session.execute(by_caller_stmt)
     by_caller = {r.caller: {"calls": r.calls, "tokens": int(r.tokens)} for r in by_caller_q.all()}
 
     # By model
-    by_model_q = await session.execute(
-        select(
-            TokenUsage.model,
-            func.count(TokenUsage.id).label("calls"),
-            func.coalesce(func.sum(TokenUsage.total_tokens), 0).label("tokens"),
-        ).group_by(TokenUsage.model)
+    by_model_stmt = select(
+        TokenUsage.model,
+        func.count(TokenUsage.id).label("calls"),
+        func.coalesce(func.sum(TokenUsage.total_tokens), 0).label("tokens"),
     )
+    if filters:
+        by_model_stmt = by_model_stmt.where(*filters)
+    by_model_stmt = by_model_stmt.group_by(TokenUsage.model)
+    by_model_q = await session.execute(by_model_stmt)
     by_model = {r.model: {"calls": r.calls, "tokens": int(r.tokens)} for r in by_model_q.all()}
 
     return {
@@ -98,6 +139,22 @@ async def get_usage_summary(session: SessionDep) -> dict:
         "by_model": by_model,
         "error_count": row.errors,
     }
+
+
+@router.get("/llm-endpoints", response_model=LLMEndpointHealth)
+async def get_llm_endpoint_health(
+    window_seconds: int = Query(
+        default=60,
+        ge=1,
+        le=3600,
+        description="Rolling window in seconds for per-endpoint activity.",
+    ),
+) -> dict[str, Any]:
+    """Get per-key LLM endpoint health and recent-window counters."""
+    from scholarpath.llm.client import get_llm_client
+
+    llm = get_llm_client()
+    return await llm.endpoint_health(window_seconds=window_seconds)
 
 
 @router.get("/recent", response_model=list[UsageEntry])

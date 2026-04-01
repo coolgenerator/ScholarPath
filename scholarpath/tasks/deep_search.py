@@ -12,6 +12,15 @@ from scholarpath.tasks.celery_app import celery_app
 logger = logging.getLogger(__name__)
 
 
+def _require_scorecard_api_key(raw_key: str | None) -> str:
+    key = (raw_key or "").strip()
+    if not key:
+        raise ValueError(
+            "SCORECARD_API_KEY is required for DeepSearch. Set SCORECARD_API_KEY in environment.",
+        )
+    return key
+
+
 @celery_app.task(
     name="scholarpath.tasks.deep_search.run_deep_search",
     bind=True,
@@ -22,6 +31,11 @@ def run_deep_search(
     self: Any,
     student_id: str,
     school_names: list[str],
+    required_fields: list[str] | None = None,
+    freshness_days: int = 90,
+    max_internal_websearch_calls_per_school: int = 1,
+    budget_mode: str = "balanced",
+    eval_run_id: str | None = None,
 ) -> dict[str, Any]:
     """Run the DeepSearch orchestrator for a student and list of school names.
 
@@ -47,9 +61,22 @@ def run_deep_search(
         school_names,
     )
 
+    from scholarpath.config import settings
+
+    scorecard_api_key = _require_scorecard_api_key(settings.SCORECARD_API_KEY)
+
     try:
         result = asyncio.run(
-            _run_deep_search_async(uuid.UUID(student_id), school_names)
+            _run_deep_search_async(
+                uuid.UUID(student_id),
+                school_names,
+                required_fields=required_fields,
+                freshness_days=freshness_days,
+                max_internal_websearch_calls_per_school=max_internal_websearch_calls_per_school,
+                budget_mode=budget_mode,
+                eval_run_id=eval_run_id,
+                scorecard_api_key=scorecard_api_key,
+            )
         )
         return result
     except Exception as exc:
@@ -60,43 +87,110 @@ def run_deep_search(
 async def _run_deep_search_async(
     student_id: uuid.UUID,
     school_names: list[str],
+    required_fields: list[str] | None = None,
+    freshness_days: int = 90,
+    max_internal_websearch_calls_per_school: int = 1,
+    budget_mode: str = "balanced",
+    eval_run_id: str | None = None,
+    scorecard_api_key: str | None = None,
 ) -> dict[str, Any]:
     """Async implementation of the deep search task."""
+    from scholarpath.config import settings
     from scholarpath.db.session import async_session_factory
+    from scholarpath.db.models import Student
     from scholarpath.llm.client import get_llm_client
     from scholarpath.search import DeepSearchOrchestrator
 
     llm = get_llm_client()
+    resolved_scorecard_key = _require_scorecard_api_key(
+        scorecard_api_key or settings.SCORECARD_API_KEY,
+    )
 
     async with async_session_factory() as session:
-        orchestrator = DeepSearchOrchestrator(llm=llm, session=session)
+        student = await session.get(Student, student_id)
+        if student is None:
+            raise ValueError(f"Student {student_id} not found")
+
+        student_profile = {
+            "gpa": student.gpa,
+            "sat_total": student.sat_total,
+            "intended_major": (student.intended_majors or [None])[0],
+            "budget_usd": student.budget_usd,
+            "preferences": student.preferences,
+        }
+
+        orchestrator = DeepSearchOrchestrator(
+            llm=llm,
+            scorecard_api_key=resolved_scorecard_key,
+            search_api_url=settings.WEB_SEARCH_API_URL,
+            search_api_key=settings.WEB_SEARCH_API_KEY,
+            school_concurrency=settings.DEEPSEARCH_SCHOOL_CONCURRENCY,
+            source_http_concurrency=settings.DEEPSEARCH_SOURCE_HTTP_CONCURRENCY,
+            self_extract_concurrency=settings.DEEPSEARCH_SELF_EXTRACT_CONCURRENCY,
+            internal_websearch_concurrency=settings.DEEPSEARCH_INTERNAL_WEBSEARCH_CONCURRENCY,
+        )
 
         results_summary: dict[str, Any] = {
             "student_id": str(student_id),
             "schools_searched": [],
-            "data_points_created": 0,
+            "schools_returned": 0,
+            "conflicts_found": 0,
+            "coverage_score": 0.0,
             "errors": [],
+            "required_fields": required_fields or [],
+            "freshness_days": freshness_days,
+            "max_internal_websearch_calls_per_school": max_internal_websearch_calls_per_school,
+            "budget_mode": budget_mode,
+            "eval_run_id": eval_run_id,
         }
 
-        for school_name in school_names:
+        try:
+            suffix_token = llm.set_caller_suffix(eval_run_id)
             try:
                 result = await orchestrator.search(
-                    query=school_name,
-                    student_id=student_id,
+                    student_profile=student_profile,
+                    target_schools=school_names,
+                    required_fields=required_fields,
+                    freshness_days=freshness_days,
+                    max_internal_websearch_calls_per_school=max_internal_websearch_calls_per_school,
+                    budget_mode=budget_mode,
+                    eval_run_id=eval_run_id,
                 )
-                results_summary["schools_searched"].append(school_name)
-                results_summary["data_points_created"] += len(
-                    result.data_points if hasattr(result, "data_points") else []
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Deep search failed for school '%s': %s",
-                    school_name,
-                    exc,
-                )
-                results_summary["errors"].append(
-                    {"school": school_name, "error": str(exc)}
-                )
+            finally:
+                llm.reset_caller_suffix(suffix_token)
+            results_summary["schools_searched"] = school_names
+            results_summary["schools_returned"] = len(result.schools)
+            results_summary["conflicts_found"] = len(result.conflicts)
+            results_summary["coverage_score"] = result.coverage_score
+            results_summary["schools"] = result.schools
+            results_summary["search_metadata"] = result.search_metadata
+            for key in (
+                "db_hit_ratio",
+                "self_source_calls",
+                "internal_websearch_calls",
+                "tokens_by_stage",
+                "fallback_trigger_rate",
+                "source_value_scores",
+                "source_runtime_metrics",
+                "source_priority_next_run",
+                "raw_fact_count_before_merge",
+                "unique_fact_count_after_merge",
+                "dedupe_drop_count",
+                "multi_source_agreement_count",
+                "multi_source_conflict_count",
+                "critical_coverage_by_school",
+            ):
+                if key in result.search_metadata:
+                    results_summary[key] = result.search_metadata[key]
+        except Exception as exc:
+            logger.warning(
+                "Deep search failed for schools '%s': %s",
+                school_names,
+                exc,
+            )
+            results_summary["errors"].append(
+                {"schools": school_names, "error": str(exc)}
+            )
 
         await session.commit()
 

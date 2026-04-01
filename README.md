@@ -124,6 +124,14 @@ git clone https://github.com/your-username/ScholarPath.git
 cd ScholarPath
 docker compose up --build -d
 
+# Verify Celery queues (must include deep_search + conflict)
+docker compose exec celery_worker celery -A scholarpath.tasks.celery_app inspect active_queues
+
+# One-time cleanup before a fresh rollout (records + clears backlog)
+docker compose exec redis redis-cli -n 0 LLEN deep_search
+docker compose exec redis redis-cli -n 0 LLEN conflict
+docker compose exec redis redis-cli -n 0 DEL deep_search conflict
+
 # Services:
 #   http://localhost:5173  — Frontend (Vite)
 #   http://localhost:8000  — Backend API (FastAPI)
@@ -141,15 +149,38 @@ curl -X POST http://localhost:8000/api/enrich/schools
 # Open http://localhost:5173 and start chatting
 ```
 
+### Testing
+
+```bash
+# Single-process
+python -m pytest -q
+
+# Parallel (recommended on multi-core machines)
+python -m pytest -n auto -q
+```
+
 ### Environment Variables
 
 Copy `.env.example` to `.env` and fill in:
 
 ```
 ZAI_API_KEY=your-openai-compatible-api-key
+# Optional: load-balance requests across multiple keys
+ZAI_API_KEYS=["key-1","key-2"]
 ZAI_BASE_URL=https://api.xcode.best/v1
 ZAI_MODEL=gpt-5.4-mini
+# Per-key limiter (effective in distributed mode across app/worker)
+LLM_RATE_LIMIT_RPM=100
+# Optional: enable DeepSearch web source
+WEB_SEARCH_API_URL=
+WEB_SEARCH_API_KEY=
 GOOGLE_API_KEY=your-gemini-api-key
+SCORECARD_API_KEY=your-data-gov-college-scorecard-api-key
+# Optional: tune DeepSearch throughput
+DEEPSEARCH_SCHOOL_CONCURRENCY=8
+DEEPSEARCH_SOURCE_HTTP_CONCURRENCY=16
+DEEPSEARCH_SELF_EXTRACT_CONCURRENCY=12
+DEEPSEARCH_INTERNAL_WEBSEARCH_CONCURRENCY=8
 ```
 
 ## API Endpoints
@@ -164,7 +195,7 @@ GOOGLE_API_KEY=your-gemini-api-key
 | `POST /api/simulations/students/{id}/schools/{id}/what-if` | Causal what-if simulation |
 | `POST /api/reports/students/{id}/offers/{id}/go-no-go` | Generate Go/No-Go report |
 | `POST /api/vectors/search/schools` | pgvector semantic school search |
-| `GET /api/usage/summary` | Token usage analytics |
+| `GET /api/usage/summary` | Token usage analytics (`?days=` optional) |
 | `GET /api/sessions/student/{id}` | List chat sessions |
 
 ## Project Structure

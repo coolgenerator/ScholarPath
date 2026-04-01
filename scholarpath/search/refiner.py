@@ -11,7 +11,7 @@ from scholarpath.search.sources.base import BaseSource, SearchResult
 logger = logging.getLogger(__name__)
 
 # Fields considered critical for a complete school profile.
-_CRITICAL_FIELDS = [
+_DEFAULT_CRITICAL_FIELDS = [
     "acceptance_rate",
     "sat_math_mid",
     "sat_reading_mid",
@@ -44,11 +44,14 @@ class SearchRefiner:
         self,
         current_results: list[AlignedEntity],
         student_profile: dict,
+        required_fields: list[str] | None = None,
         max_iterations: int = 3,
     ) -> list[AlignedEntity]:
         """Refine results until coverage target is met or iterations exhausted."""
+        coverage_fields = required_fields or _DEFAULT_CRITICAL_FIELDS
+
         for iteration in range(1, max_iterations + 1):
-            reports = self._analyse_coverage(current_results)
+            reports = self._analyse_coverage(current_results, coverage_fields)
             overall_coverage = self._overall_coverage(reports)
 
             logger.info(
@@ -103,14 +106,16 @@ class SearchRefiner:
     def _analyse_coverage(
         self,
         entities: list[AlignedEntity],
+        required_fields: list[str],
     ) -> list[CoverageReport]:
-        """Compute per-school coverage of critical fields."""
+        """Compute per-school coverage of required fields."""
         reports: list[CoverageReport] = []
+        fields = required_fields or _DEFAULT_CRITICAL_FIELDS
         for entity in entities:
             present = {dp.variable_name for dp in entity.data_points}
-            present_critical = [f for f in _CRITICAL_FIELDS if f in present]
-            missing_critical = [f for f in _CRITICAL_FIELDS if f not in present]
-            coverage = len(present_critical) / len(_CRITICAL_FIELDS) if _CRITICAL_FIELDS else 1.0
+            present_critical = [f for f in fields if f in present]
+            missing_critical = [f for f in fields if f not in present]
+            coverage = len(present_critical) / len(fields) if fields else 1.0
             reports.append(
                 CoverageReport(
                     school=entity.canonical_name,
@@ -156,9 +161,27 @@ class SearchRefiner:
                 f for f in report.missing_fields
                 if f not in official_fields and f not in grade_fields
             ]
-            if remaining and "web_search" in self._sources:
-                queries.append((report.school, remaining, "web_search"))
-        return queries
+            if remaining:
+                if "web_search" in self._sources:
+                    queries.append((report.school, remaining, "web_search"))
+                else:
+                    # If web search is unavailable, try all other available sources
+                    # so we still maximize field coverage.
+                    for source_name in ("college_scorecard", "niche", "ugc"):
+                        if source_name in self._sources:
+                            queries.append((report.school, remaining, source_name))
+
+        deduped: list[tuple[str, list[str], str]] = []
+        seen: set[tuple[str, tuple[str, ...], str]] = set()
+        for school, fields, source_name in queries:
+            norm = tuple(sorted(set(fields)))
+            key = (school, norm, source_name)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append((school, list(norm), source_name))
+
+        return deduped
 
     # ------------------------------------------------------------------
     # Merge

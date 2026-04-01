@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: scholarpath
       POSTGRES_DB: scholarpath
     ports:
-      - "5432:5432"
+      - "55432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -20,7 +20,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "56379:6379"
     volumes:
       - redisdata:/data
     healthcheck:
@@ -39,10 +39,17 @@ services:
       DATABASE_URL: postgresql+asyncpg://scholarpath:scholarpath@postgres:5432/scholarpath
       REDIS_URL: redis://redis:6379/0
       ZAI_API_KEY: ${ZAI_API_KEY:-your-api-key}
+      ZAI_API_KEYS: ${ZAI_API_KEYS:-}
       ZAI_BASE_URL: https://api.xcode.best/v1
       ZAI_MODEL: gpt-5.4-mini
+      LLM_RATE_LIMIT_RPM: ${LLM_RATE_LIMIT_RPM:-100}
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-your-gemini-key}
       EMBEDDING_MODEL: gemini-embedding-001
+      SCORECARD_API_KEY: ${SCORECARD_API_KEY:-}
+      DEEPSEARCH_SCHOOL_CONCURRENCY: ${DEEPSEARCH_SCHOOL_CONCURRENCY:-8}
+      DEEPSEARCH_SOURCE_HTTP_CONCURRENCY: ${DEEPSEARCH_SOURCE_HTTP_CONCURRENCY:-16}
+      DEEPSEARCH_SELF_EXTRACT_CONCURRENCY: ${DEEPSEARCH_SELF_EXTRACT_CONCURRENCY:-12}
+      DEEPSEARCH_INTERNAL_WEBSEARCH_CONCURRENCY: ${DEEPSEARCH_INTERNAL_WEBSEARCH_CONCURRENCY:-8}
       CORS_ORIGINS: '["http://localhost:5173"]'
     depends_on:
       postgres:
@@ -57,15 +64,22 @@ services:
 
   celery_worker:
     build: .
-    command: celery -A scholarpath.tasks.celery_app worker --loglevel=info
+    command: celery -A scholarpath.tasks.celery_app worker --loglevel=info -Q deep_search,conflict,celery
     environment:
       DATABASE_URL: postgresql+asyncpg://scholarpath:scholarpath@postgres:5432/scholarpath
       REDIS_URL: redis://redis:6379/0
       ZAI_API_KEY: ${ZAI_API_KEY:-your-api-key}
+      ZAI_API_KEYS: ${ZAI_API_KEYS:-}
       ZAI_BASE_URL: https://api.xcode.best/v1
       ZAI_MODEL: gpt-5.4-mini
+      LLM_RATE_LIMIT_RPM: ${LLM_RATE_LIMIT_RPM:-100}
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-your-gemini-key}
       EMBEDDING_MODEL: gemini-embedding-001
+      SCORECARD_API_KEY: ${SCORECARD_API_KEY:-}
+      DEEPSEARCH_SCHOOL_CONCURRENCY: ${DEEPSEARCH_SCHOOL_CONCURRENCY:-8}
+      DEEPSEARCH_SOURCE_HTTP_CONCURRENCY: ${DEEPSEARCH_SOURCE_HTTP_CONCURRENCY:-16}
+      DEEPSEARCH_SELF_EXTRACT_CONCURRENCY: ${DEEPSEARCH_SELF_EXTRACT_CONCURRENCY:-12}
+      DEEPSEARCH_INTERNAL_WEBSEARCH_CONCURRENCY: ${DEEPSEARCH_INTERNAL_WEBSEARCH_CONCURRENCY:-8}
     entrypoint: []
     depends_on:
       postgres:

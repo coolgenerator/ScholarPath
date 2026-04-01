@@ -130,7 +130,11 @@ class EntityAligner:
             {"role": "user", "content": json.dumps(names, ensure_ascii=False)},
         ]
         try:
-            result = await self._llm.complete_json(messages, temperature=0.0)
+            result = await self._llm.complete_json(
+                messages,
+                temperature=0.0,
+                caller="search.entity_align",
+            )
         except Exception:
             logger.exception("LLM entity alignment failed; skipping merge")
             return {n: n for n in names}

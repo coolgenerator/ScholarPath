@@ -67,6 +67,10 @@ alembic/versions/*.pyc
 # Logs
 *.log
 
+# DeepSearch / eval runtime artifacts
+.benchmarks/
+scholarpath/.benchmarks/
+
 # Playwright MCP artifacts
 .playwright-mcp/
 

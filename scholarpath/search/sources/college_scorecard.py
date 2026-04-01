@@ -46,8 +46,11 @@ class CollegeScorecardSource(BaseSource):
     name = "college_scorecard"
     source_type = "official"
 
-    def __init__(self, api_key: str = "DEMO_KEY") -> None:
-        self._api_key = api_key
+    def __init__(self, api_key: str) -> None:
+        key = (api_key or "").strip()
+        if not key:
+            raise ValueError("College Scorecard API key is required")
+        self._api_key = key
 
     async def search(
         self,
