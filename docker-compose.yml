@@ -1,0 +1,103 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: scholarpath
+      POSTGRES_PASSWORD: scholarpath
+      POSTGRES_DB: scholarpath
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scholarpath"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - scholarpath
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - scholarpath
+
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://scholarpath:scholarpath@postgres:5432/scholarpath
+      REDIS_URL: redis://redis:6379/0
+      ZAI_API_KEY: ${ZAI_API_KEY:-your-api-key}
+      ZAI_BASE_URL: https://api.xcode.best/v1
+      ZAI_MODEL: gpt-5.4-mini
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-your-gemini-key}
+      EMBEDDING_MODEL: gemini-embedding-001
+      CORS_ORIGINS: '["http://localhost:5173"]'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./scholarpath:/app/scholarpath
+      - ./alembic:/app/alembic
+    networks:
+      - scholarpath
+
+  celery_worker:
+    build: .
+    command: celery -A scholarpath.tasks.celery_app worker --loglevel=info
+    environment:
+      DATABASE_URL: postgresql+asyncpg://scholarpath:scholarpath@postgres:5432/scholarpath
+      REDIS_URL: redis://redis:6379/0
+      ZAI_API_KEY: ${ZAI_API_KEY:-your-api-key}
+      ZAI_BASE_URL: https://api.xcode.best/v1
+      ZAI_MODEL: gpt-5.4-mini
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-your-gemini-key}
+      EMBEDDING_MODEL: gemini-embedding-001
+    entrypoint: []
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./scholarpath:/app/scholarpath
+    networks:
+      - scholarpath
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    environment:
+      API_TARGET: http://app:8000
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/index.html:/app/index.html
+      - ./frontend/vite.config.ts:/app/vite.config.ts
+    depends_on:
+      - app
+    networks:
+      - scholarpath
+
+volumes:
+  pgdata:
+  redisdata:
+
+networks:
+  scholarpath:
+    driver: bridge
