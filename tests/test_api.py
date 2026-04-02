@@ -306,7 +306,7 @@ class TestOfferAPI:
         offer_id = create_resp.json()["id"]
 
         resp = await client.put(
-            f"/api/offers/offers/{offer_id}",
+            f"/api/offers/{offer_id}",
             json={"status": "admitted", "merit_scholarship": 20000},
         )
         assert resp.status_code == 200
@@ -402,6 +402,57 @@ class TestSimulationAPI:
         )
         assert resp.status_code == 404
 
+    async def test_compare_scenarios_cross_school(self, client, session):
+        student = await _create_student(client)
+        school1 = await _create_school(client, session, name="Scenario A")
+        school2 = await _create_school(client, session, name="Scenario B")
+        await session.commit()
+
+        resp = await client.post(
+            f"/api/simulations/students/{student['id']}/compare-scenarios",
+            json={
+                "scenarios": [
+                    {
+                        "school_id": school1["id"],
+                        "interventions": {"financial_aid": 0.8},
+                        "label": "Aid Boost",
+                    },
+                    {
+                        "school_id": school2["id"],
+                        "interventions": {"research_opportunities": 0.7},
+                        "label": "Research Boost",
+                    },
+                ],
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        payload = resp.json()
+        assert len(payload["results"]) == 2
+        assert payload["results"][0]["label"] == "Aid Boost"
+        assert payload["results"][1]["school_id"] == school2["id"]
+
+    async def test_compare_scenarios_rejects_invalid_intervention(self, client, session):
+        student = await _create_student(client)
+        school = await _create_school(client, session, name="Scenario Invalid")
+        await session.commit()
+
+        resp = await client.post(
+            f"/api/simulations/students/{student['id']}/compare-scenarios",
+            json={
+                "scenarios": [
+                    {
+                        "school_id": school["id"],
+                        "interventions": {"financial_aid": 0.8},
+                    },
+                    {
+                        "school_id": school["id"],
+                        "interventions": {"financial_aid": "bad-value"},
+                    },
+                ],
+            },
+        )
+        assert resp.status_code == 422
+
 
 # =========================================================================
 # 6. Report API
@@ -444,12 +495,12 @@ class TestReportAPI:
         )
         report_id = create_resp.json()["id"]
 
-        resp = await client.get(f"/api/reports/reports/{report_id}")
+        resp = await client.get(f"/api/reports/{report_id}")
         assert resp.status_code == 200
         assert resp.json()["id"] == report_id
 
     async def test_get_nonexistent_report(self, client):
-        resp = await client.get(f"/api/reports/reports/{uuid.uuid4()}")
+        resp = await client.get(f"/api/reports/{uuid.uuid4()}")
         assert resp.status_code == 404
 
     async def test_go_no_go_nonexistent_student(self, client):
@@ -479,7 +530,145 @@ class TestReportAPI:
 
 
 # =========================================================================
-# 7. Usage API
+# 7. Hard-cut route cleanup
+# =========================================================================
+
+class TestHardCutRoutes:
+    async def test_seed_path_hard_cut(self, client):
+        current = await client.post("/api/seed/schools")
+        assert current.status_code == 200, current.text
+
+        legacy = await client.post("/api/api/seed/schools")
+        assert legacy.status_code == 404
+
+    async def test_offer_update_path_hard_cut(self, client, session):
+        student = await _create_student(client)
+        school = await _create_school(client, session)
+        await session.commit()
+
+        create_resp = await client.post(
+            f"/api/offers/students/{student['id']}/offers",
+            json={"school_id": school["id"], "status": "waitlisted"},
+        )
+        offer_id = create_resp.json()["id"]
+
+        current = await client.put(
+            f"/api/offers/{offer_id}",
+            json={"status": "admitted"},
+        )
+        assert current.status_code == 200, current.text
+
+        legacy = await client.put(
+            f"/api/offers/offers/{offer_id}",
+            json={"status": "declined"},
+        )
+        assert legacy.status_code == 404
+
+    async def test_report_get_path_hard_cut(self, client, session):
+        student = await _create_student(client)
+        school = await _create_school(client, session)
+        await session.commit()
+
+        offer_resp = await client.post(
+            f"/api/offers/students/{student['id']}/offers",
+            json={"school_id": school["id"], "status": "admitted"},
+        )
+        offer_id = offer_resp.json()["id"]
+
+        create_resp = await client.post(
+            f"/api/reports/students/{student['id']}/offers/{offer_id}/go-no-go"
+        )
+        report_id = create_resp.json()["id"]
+
+        current = await client.get(f"/api/reports/{report_id}")
+        assert current.status_code == 200, current.text
+
+        legacy = await client.get(f"/api/reports/reports/{report_id}")
+        assert legacy.status_code == 404
+
+    async def test_task_paths_hard_cut(self, client, monkeypatch):
+        from scholarpath.api.routes import tasks as tasks_route
+
+        class _FakeTaskResult:
+            status = "SUCCESS"
+            result = {"ok": True}
+
+        class _FakeCeleryApp:
+            def AsyncResult(self, _task_id: str) -> _FakeTaskResult:
+                return _FakeTaskResult()
+
+        monkeypatch.setattr(tasks_route, "_get_celery_app", lambda: _FakeCeleryApp())
+
+        current_status = await client.get("/api/tasks/task-123")
+        assert current_status.status_code == 200, current_status.text
+        assert current_status.json()["status"] == "SUCCESS"
+
+        current_result = await client.get("/api/tasks/task-123/result")
+        assert current_result.status_code == 200, current_result.text
+        assert current_result.json()["status"] == "SUCCESS"
+
+        legacy_status = await client.get("/api/tasks/tasks/task-123")
+        assert legacy_status.status_code == 404
+
+        legacy_result = await client.get("/api/tasks/tasks/task-123/result")
+        assert legacy_result.status_code == 404
+
+    async def test_school_get_path_hard_cut(self, client, session):
+        school = await _create_school(client, session)
+        await session.commit()
+
+        current = await client.get(f"/api/schools/{school['id']}")
+        assert current.status_code == 200, current.text
+
+        legacy = await client.get(f"/api/schools/schools/{school['id']}")
+        assert legacy.status_code == 404
+
+    async def test_evaluation_tiers_path_hard_cut(self, client, session):
+        student = await _create_student(client)
+
+        current = await client.get(f"/api/evaluations/students/{student['id']}/tiers")
+        assert current.status_code == 200, current.text
+        payload = current.json()
+        assert {"reach", "target", "safety", "likely"} <= set(payload.keys())
+
+        legacy = await client.get(
+            f"/api/evaluations/evaluations/students/{student['id']}/tiers"
+        )
+        assert legacy.status_code == 404
+
+    async def test_sessions_list_path_hard_cut(self, client):
+        student = await _create_student(client)
+        session_id = f"hard-cut-{uuid.uuid4().hex[:8]}"
+
+        created = await client.post(
+            "/api/sessions/",
+            json={
+                "student_id": student["id"],
+                "session_id": session_id,
+                "title": "Hard Cut Session",
+            },
+        )
+        assert created.status_code == 201, created.text
+
+        current = await client.get(f"/api/sessions/student/{student['id']}")
+        assert current.status_code == 200, current.text
+        assert any(
+            item.get("session_id") == session_id for item in current.json()
+        ), "created session should be returned from current route"
+
+        legacy = await client.get(f"/api/sessions/sessions/student/{student['id']}")
+        assert legacy.status_code == 404
+
+    async def test_legacy_chat_paths_hard_cut(self, client):
+        history = await client.get("/api/chat/history/legacy-hard-cut")
+        assert history.status_code == 404
+
+        websocket_path = await client.get("/api/chat/chat/legacy-hard-cut")
+        assert websocket_path.status_code == 404
+
+
+# =========================================================================
+# 8. Usage API
 # =========================================================================
 
 class TestUsageAPI:

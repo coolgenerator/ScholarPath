@@ -1,0 +1,1177 @@
+{
+  "dataset_id": "advisor_reedit_gold_v2",
+  "version": "2.0.0",
+  "schema": {
+    "case_count": 24,
+    "category_counts": {
+      "cat_reedit_middle": 4,
+      "cat_reedit_edge": 4,
+      "cat_reedit_tail": 4,
+      "cat_reedit_invalid": 6,
+      "cat_reedit_history": 6
+    }
+  },
+  "strict_thresholds": {
+    "reedit_overwrite_success_rate": 0.95,
+    "reedit_truncation_correct_rate": 0.95,
+    "reedit_history_consistency_rate": 0.95
+  },
+  "cases": [
+    {
+      "case_id": "ar-001",
+      "request": {
+        "message": "把第二轮我的定位改成计算机科学+数学双专业。",
+        "edit": {
+          "target_turn_id": "turn-2",
+          "mode": "overwrite"
+        }
+      },
+      "seed": {
+        "timeline": [
+          {
+            "turn_id": "turn-1",
+            "role": "user",
+            "content": "我想做本科择校"
+          },
+          {
+            "turn_id": "turn-1",
+            "role": "assistant",
+            "content": "先说下你的专业方向"
+          },
+          {
+            "turn_id": "turn-2",
+            "role": "user",
+            "content": "我只想学经济学"
+          },
+          {
+            "turn_id": "turn-2",
+            "role": "assistant",
+            "content": "好的，按经济学准备"
+          },
+          {
+            "turn_id": "turn-3",
+            "role": "user",
+            "content": "预算是5万"
+          }
+        ]
+      },
+      "expect": {
+        "overwrite_success": true,
+        "truncation_correct": true,
+        "history_consistent": true,
+        "contract_ok": true,
+        "capability_any": [
+          "undergrad.school.recommend",
+          "undergrad.school.query",
+          "undergrad.strategy.plan"
+        ]
+      },
+      "tags": [
+        "cat_reedit_middle",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ar-002",
+      "request": {
+        "message": "Edit my second turn: I care about CS research and AI labs.",
+        "edit": {
+          "target_turn_id": "turn-2",
+          "mode": "overwrite"
+        }
+      },
+      "seed": {
+        "timeline": [
+          {
+            "turn_id": "turn-1",
+            "role": "user",
+            "content": "I need undergrad school recommendations"
+          },
+          {
+            "turn_id": "turn-1",
+            "role": "assistant",
+            "content": "Sure, what's your priority?"
+          },
+          {
+            "turn_id": "turn-2",
+            "role": "user",
+            "content": "I only care about finance"
+          },
+          {
+            "turn_id": "turn-2",
+            "role": "assistant",
+            "content": "Got it, finance focus."
+          },
+          {
+            "turn_id": "turn-3",
+            "role": "user",
+            "content": "Budget around 60k."
+          }
+        ]
+      },
+      "expect": {
+        "overwrite_success": true,
+        "truncation_correct": true,
+        "history_consistent": true,
+        "contract_ok": true,
+        "capability_any": [
+          "undergrad.school.recommend",
+          "undergrad.school.query",
+          "undergrad.strategy.plan"
+        ]
+      },
+      "tags": [
+        "cat_reedit_middle",
+        "lang_en"
+      ]
+    },
+    {
+      "case_id": "ar-003",
+      "request": {
+        "message": "把第一条改成：我要先做offer对比，不是本科推荐。",
+        "edit": {
+          "target_turn_id": "turn-1",
+          "mode": "overwrite"
+        }
+      },
+      "seed": {
+        "timeline": [
+          {
+            "turn_id": "turn-1",
+            "role": "user",
+            "content": "我要做本科推荐"
+          },
+          {
+            "turn_id": "turn-1",
+            "role": "assistant",
+            "content": "好的，先看背景"
+          },
+          {
+            "turn_id": "turn-2",
+            "role": "user",
+            "content": "我有两个offer"
+          }
+        ]
+      },
+      "expect": {
+        "overwrite_success": true,
+        "truncation_correct": true,
+        "history_consistent": true,
+        "contract_ok": true,
+        "capability_any": [
+          "offer.compare",
+          "offer.decision",
+          "offer.what_if"
+        ]
+      },
+      "tags": [
+        "cat_reedit_edge",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ar-004",
+      "request": {
+        "message": "Edit my first message to: compare my offers first.",
+        "edit": {
+          "target_turn_id": "turn-1",
+          "mode": "overwrite"
+        }
+      },
+      "seed": {
+        "timeline": [
+          {
+            "turn_id": "turn-1",
+            "role": "user",
+            "content": "Recommend undergrad schools for me"
+          },
+          {
+            "turn_id": "turn-1",
+            "role": "assistant",
+            "content": "Sure, tell me your profile."
+          },
+          {
+            "turn_id": "turn-2",
+            "role": "user",
+            "content": "I already have two offers"
+          }
+        ]
+      },
+      "expect": {
+        "overwrite_success": true,
+        "truncation_correct": true,
+        "history_consistent": true,
+        "contract_ok": true,
+        "capability_any": [
+          "offer.compare",
+          "offer.decision",
+          "offer.what_if"
+        ]
+      },
+      "tags": [
+        "cat_reedit_edge",
+        "lang_en"
+      ]
+    },
+    {
+      "case_id": "ar-005",
+      "request": {
+        "message": "把最后一条改成：我希望走ED/EA策略。",
+        "edit": {
+          "target_turn_id": "turn-3",
+          "mode": "overwrite"
+        }
+      },
+      "seed": {
+        "timeline": [
+          {
+            "turn_id": "turn-1",
+            "role": "user",
+            "content": "我想做本科择校"
+          },
+          {
+            "turn_id": "turn-1",
+            "role": "assistant",
+            "content": "先告诉我专业"
+          },
+          {
+            "turn_id": "turn-2",
+            "role": "user",
+            "content": "CS方向"
+          },
+          {
+            "turn_id": "turn-2",
+            "role": "assistant",
+            "content": "了解"
+          },
+          {
+            "turn_id": "turn-3",
+            "role": "user",
+            "content": "我先不做策略"
+          }
+        ]
+      },
+      "expect": {
+        "overwrite_success": true,
+        "truncation_correct": true,
+        "history_consistent": true,
+        "contract_ok": true,
+        "capability_any": [
+          "undergrad.strategy.plan",
+          "undergrad.school.recommend",
+          "undergrad.school.query"
+        ]
+      },
+      "tags": [
+        "cat_reedit_tail",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ar-006",
+      "request": {
+        "message": "Edit my last turn: I want offer what-if with +10k scholarship.",
+        "edit": {
+          "target_turn_id": "turn-3",
+          "mode": "overwrite"
+        }
+      },
+      "seed": {
+        "timeline": [
+          {
+            "turn_id": "turn-1",
+            "role": "user",
+            "content": "I have two offers"
+          },
+          {
+            "turn_id": "turn-1",
+            "role": "assistant",
+            "content": "Do you want compare or decision?"
+          },
+          {
+            "turn_id": "turn-2",
+            "role": "user",
+            "content": "Let's compare first."
+          },
+          {
+            "turn_id": "turn-2",
+            "role": "assistant",
+            "content": "Sure, comparison baseline ready."
+          },
+          {
+            "turn_id": "turn-3",
+            "role": "user",
+            "content": "No simulation needed."
+          }
+        ]
+      },
+      "expect": {
+        "overwrite_success": true,
+        "truncation_correct": true,
+        "history_consistent": true,
+        "contract_ok": true,
+        "capability_any": [
+          "offer.what_if",
+          "offer.compare",
+          "offer.decision"
+        ]
+      },
+      "tags": [
+        "cat_reedit_tail",
+        "lang_en"
+      ]
+    },
+    {
+      "case_id": "ar-007",
+      "request": {
+        "message": "我要编辑不存在的轮次。",
+        "edit": {
+          "target_turn_id": "turn-99",
+          "mode": "overwrite"
+        }
+      },
+      "seed": {
+        "timeline": [
+          {
+            "turn_id": "turn-1",
+            "role": "user",
+            "content": "你好"
+          },
+          {
+            "turn_id": "turn-1",
+            "role": "assistant",
+            "content": "你好，我可以帮你择校"
+          }
+        ]
+      },
+      "expect": {
+        "overwrite_success": false,
+        "truncation_correct": true,
+        "history_consistent": true,
+        "contract_ok": true,
+        "capability_any": [
+          "common.general"
+        ]
+      },
+      "tags": [
+        "cat_reedit_invalid",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ar-008",
+      "request": {
+        "message": "Try editing a missing turn id.",
+        "edit": {
+          "target_turn_id": "turn-x",
+          "mode": "overwrite"
+        }
+      },
+      "seed": {
+        "timeline": [
+          {
+            "turn_id": "turn-1",
+            "role": "user",
+            "content": "Need school strategy"
+          },
+          {
+            "turn_id": "turn-1",
+            "role": "assistant",
+            "content": "Share your profile"
+          }
+        ]
+      },
+      "expect": {
+        "overwrite_success": false,
+        "truncation_correct": true,
+        "history_consistent": true,
+        "contract_ok": true,
+        "capability_any": [
+          "common.general"
+        ]
+      },
+      "tags": [
+        "cat_reedit_invalid",
+        "lang_en"
+      ]
+    },
+    {
+      "case_id": "ar-009",
+      "request": {
+        "message": "编辑 turn-0（只有assistant，不是user）。",
+        "edit": {
+          "target_turn_id": "turn-0",
+          "mode": "overwrite"
+        }
+      },
+      "seed": {
+        "timeline": [
+          {
+            "turn_id": "turn-0",
+            "role": "assistant",
+            "content": "欢迎来到Advisor"
+          },
+          {
+            "turn_id": "turn-1",
+            "role": "user",
+            "content": "我有offer"
+          }
+        ]
+      },
+      "expect": {
+        "overwrite_success": false,
+        "truncation_correct": true,
+        "history_consistent": true,
+        "contract_ok": true,
+        "capability_any": [
+          "common.general"
+        ]
+      },
+      "tags": [
+        "cat_reedit_invalid",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ar-010",
+      "request": {
+        "message": "把第二轮改成：I feel lost,先帮我澄清优先级。",
+        "edit": {
+          "target_turn_id": "turn-2",
+          "mode": "overwrite"
+        }
+      },
+      "seed": {
+        "timeline": [
+          {
+            "turn_id": "turn-1",
+            "role": "user",
+            "content": "我需要本科推荐"
+          },
+          {
+            "turn_id": "turn-1",
+            "role": "assistant",
+            "content": "好的，先说偏好"
+          },
+          {
+            "turn_id": "turn-2",
+            "role": "user",
+            "content": "先给我学校列表"
+          },
+          {
+            "turn_id": "turn-2",
+            "role": "assistant",
+            "content": "这是初步列表"
+          },
+          {
+            "turn_id": "turn-3",
+            "role": "user",
+            "content": "再比较两份offer"
+          }
+        ]
+      },
+      "expect": {
+        "overwrite_success": true,
+        "truncation_correct": true,
+        "history_consistent": true,
+        "contract_ok": true,
+        "capability_any": [
+          "common.clarify",
+          "common.emotional_support",
+          "common.general"
+        ]
+      },
+      "tags": [
+        "cat_reedit_history",
+        "lang_zh",
+        "code_switch"
+      ]
+    },
+    {
+      "case_id": "ar-011",
+      "request": {
+        "message": "Edit second turn to: compare my offer packages in detail.",
+        "edit": {
+          "target_turn_id": "turn-2",
+          "mode": "overwrite"
+        }
+      },
+      "seed": {
+        "timeline": [
+          {
+            "turn_id": "turn-1",
+            "role": "user",
+            "content": "I need undergrad strategy"
+          },
+          {
+            "turn_id": "turn-1",
+            "role": "assistant",
+            "content": "Tell me timeline first"
+          },
+          {
+            "turn_id": "turn-2",
+            "role": "user",
+            "content": "No offer work for now"
+          },
+          {
+            "turn_id": "turn-2",
+            "role": "assistant",
+            "content": "Okay, undergrad only."
+          },
+          {
+            "turn_id": "turn-3",
+            "role": "user",
+            "content": "Budget is 70k"
+          }
+        ]
+      },
+      "expect": {
+        "overwrite_success": true,
+        "truncation_correct": true,
+        "history_consistent": true,
+        "contract_ok": true,
+        "capability_any": [
+          "offer.compare",
+          "offer.decision",
+          "offer.what_if"
+        ]
+      },
+      "tags": [
+        "cat_reedit_history",
+        "lang_en"
+      ]
+    },
+    {
+      "case_id": "ar-012",
+      "request": {
+        "message": "把中间这条改成：先做portfolio补全再择校。",
+        "edit": {
+          "target_turn_id": "turn-2",
+          "mode": "overwrite"
+        }
+      },
+      "seed": {
+        "timeline": [
+          {
+            "turn_id": "turn-1",
+            "role": "user",
+            "content": "我想选校"
+          },
+          {
+            "turn_id": "turn-1",
+            "role": "assistant",
+            "content": "可以先补全背景"
+          },
+          {
+            "turn_id": "turn-2",
+            "role": "user",
+            "content": "先直接给学校"
+          },
+          {
+            "turn_id": "turn-2",
+            "role": "assistant",
+            "content": "好的直接给名单"
+          },
+          {
+            "turn_id": "turn-3",
+            "role": "user",
+            "content": "我在纽约"
+          }
+        ]
+      },
+      "expect": {
+        "overwrite_success": true,
+        "truncation_correct": true,
+        "history_consistent": true,
+        "contract_ok": true,
+        "capability_any": [
+          "common.general",
+          "undergrad.profile.intake",
+          "undergrad.school.recommend"
+        ]
+      },
+      "tags": [
+        "cat_reedit_history",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ar-013",
+      "request": {
+        "message": "把第二轮我的定位改成计算机科学+数学双专业。（扩展样本B）",
+        "edit": {
+          "target_turn_id": "turn-2",
+          "mode": "overwrite"
+        }
+      },
+      "seed": {
+        "timeline": [
+          {
+            "turn_id": "turn-1",
+            "role": "user",
+            "content": "我想做本科择校"
+          },
+          {
+            "turn_id": "turn-1",
+            "role": "assistant",
+            "content": "先说下你的专业方向"
+          },
+          {
+            "turn_id": "turn-2",
+            "role": "user",
+            "content": "我只想学经济学"
+          },
+          {
+            "turn_id": "turn-2",
+            "role": "assistant",
+            "content": "好的，按经济学准备"
+          },
+          {
+            "turn_id": "turn-3",
+            "role": "user",
+            "content": "预算是5万"
+          }
+        ]
+      },
+      "expect": {
+        "overwrite_success": true,
+        "truncation_correct": true,
+        "history_consistent": true,
+        "contract_ok": true,
+        "capability_any": [
+          "undergrad.school.recommend",
+          "undergrad.school.query",
+          "undergrad.strategy.plan"
+        ]
+      },
+      "tags": [
+        "cat_reedit_middle",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ar-014",
+      "request": {
+        "message": "Edit my second turn: I care about CS research and AI labs. (extended set B)",
+        "edit": {
+          "target_turn_id": "turn-2",
+          "mode": "overwrite"
+        }
+      },
+      "seed": {
+        "timeline": [
+          {
+            "turn_id": "turn-1",
+            "role": "user",
+            "content": "I need undergrad school recommendations"
+          },
+          {
+            "turn_id": "turn-1",
+            "role": "assistant",
+            "content": "Sure, what's your priority?"
+          },
+          {
+            "turn_id": "turn-2",
+            "role": "user",
+            "content": "I only care about finance"
+          },
+          {
+            "turn_id": "turn-2",
+            "role": "assistant",
+            "content": "Got it, finance focus."
+          },
+          {
+            "turn_id": "turn-3",
+            "role": "user",
+            "content": "Budget around 60k."
+          }
+        ]
+      },
+      "expect": {
+        "overwrite_success": true,
+        "truncation_correct": true,
+        "history_consistent": true,
+        "contract_ok": true,
+        "capability_any": [
+          "undergrad.school.recommend",
+          "undergrad.school.query",
+          "undergrad.strategy.plan"
+        ]
+      },
+      "tags": [
+        "cat_reedit_middle",
+        "lang_en"
+      ]
+    },
+    {
+      "case_id": "ar-015",
+      "request": {
+        "message": "把第一条改成：我要先做offer对比，不是本科推荐。（扩展样本B）",
+        "edit": {
+          "target_turn_id": "turn-1",
+          "mode": "overwrite"
+        }
+      },
+      "seed": {
+        "timeline": [
+          {
+            "turn_id": "turn-1",
+            "role": "user",
+            "content": "我要做本科推荐"
+          },
+          {
+            "turn_id": "turn-1",
+            "role": "assistant",
+            "content": "好的，先看背景"
+          },
+          {
+            "turn_id": "turn-2",
+            "role": "user",
+            "content": "我有两个offer"
+          }
+        ]
+      },
+      "expect": {
+        "overwrite_success": true,
+        "truncation_correct": true,
+        "history_consistent": true,
+        "contract_ok": true,
+        "capability_any": [
+          "offer.compare",
+          "offer.decision",
+          "offer.what_if"
+        ]
+      },
+      "tags": [
+        "cat_reedit_edge",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ar-016",
+      "request": {
+        "message": "Edit my first message to: compare my offers first. (extended set B)",
+        "edit": {
+          "target_turn_id": "turn-1",
+          "mode": "overwrite"
+        }
+      },
+      "seed": {
+        "timeline": [
+          {
+            "turn_id": "turn-1",
+            "role": "user",
+            "content": "Recommend undergrad schools for me"
+          },
+          {
+            "turn_id": "turn-1",
+            "role": "assistant",
+            "content": "Sure, tell me your profile."
+          },
+          {
+            "turn_id": "turn-2",
+            "role": "user",
+            "content": "I already have two offers"
+          }
+        ]
+      },
+      "expect": {
+        "overwrite_success": true,
+        "truncation_correct": true,
+        "history_consistent": true,
+        "contract_ok": true,
+        "capability_any": [
+          "offer.compare",
+          "offer.decision",
+          "offer.what_if"
+        ]
+      },
+      "tags": [
+        "cat_reedit_edge",
+        "lang_en"
+      ]
+    },
+    {
+      "case_id": "ar-017",
+      "request": {
+        "message": "把最后一条改成：我希望走ED/EA策略。（扩展样本B）",
+        "edit": {
+          "target_turn_id": "turn-3",
+          "mode": "overwrite"
+        }
+      },
+      "seed": {
+        "timeline": [
+          {
+            "turn_id": "turn-1",
+            "role": "user",
+            "content": "我想做本科择校"
+          },
+          {
+            "turn_id": "turn-1",
+            "role": "assistant",
+            "content": "先告诉我专业"
+          },
+          {
+            "turn_id": "turn-2",
+            "role": "user",
+            "content": "CS方向"
+          },
+          {
+            "turn_id": "turn-2",
+            "role": "assistant",
+            "content": "了解"
+          },
+          {
+            "turn_id": "turn-3",
+            "role": "user",
+            "content": "我先不做策略"
+          }
+        ]
+      },
+      "expect": {
+        "overwrite_success": true,
+        "truncation_correct": true,
+        "history_consistent": true,
+        "contract_ok": true,
+        "capability_any": [
+          "undergrad.strategy.plan",
+          "undergrad.school.recommend",
+          "undergrad.school.query"
+        ]
+      },
+      "tags": [
+        "cat_reedit_tail",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ar-018",
+      "request": {
+        "message": "Edit my last turn: I want offer what-if with +10k scholarship. (extended set B)",
+        "edit": {
+          "target_turn_id": "turn-3",
+          "mode": "overwrite"
+        }
+      },
+      "seed": {
+        "timeline": [
+          {
+            "turn_id": "turn-1",
+            "role": "user",
+            "content": "I have two offers"
+          },
+          {
+            "turn_id": "turn-1",
+            "role": "assistant",
+            "content": "Do you want compare or decision?"
+          },
+          {
+            "turn_id": "turn-2",
+            "role": "user",
+            "content": "Let's compare first."
+          },
+          {
+            "turn_id": "turn-2",
+            "role": "assistant",
+            "content": "Sure, comparison baseline ready."
+          },
+          {
+            "turn_id": "turn-3",
+            "role": "user",
+            "content": "No simulation needed."
+          }
+        ]
+      },
+      "expect": {
+        "overwrite_success": true,
+        "truncation_correct": true,
+        "history_consistent": true,
+        "contract_ok": true,
+        "capability_any": [
+          "offer.what_if",
+          "offer.compare",
+          "offer.decision"
+        ]
+      },
+      "tags": [
+        "cat_reedit_tail",
+        "lang_en"
+      ]
+    },
+    {
+      "case_id": "ar-019",
+      "request": {
+        "message": "我要编辑不存在的轮次。（扩展样本B）",
+        "edit": {
+          "target_turn_id": "turn-99",
+          "mode": "overwrite"
+        }
+      },
+      "seed": {
+        "timeline": [
+          {
+            "turn_id": "turn-1",
+            "role": "user",
+            "content": "你好"
+          },
+          {
+            "turn_id": "turn-1",
+            "role": "assistant",
+            "content": "你好，我可以帮你择校"
+          }
+        ]
+      },
+      "expect": {
+        "overwrite_success": false,
+        "truncation_correct": true,
+        "history_consistent": true,
+        "contract_ok": true,
+        "capability_any": [
+          "common.general"
+        ]
+      },
+      "tags": [
+        "cat_reedit_invalid",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ar-020",
+      "request": {
+        "message": "Try editing a missing turn id. (extended set B)",
+        "edit": {
+          "target_turn_id": "turn-x",
+          "mode": "overwrite"
+        }
+      },
+      "seed": {
+        "timeline": [
+          {
+            "turn_id": "turn-1",
+            "role": "user",
+            "content": "Need school strategy"
+          },
+          {
+            "turn_id": "turn-1",
+            "role": "assistant",
+            "content": "Share your profile"
+          }
+        ]
+      },
+      "expect": {
+        "overwrite_success": false,
+        "truncation_correct": true,
+        "history_consistent": true,
+        "contract_ok": true,
+        "capability_any": [
+          "common.general"
+        ]
+      },
+      "tags": [
+        "cat_reedit_invalid",
+        "lang_en"
+      ]
+    },
+    {
+      "case_id": "ar-021",
+      "request": {
+        "message": "编辑 turn-0（只有assistant，不是user）。（扩展样本B）",
+        "edit": {
+          "target_turn_id": "turn-0",
+          "mode": "overwrite"
+        }
+      },
+      "seed": {
+        "timeline": [
+          {
+            "turn_id": "turn-0",
+            "role": "assistant",
+            "content": "欢迎来到Advisor"
+          },
+          {
+            "turn_id": "turn-1",
+            "role": "user",
+            "content": "我有offer"
+          }
+        ]
+      },
+      "expect": {
+        "overwrite_success": false,
+        "truncation_correct": true,
+        "history_consistent": true,
+        "contract_ok": true,
+        "capability_any": [
+          "common.general"
+        ]
+      },
+      "tags": [
+        "cat_reedit_invalid",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ar-022",
+      "request": {
+        "message": "把第二轮改成：I feel lost,先帮我澄清优先级。（扩展样本B）",
+        "edit": {
+          "target_turn_id": "turn-2",
+          "mode": "overwrite"
+        }
+      },
+      "seed": {
+        "timeline": [
+          {
+            "turn_id": "turn-1",
+            "role": "user",
+            "content": "我需要本科推荐"
+          },
+          {
+            "turn_id": "turn-1",
+            "role": "assistant",
+            "content": "好的，先说偏好"
+          },
+          {
+            "turn_id": "turn-2",
+            "role": "user",
+            "content": "先给我学校列表"
+          },
+          {
+            "turn_id": "turn-2",
+            "role": "assistant",
+            "content": "这是初步列表"
+          },
+          {
+            "turn_id": "turn-3",
+            "role": "user",
+            "content": "再比较两份offer"
+          }
+        ]
+      },
+      "expect": {
+        "overwrite_success": true,
+        "truncation_correct": true,
+        "history_consistent": true,
+        "contract_ok": true,
+        "capability_any": [
+          "common.clarify",
+          "common.emotional_support",
+          "common.general"
+        ]
+      },
+      "tags": [
+        "cat_reedit_history",
+        "lang_zh",
+        "code_switch"
+      ]
+    },
+    {
+      "case_id": "ar-023",
+      "request": {
+        "message": "Edit second turn to: compare my offer packages in detail. (extended set B)",
+        "edit": {
+          "target_turn_id": "turn-2",
+          "mode": "overwrite"
+        }
+      },
+      "seed": {
+        "timeline": [
+          {
+            "turn_id": "turn-1",
+            "role": "user",
+            "content": "I need undergrad strategy"
+          },
+          {
+            "turn_id": "turn-1",
+            "role": "assistant",
+            "content": "Tell me timeline first"
+          },
+          {
+            "turn_id": "turn-2",
+            "role": "user",
+            "content": "No offer work for now"
+          },
+          {
+            "turn_id": "turn-2",
+            "role": "assistant",
+            "content": "Okay, undergrad only."
+          },
+          {
+            "turn_id": "turn-3",
+            "role": "user",
+            "content": "Budget is 70k"
+          }
+        ]
+      },
+      "expect": {
+        "overwrite_success": true,
+        "truncation_correct": true,
+        "history_consistent": true,
+        "contract_ok": true,
+        "capability_any": [
+          "offer.compare",
+          "offer.decision",
+          "offer.what_if"
+        ]
+      },
+      "tags": [
+        "cat_reedit_history",
+        "lang_en"
+      ]
+    },
+    {
+      "case_id": "ar-024",
+      "request": {
+        "message": "把中间这条改成：先做portfolio补全再择校。（扩展样本B）",
+        "edit": {
+          "target_turn_id": "turn-2",
+          "mode": "overwrite"
+        }
+      },
+      "seed": {
+        "timeline": [
+          {
+            "turn_id": "turn-1",
+            "role": "user",
+            "content": "我想选校"
+          },
+          {
+            "turn_id": "turn-1",
+            "role": "assistant",
+            "content": "可以先补全背景"
+          },
+          {
+            "turn_id": "turn-2",
+            "role": "user",
+            "content": "先直接给学校"
+          },
+          {
+            "turn_id": "turn-2",
+            "role": "assistant",
+            "content": "好的直接给名单"
+          },
+          {
+            "turn_id": "turn-3",
+            "role": "user",
+            "content": "我在纽约"
+          }
+        ]
+      },
+      "expect": {
+        "overwrite_success": true,
+        "truncation_correct": true,
+        "history_consistent": true,
+        "contract_ok": true,
+        "capability_any": [
+          "common.general",
+          "undergrad.profile.intake",
+          "undergrad.school.recommend"
+        ]
+      },
+      "tags": [
+        "cat_reedit_history",
+        "lang_zh"
+      ]
+    }
+  ]
+}

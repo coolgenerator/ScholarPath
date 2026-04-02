@@ -1,0 +1,2025 @@
+{
+  "dataset_id": "advisor_orchestrator_gold_v2",
+  "version": "2.0.0",
+  "schema": {
+    "case_count": 80,
+    "category_counts": {
+      "cat_single_intent": 24,
+      "cat_multi_over_limit": 20,
+      "cat_conflict_clarify": 12,
+      "cat_low_confidence": 8,
+      "cat_explicit_recovery": 8,
+      "cat_input_error": 4,
+      "cat_memory_degraded": 4
+    },
+    "language_counts": {
+      "lang_zh": 56,
+      "lang_en": 24
+    },
+    "min_code_switch": 18
+  },
+  "strict_thresholds": {
+    "primary_hit_rate": 0.9,
+    "clarify_correct_rate": 0.95,
+    "execution_limit_violations": 0,
+    "contract_valid_rate": 1.0,
+    "deepsearch_expectation_rate": 0.9,
+    "deepsearch_pair_uplift_pass_rate": 1.0,
+    "deepsearch_pair_external_reduction_rate": 1.0,
+    "judge_overall_score": 85
+  },
+  "cases": [
+    {
+      "case_id": "ao-001",
+      "request": {
+        "message": "请给我一份本科选校推荐，focus 在 CS，budget 5 万美元。",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.school.recommend"
+        ],
+        "must_clarify": false,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_single_intent",
+        "lang_zh",
+        "code_switch"
+      ]
+    },
+    {
+      "case_id": "ao-002",
+      "request": {
+        "message": "我想问 UCLA 和 UCSD 的课程差异，先做院校问答。",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c",
+        "capability_hint": "undergrad.school.query",
+        "client_context": {
+          "eval_deepsearch": {
+            "triggered": true,
+            "reuse_hit": false,
+            "db_hit_ratio": 0.18,
+            "external_calls": 3,
+            "missing_fields_before": [
+              "tuition_out_of_state",
+              "sat_50"
+            ]
+          }
+        }
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.school.query"
+        ],
+        "must_clarify": false,
+        "max_done": 2,
+        "deepsearch": {
+          "triggered": true,
+          "reuse_hit": false,
+          "db_hit_ratio_min": 0.0,
+          "db_hit_ratio_max": 0.3,
+          "external_calls_max": 4,
+          "pair_id": "ucla_ucsd_query_reuse",
+          "phase": "cold"
+        }
+      },
+      "tags": [
+        "cat_single_intent",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-003",
+      "request": {
+        "message": "帮我做一个 ED/EA/RD 申请节奏规划。",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.strategy.plan"
+        ],
+        "must_clarify": false,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_single_intent",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-004",
+      "request": {
+        "message": "我有两个录取，先做 offer 对比，不用先下最终结论。",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "offer.compare"
+        ],
+        "must_clarify": false,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_single_intent",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-005",
+      "request": {
+        "message": "我更想要直接决策建议，帮我做 offer decision。",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "offer.decision",
+          "offer.compare"
+        ],
+        "must_clarify": false,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_single_intent",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-006",
+      "request": {
+        "message": "如果奖学金多 1 万美元会怎样？请做 what-if 模拟。",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "offer.what_if",
+          "offer.compare"
+        ],
+        "must_clarify": false,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_single_intent",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-007",
+      "request": {
+        "message": "先帮我 recommend 一轮本科学校，偏 research-heavy，地理位置不限。",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.school.recommend"
+        ],
+        "must_clarify": false,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_single_intent",
+        "lang_zh",
+        "code_switch"
+      ]
+    },
+    {
+      "case_id": "ao-008",
+      "request": {
+        "message": "继续 UCLA 和 UCSD 的问答，这次优先复用已有资料。",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c",
+        "capability_hint": "undergrad.school.query",
+        "client_context": {
+          "eval_deepsearch": {
+            "triggered": false,
+            "reuse_hit": true,
+            "db_hit_ratio": 0.92,
+            "external_calls": 0,
+            "missing_fields_before": []
+          }
+        }
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.school.query"
+        ],
+        "must_clarify": false,
+        "max_done": 2,
+        "deepsearch": {
+          "triggered": false,
+          "reuse_hit": true,
+          "db_hit_ratio_min": 0.8,
+          "db_hit_ratio_max": 1.0,
+          "external_calls_max": 0,
+          "pair_id": "ucla_ucsd_query_reuse",
+          "phase": "warm"
+        }
+      },
+      "tags": [
+        "cat_single_intent",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-009",
+      "request": {
+        "message": "Give me an undergrad school recommendation list for computer science.",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.school.recommend"
+        ],
+        "must_clarify": false,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_single_intent",
+        "lang_en"
+      ]
+    },
+    {
+      "case_id": "ao-010",
+      "request": {
+        "message": "Compare my two offers and summarize trade-offs.",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "offer.compare",
+          "offer.decision"
+        ],
+        "must_clarify": false,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_single_intent",
+        "lang_en"
+      ]
+    },
+    {
+      "case_id": "ao-011",
+      "request": {
+        "message": "Build an ED/EA/RD application strategy for my profile.",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.strategy.plan"
+        ],
+        "must_clarify": false,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_single_intent",
+        "lang_en"
+      ]
+    },
+    {
+      "case_id": "ao-012",
+      "request": {
+        "message": "I need a final recommendation on which offer to accept.",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "offer.decision",
+          "offer.compare"
+        ],
+        "must_clarify": false,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_single_intent",
+        "lang_en"
+      ]
+    },
+    {
+      "case_id": "ao-013",
+      "request": {
+        "message": "这轮我想同时要：推荐学校、院校问答、申请策略。",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.school.recommend",
+          "undergrad.school.query"
+        ],
+        "must_clarify": false,
+        "pending_reason_any": [
+          "over_limit"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_multi_over_limit",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-014",
+      "request": {
+        "message": "给我一轮选校推荐、再做学校比较问答、最后给申请策略。",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.school.recommend",
+          "undergrad.school.query"
+        ],
+        "must_clarify": false,
+        "pending_reason_any": [
+          "over_limit"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_multi_over_limit",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-015",
+      "request": {
+        "message": "请一次性做 recommend + school query + strategy plan。",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.school.recommend",
+          "undergrad.school.query"
+        ],
+        "must_clarify": false,
+        "pending_reason_any": [
+          "over_limit"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_multi_over_limit",
+        "lang_zh",
+        "code_switch"
+      ]
+    },
+    {
+      "case_id": "ao-016",
+      "request": {
+        "message": "这一轮本科模块都跑一下：推荐、问答、策略。",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.school.recommend",
+          "undergrad.school.query"
+        ],
+        "must_clarify": false,
+        "pending_reason_any": [
+          "over_limit"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_multi_over_limit",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-017",
+      "request": {
+        "message": "本科择校三件事我都要：推荐名单、学校问答、申请计划。",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.school.recommend",
+          "undergrad.school.query"
+        ],
+        "must_clarify": false,
+        "pending_reason_any": [
+          "over_limit"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_multi_over_limit",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-018",
+      "request": {
+        "message": "我希望你本轮把推荐、问答、策略全部执行。",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.school.recommend",
+          "undergrad.school.query"
+        ],
+        "must_clarify": false,
+        "pending_reason_any": [
+          "over_limit"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_multi_over_limit",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-019",
+      "request": {
+        "message": "帮我同时跑 recommendation、query、strategy 三个能力。",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.school.recommend",
+          "undergrad.school.query"
+        ],
+        "must_clarify": false,
+        "pending_reason_any": [
+          "over_limit"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_multi_over_limit",
+        "lang_zh",
+        "code_switch"
+      ]
+    },
+    {
+      "case_id": "ao-020",
+      "request": {
+        "message": "一次性完成：学校推荐 + 学校问答 + 申请策略，as fast as possible。",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.school.recommend",
+          "undergrad.school.query"
+        ],
+        "must_clarify": false,
+        "pending_reason_any": [
+          "over_limit"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_multi_over_limit",
+        "lang_zh",
+        "code_switch"
+      ]
+    },
+    {
+      "case_id": "ao-021",
+      "request": {
+        "message": "Run recommendation, school query, and strategy in one turn.",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.school.recommend",
+          "undergrad.school.query"
+        ],
+        "must_clarify": false,
+        "pending_reason_any": [
+          "over_limit"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_multi_over_limit",
+        "lang_en"
+      ]
+    },
+    {
+      "case_id": "ao-022",
+      "request": {
+        "message": "Please do recommend + query + strategy this turn, 谢谢。",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.school.recommend",
+          "undergrad.school.query"
+        ],
+        "must_clarify": false,
+        "pending_reason_any": [
+          "over_limit"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_multi_over_limit",
+        "lang_en",
+        "code_switch"
+      ]
+    },
+    {
+      "case_id": "ao-023",
+      "request": {
+        "message": "请先比较两个 offer，然后直接替我做最终决策。",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "must_clarify": true,
+        "pending_reason_any": [
+          "conflict"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_conflict_clarify",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-024",
+      "request": {
+        "message": "帮我做 offer 决策，但先把两份录取对比清楚。",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "must_clarify": true,
+        "pending_reason_any": [
+          "conflict"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_conflict_clarify",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-025",
+      "request": {
+        "message": "先 compare offers，再 give me final decision，别分两轮。",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "must_clarify": true,
+        "pending_reason_any": [
+          "conflict"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_conflict_clarify",
+        "lang_zh",
+        "code_switch"
+      ]
+    },
+    {
+      "case_id": "ao-026",
+      "request": {
+        "message": "我希望你这轮同时做 offer compare 和 offer decision。",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "must_clarify": true,
+        "pending_reason_any": [
+          "conflict"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_conflict_clarify",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-027",
+      "request": {
+        "message": "Compare these two offers and make the final decision right now.",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "must_clarify": true,
+        "pending_reason_any": [
+          "conflict"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_conflict_clarify",
+        "lang_en"
+      ]
+    },
+    {
+      "case_id": "ao-028",
+      "request": {
+        "message": "Do offer comparison and final offer decision in one pass.",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "must_clarify": true,
+        "pending_reason_any": [
+          "conflict"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_conflict_clarify",
+        "lang_en"
+      ]
+    },
+    {
+      "case_id": "ao-029",
+      "request": {
+        "message": "嗯我有点乱，先聊聊吧。",
+        "student_id": null
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "must_clarify": true,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_low_confidence",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-030",
+      "request": {
+        "message": "最近申请压力很大，不确定先做哪一步。",
+        "student_id": null
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "must_clarify": true,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_low_confidence",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-031",
+      "request": {
+        "message": "I feel lost，这轮先别乱跑能力，帮我确认优先级。",
+        "student_id": null
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "must_clarify": true,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_low_confidence",
+        "lang_zh",
+        "code_switch"
+      ]
+    },
+    {
+      "case_id": "ao-032",
+      "request": {
+        "message": "Hey, I am not sure what I need yet.",
+        "student_id": null
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "must_clarify": true,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_low_confidence",
+        "lang_en"
+      ]
+    },
+    {
+      "case_id": "ao-033",
+      "request": {
+        "message": "继续执行排队任务。",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c",
+        "capability_hint": "undergrad.strategy.plan",
+        "client_context": {
+          "trigger": "queue.run_pending"
+        }
+      },
+      "seed": {
+        "pending": [
+          {
+            "capability": "undergrad.strategy.plan",
+            "reason": "over_limit",
+            "message": "queued"
+          },
+          {
+            "capability": "undergrad.school.query",
+            "reason": "over_limit",
+            "message": "queued"
+          }
+        ]
+      },
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.strategy.plan"
+        ],
+        "must_clarify": false,
+        "pending_contains": [
+          {
+            "capability": "undergrad.school.query",
+            "reason_any": [
+              "over_limit"
+            ]
+          }
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_explicit_recovery",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-034",
+      "request": {
+        "message": "继续队列里的 offer 任务。",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c",
+        "capability_hint": "offer.compare",
+        "client_context": {
+          "trigger": "queue.run_pending"
+        }
+      },
+      "seed": {
+        "pending": [
+          {
+            "capability": "offer.compare",
+            "reason": "over_limit",
+            "message": "queued"
+          },
+          {
+            "capability": "offer.what_if",
+            "reason": "over_limit",
+            "message": "queued"
+          }
+        ]
+      },
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "offer.compare"
+        ],
+        "must_clarify": false,
+        "pending_contains": [
+          {
+            "capability": "offer.what_if",
+            "reason_any": [
+              "over_limit"
+            ]
+          }
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_explicit_recovery",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-035",
+      "request": {
+        "message": "retry 这个步骤，please。",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c",
+        "capability_hint": "undergrad.school.recommend",
+        "client_context": {
+          "trigger": "step.retry",
+          "eval_force_fail": [
+            "undergrad.school.recommend"
+          ]
+        }
+      },
+      "seed": {
+        "failed": [
+          {
+            "capability": "undergrad.school.recommend",
+            "status": "failed",
+            "message": "prev fail",
+            "retry_count": 1
+          }
+        ]
+      },
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.school.recommend"
+        ],
+        "must_clarify": false,
+        "pending_reason_any": [
+          "requires_user_trigger"
+        ],
+        "recoverable_actions_any": [
+          "step.retry",
+          "queue.run_pending"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_explicit_recovery",
+        "lang_zh",
+        "code_switch"
+      ]
+    },
+    {
+      "case_id": "ao-036",
+      "request": {
+        "message": "Retry this failed decision step.",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c",
+        "capability_hint": "offer.decision",
+        "client_context": {
+          "trigger": "step.retry",
+          "eval_force_fail": [
+            "offer.decision"
+          ]
+        }
+      },
+      "seed": {
+        "failed": [
+          {
+            "capability": "offer.decision",
+            "status": "failed",
+            "message": "prev fail",
+            "retry_count": 1
+          }
+        ]
+      },
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "offer.decision"
+        ],
+        "must_clarify": false,
+        "pending_reason_any": [
+          "requires_user_trigger"
+        ],
+        "recoverable_actions_any": [
+          "step.retry",
+          "queue.run_pending"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_explicit_recovery",
+        "lang_en"
+      ]
+    },
+    {
+      "case_id": "ao-037",
+      "request": {
+        "message": "给我推荐一些本科学校。",
+        "student_id": "not-a-uuid"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "error_code_any": [
+          "INVALID_INPUT"
+        ],
+        "must_clarify": false,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_input_error",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-038",
+      "request": {
+        "message": "Continue the pending step.",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c",
+        "capability_hint": "non.existent.capability",
+        "client_context": {
+          "trigger": "queue.run_pending"
+        }
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "error_code_any": [
+          "INVALID_INPUT"
+        ],
+        "must_clarify": false,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_input_error",
+        "lang_en"
+      ]
+    },
+    {
+      "case_id": "ao-039",
+      "request": {
+        "message": "请在降级上下文下给我本科推荐。",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {
+        "recent_messages": [
+          "user: 我更偏好美东",
+          "assistant: 已记录偏好"
+        ]
+      },
+      "context_profile": "memory_degraded",
+      "expect": {
+        "primary_any": [
+          "undergrad.school.recommend",
+          "undergrad.school.query"
+        ],
+        "must_clarify": false,
+        "memory_degraded": true,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_memory_degraded",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-040",
+      "request": {
+        "message": "Compare my offers under degraded memory context.",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {
+        "recent_messages": [
+          "user: cost matters",
+          "assistant: acknowledged"
+        ]
+      },
+      "context_profile": "memory_degraded",
+      "expect": {
+        "primary_any": [
+          "offer.compare",
+          "offer.decision"
+        ],
+        "must_clarify": false,
+        "memory_degraded": true,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_memory_degraded",
+        "lang_en"
+      ]
+    },
+    {
+      "case_id": "ao-041",
+      "request": {
+        "message": "请给我一份本科选校推荐，focus 在 CS，budget 5 万美元。（扩展样本B）",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.school.recommend"
+        ],
+        "must_clarify": false,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_single_intent",
+        "lang_zh",
+        "code_switch"
+      ]
+    },
+    {
+      "case_id": "ao-042",
+      "request": {
+        "message": "我想问 UCLA 和 UCSD 的课程差异，先做院校问答。（扩展样本B）",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c",
+        "capability_hint": "undergrad.school.query",
+        "client_context": {
+          "eval_deepsearch": {
+            "triggered": true,
+            "reuse_hit": false,
+            "db_hit_ratio": 0.18,
+            "external_calls": 3,
+            "missing_fields_before": [
+              "tuition_out_of_state",
+              "sat_50"
+            ]
+          }
+        }
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.school.query"
+        ],
+        "must_clarify": false,
+        "max_done": 2,
+        "deepsearch": {
+          "triggered": true,
+          "reuse_hit": false,
+          "db_hit_ratio_min": 0.0,
+          "db_hit_ratio_max": 0.3,
+          "external_calls_max": 4,
+          "pair_id": "ucla_ucsd_query_reuse_b",
+          "phase": "cold"
+        }
+      },
+      "tags": [
+        "cat_single_intent",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-043",
+      "request": {
+        "message": "帮我做一个 ED/EA/RD 申请节奏规划。（扩展样本B）",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.strategy.plan"
+        ],
+        "must_clarify": false,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_single_intent",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-044",
+      "request": {
+        "message": "我有两个录取，先做 offer 对比，不用先下最终结论。（扩展样本B）",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "offer.compare"
+        ],
+        "must_clarify": false,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_single_intent",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-045",
+      "request": {
+        "message": "我更想要直接决策建议，帮我做 offer decision。（扩展样本B）",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "offer.decision",
+          "offer.compare"
+        ],
+        "must_clarify": false,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_single_intent",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-046",
+      "request": {
+        "message": "如果奖学金多 1 万美元会怎样？请做 what-if 模拟。（扩展样本B）",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "offer.what_if",
+          "offer.compare"
+        ],
+        "must_clarify": false,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_single_intent",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-047",
+      "request": {
+        "message": "先帮我 recommend 一轮本科学校，偏 research-heavy，地理位置不限。（扩展样本B）",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.school.recommend"
+        ],
+        "must_clarify": false,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_single_intent",
+        "lang_zh",
+        "code_switch"
+      ]
+    },
+    {
+      "case_id": "ao-048",
+      "request": {
+        "message": "继续 UCLA 和 UCSD 的问答，这次优先复用已有资料。（扩展样本B）",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c",
+        "capability_hint": "undergrad.school.query",
+        "client_context": {
+          "eval_deepsearch": {
+            "triggered": false,
+            "reuse_hit": true,
+            "db_hit_ratio": 0.92,
+            "external_calls": 0,
+            "missing_fields_before": []
+          }
+        }
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.school.query"
+        ],
+        "must_clarify": false,
+        "max_done": 2,
+        "deepsearch": {
+          "triggered": false,
+          "reuse_hit": true,
+          "db_hit_ratio_min": 0.8,
+          "db_hit_ratio_max": 1.0,
+          "external_calls_max": 0,
+          "pair_id": "ucla_ucsd_query_reuse_b",
+          "phase": "warm"
+        }
+      },
+      "tags": [
+        "cat_single_intent",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-049",
+      "request": {
+        "message": "Give me an undergrad school recommendation list for computer science. (extended set B)",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.school.recommend"
+        ],
+        "must_clarify": false,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_single_intent",
+        "lang_en"
+      ]
+    },
+    {
+      "case_id": "ao-050",
+      "request": {
+        "message": "Compare my two offers and summarize trade-offs. (extended set B)",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "offer.compare",
+          "offer.decision"
+        ],
+        "must_clarify": false,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_single_intent",
+        "lang_en"
+      ]
+    },
+    {
+      "case_id": "ao-051",
+      "request": {
+        "message": "Build an ED/EA/RD application strategy for my profile. (extended set B)",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.strategy.plan"
+        ],
+        "must_clarify": false,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_single_intent",
+        "lang_en"
+      ]
+    },
+    {
+      "case_id": "ao-052",
+      "request": {
+        "message": "I need a final recommendation on which offer to accept. (extended set B)",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "offer.decision",
+          "offer.compare"
+        ],
+        "must_clarify": false,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_single_intent",
+        "lang_en"
+      ]
+    },
+    {
+      "case_id": "ao-053",
+      "request": {
+        "message": "这轮我想同时要：推荐学校、院校问答、申请策略。（扩展样本B）",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.school.recommend",
+          "undergrad.school.query"
+        ],
+        "must_clarify": false,
+        "pending_reason_any": [
+          "over_limit"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_multi_over_limit",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-054",
+      "request": {
+        "message": "给我一轮选校推荐、再做学校比较问答、最后给申请策略。（扩展样本B）",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.school.recommend",
+          "undergrad.school.query"
+        ],
+        "must_clarify": false,
+        "pending_reason_any": [
+          "over_limit"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_multi_over_limit",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-055",
+      "request": {
+        "message": "请一次性做 recommend + school query + strategy plan。（扩展样本B）",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.school.recommend",
+          "undergrad.school.query"
+        ],
+        "must_clarify": false,
+        "pending_reason_any": [
+          "over_limit"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_multi_over_limit",
+        "lang_zh",
+        "code_switch"
+      ]
+    },
+    {
+      "case_id": "ao-056",
+      "request": {
+        "message": "这一轮本科模块都跑一下：推荐、问答、策略。（扩展样本B）",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.school.recommend",
+          "undergrad.school.query"
+        ],
+        "must_clarify": false,
+        "pending_reason_any": [
+          "over_limit"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_multi_over_limit",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-057",
+      "request": {
+        "message": "本科择校三件事我都要：推荐名单、学校问答、申请计划。（扩展样本B）",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.school.recommend",
+          "undergrad.school.query"
+        ],
+        "must_clarify": false,
+        "pending_reason_any": [
+          "over_limit"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_multi_over_limit",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-058",
+      "request": {
+        "message": "我希望你本轮把推荐、问答、策略全部执行。（扩展样本B）",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.school.recommend",
+          "undergrad.school.query"
+        ],
+        "must_clarify": false,
+        "pending_reason_any": [
+          "over_limit"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_multi_over_limit",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-059",
+      "request": {
+        "message": "帮我同时跑 recommendation、query、strategy 三个能力。（扩展样本B）",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.school.recommend",
+          "undergrad.school.query"
+        ],
+        "must_clarify": false,
+        "pending_reason_any": [
+          "over_limit"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_multi_over_limit",
+        "lang_zh",
+        "code_switch"
+      ]
+    },
+    {
+      "case_id": "ao-060",
+      "request": {
+        "message": "一次性完成：学校推荐 + 学校问答 + 申请策略，as fast as possible。（扩展样本B）",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.school.recommend",
+          "undergrad.school.query"
+        ],
+        "must_clarify": false,
+        "pending_reason_any": [
+          "over_limit"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_multi_over_limit",
+        "lang_zh",
+        "code_switch"
+      ]
+    },
+    {
+      "case_id": "ao-061",
+      "request": {
+        "message": "Run recommendation, school query, and strategy in one turn. (extended set B)",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.school.recommend",
+          "undergrad.school.query"
+        ],
+        "must_clarify": false,
+        "pending_reason_any": [
+          "over_limit"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_multi_over_limit",
+        "lang_en"
+      ]
+    },
+    {
+      "case_id": "ao-062",
+      "request": {
+        "message": "Please do recommend + query + strategy this turn, 谢谢。 (extended set B)",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.school.recommend",
+          "undergrad.school.query"
+        ],
+        "must_clarify": false,
+        "pending_reason_any": [
+          "over_limit"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_multi_over_limit",
+        "lang_en",
+        "code_switch"
+      ]
+    },
+    {
+      "case_id": "ao-063",
+      "request": {
+        "message": "请先比较两个 offer，然后直接替我做最终决策。（扩展样本B）",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "must_clarify": true,
+        "pending_reason_any": [
+          "conflict"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_conflict_clarify",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-064",
+      "request": {
+        "message": "帮我做 offer 决策，但先把两份录取对比清楚。（扩展样本B）",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "must_clarify": true,
+        "pending_reason_any": [
+          "conflict"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_conflict_clarify",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-065",
+      "request": {
+        "message": "先 compare offers，再 give me final decision，别分两轮。（扩展样本B）",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "must_clarify": true,
+        "pending_reason_any": [
+          "conflict"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_conflict_clarify",
+        "lang_zh",
+        "code_switch"
+      ]
+    },
+    {
+      "case_id": "ao-066",
+      "request": {
+        "message": "我希望你这轮同时做 offer compare 和 offer decision。（扩展样本B）",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "must_clarify": true,
+        "pending_reason_any": [
+          "conflict"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_conflict_clarify",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-067",
+      "request": {
+        "message": "Compare these two offers and make the final decision right now. (extended set B)",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "must_clarify": true,
+        "pending_reason_any": [
+          "conflict"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_conflict_clarify",
+        "lang_en"
+      ]
+    },
+    {
+      "case_id": "ao-068",
+      "request": {
+        "message": "Do offer comparison and final offer decision in one pass. (extended set B)",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "must_clarify": true,
+        "pending_reason_any": [
+          "conflict"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_conflict_clarify",
+        "lang_en"
+      ]
+    },
+    {
+      "case_id": "ao-069",
+      "request": {
+        "message": "嗯我有点乱，先聊聊吧。（扩展样本B）",
+        "student_id": null
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "must_clarify": true,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_low_confidence",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-070",
+      "request": {
+        "message": "最近申请压力很大，不确定先做哪一步。（扩展样本B）",
+        "student_id": null
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "must_clarify": true,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_low_confidence",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-071",
+      "request": {
+        "message": "I feel lost，这轮先别乱跑能力，帮我确认优先级。（扩展样本B）",
+        "student_id": null
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "must_clarify": true,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_low_confidence",
+        "lang_zh",
+        "code_switch"
+      ]
+    },
+    {
+      "case_id": "ao-072",
+      "request": {
+        "message": "Hey, I am not sure what I need yet. (extended set B)",
+        "student_id": null
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "must_clarify": true,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_low_confidence",
+        "lang_en"
+      ]
+    },
+    {
+      "case_id": "ao-073",
+      "request": {
+        "message": "继续执行排队任务。（扩展样本B）",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c",
+        "capability_hint": "undergrad.strategy.plan",
+        "client_context": {
+          "trigger": "queue.run_pending"
+        }
+      },
+      "seed": {
+        "pending": [
+          {
+            "capability": "undergrad.strategy.plan",
+            "reason": "over_limit",
+            "message": "queued"
+          },
+          {
+            "capability": "undergrad.school.query",
+            "reason": "over_limit",
+            "message": "queued"
+          }
+        ]
+      },
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.strategy.plan"
+        ],
+        "must_clarify": false,
+        "pending_contains": [
+          {
+            "capability": "undergrad.school.query",
+            "reason_any": [
+              "over_limit"
+            ]
+          }
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_explicit_recovery",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-074",
+      "request": {
+        "message": "继续队列里的 offer 任务。（扩展样本B）",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c",
+        "capability_hint": "offer.compare",
+        "client_context": {
+          "trigger": "queue.run_pending"
+        }
+      },
+      "seed": {
+        "pending": [
+          {
+            "capability": "offer.compare",
+            "reason": "over_limit",
+            "message": "queued"
+          },
+          {
+            "capability": "offer.what_if",
+            "reason": "over_limit",
+            "message": "queued"
+          }
+        ]
+      },
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "offer.compare"
+        ],
+        "must_clarify": false,
+        "pending_contains": [
+          {
+            "capability": "offer.what_if",
+            "reason_any": [
+              "over_limit"
+            ]
+          }
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_explicit_recovery",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-075",
+      "request": {
+        "message": "retry 这个步骤，please。（扩展样本B）",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c",
+        "capability_hint": "undergrad.school.recommend",
+        "client_context": {
+          "trigger": "step.retry",
+          "eval_force_fail": [
+            "undergrad.school.recommend"
+          ]
+        }
+      },
+      "seed": {
+        "failed": [
+          {
+            "capability": "undergrad.school.recommend",
+            "status": "failed",
+            "message": "prev fail",
+            "retry_count": 1
+          }
+        ]
+      },
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "undergrad.school.recommend"
+        ],
+        "must_clarify": false,
+        "pending_reason_any": [
+          "requires_user_trigger"
+        ],
+        "recoverable_actions_any": [
+          "step.retry",
+          "queue.run_pending"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_explicit_recovery",
+        "lang_zh",
+        "code_switch"
+      ]
+    },
+    {
+      "case_id": "ao-076",
+      "request": {
+        "message": "Retry this failed decision step. (extended set B)",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c",
+        "capability_hint": "offer.decision",
+        "client_context": {
+          "trigger": "step.retry",
+          "eval_force_fail": [
+            "offer.decision"
+          ]
+        }
+      },
+      "seed": {
+        "failed": [
+          {
+            "capability": "offer.decision",
+            "status": "failed",
+            "message": "prev fail",
+            "retry_count": 1
+          }
+        ]
+      },
+      "context_profile": "normal",
+      "expect": {
+        "primary_any": [
+          "offer.decision"
+        ],
+        "must_clarify": false,
+        "pending_reason_any": [
+          "requires_user_trigger"
+        ],
+        "recoverable_actions_any": [
+          "step.retry",
+          "queue.run_pending"
+        ],
+        "max_done": 2
+      },
+      "tags": [
+        "cat_explicit_recovery",
+        "lang_en"
+      ]
+    },
+    {
+      "case_id": "ao-077",
+      "request": {
+        "message": "给我推荐一些本科学校。（扩展样本B）",
+        "student_id": "not-a-uuid"
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "error_code_any": [
+          "INVALID_INPUT"
+        ],
+        "must_clarify": false,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_input_error",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-078",
+      "request": {
+        "message": "Continue the pending step. (extended set B)",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c",
+        "capability_hint": "non.existent.capability",
+        "client_context": {
+          "trigger": "queue.run_pending"
+        }
+      },
+      "seed": {},
+      "context_profile": "normal",
+      "expect": {
+        "error_code_any": [
+          "INVALID_INPUT"
+        ],
+        "must_clarify": false,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_input_error",
+        "lang_en"
+      ]
+    },
+    {
+      "case_id": "ao-079",
+      "request": {
+        "message": "请在降级上下文下给我本科推荐。（扩展样本B）",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {
+        "recent_messages": [
+          "user: 我更偏好美东",
+          "assistant: 已记录偏好"
+        ]
+      },
+      "context_profile": "memory_degraded",
+      "expect": {
+        "primary_any": [
+          "undergrad.school.recommend",
+          "undergrad.school.query"
+        ],
+        "must_clarify": false,
+        "memory_degraded": true,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_memory_degraded",
+        "lang_zh"
+      ]
+    },
+    {
+      "case_id": "ao-080",
+      "request": {
+        "message": "Compare my offers under degraded memory context. (extended set B)",
+        "student_id": "9b46c72c-d57b-48e5-8409-4c9770db0f2c"
+      },
+      "seed": {
+        "recent_messages": [
+          "user: cost matters",
+          "assistant: acknowledged"
+        ]
+      },
+      "context_profile": "memory_degraded",
+      "expect": {
+        "primary_any": [
+          "offer.compare",
+          "offer.decision"
+        ],
+        "must_clarify": false,
+        "memory_degraded": true,
+        "max_done": 2
+      },
+      "tags": [
+        "cat_memory_degraded",
+        "lang_en"
+      ]
+    }
+  ]
+}

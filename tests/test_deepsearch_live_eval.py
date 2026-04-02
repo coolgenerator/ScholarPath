@@ -7,6 +7,11 @@ import pytest
 
 from scholarpath.evals import deepsearch_live as live_eval
 
+pytestmark = [
+    pytest.mark.filterwarnings("error::RuntimeWarning"),
+    pytest.mark.filterwarnings("error::ResourceWarning"),
+]
+
 
 def test_compute_duplicate_ratio_from_rows() -> None:
     rows = [

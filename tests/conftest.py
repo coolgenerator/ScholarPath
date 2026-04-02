@@ -113,22 +113,62 @@ async def client(engine):
 
     # Override embedding service to avoid real API calls
     from scholarpath.llm.embeddings import EmbeddingService
+    from scholarpath.llm.client import LLMClient
 
     mock_embedding_svc = AsyncMock(spec=EmbeddingService)
     mock_embedding_svc.embed_student_profile.return_value = [0.0] * 10
     mock_embedding_svc.embed_query.return_value = [0.0] * 10
     mock_embedding_svc.embed_text.return_value = [0.0] * 10
 
-    from scholarpath.api.deps import get_embeddings
+    mock_llm = MagicMock(spec=LLMClient)
+    mock_llm.complete = AsyncMock(return_value="test llm response")
+    mock_llm.complete_json = AsyncMock(return_value={})
+
+    from scholarpath.api.deps import get_embeddings, get_llm
 
     async def _override_embeddings():
         yield mock_embedding_svc
 
+    def _override_llm():
+        return mock_llm
+
     app.dependency_overrides[get_session] = _override_session
     app.dependency_overrides[get_embeddings] = _override_embeddings
+    app.dependency_overrides[get_llm] = _override_llm
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
 
     app.dependency_overrides.clear()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _dispose_app_db_engine_after_each_test():
+    """Aggressively drain pooled asyncpg connections to avoid loop teardown warnings."""
+    yield
+    try:
+        from scholarpath.db.session import engine as app_engine
+    except Exception:
+        return
+    try:
+        await app_engine.dispose()
+    except Exception:
+        return
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _dispose_app_db_engine_on_exit():
+    """Ensure global asyncpg engine is disposed to avoid unclosed connection warnings."""
+    yield
+    try:
+        from scholarpath.db.session import engine as app_engine
+    except Exception:
+        return
+
+    try:
+        import asyncio
+
+        asyncio.run(app_engine.dispose())
+    except Exception:
+        return

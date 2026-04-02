@@ -26,6 +26,11 @@ dependencies = [
     "websockets",
     "sse-starlette",
     "google-genai",
+    "pandas",
+    "scikit-learn",
+    "dowhy==0.14",
+    "econml==0.16.0",
+    "causal-learn==0.1.4.5",
 ]
 
 [project.optional-dependencies]
@@ -34,7 +39,9 @@ dev = [
     "pytest-asyncio",
     "pytest-xdist",
     "pytest-cov",
+    "ruff",
     "httpx",
+    "aiosqlite",
     "fakeredis",
 ]
 
