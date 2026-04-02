@@ -166,7 +166,7 @@ export function ProfilePanel({ studentId }: ProfilePanelProps) {
   const p = (key: string): string => String(draft[key] ?? '');
 
   return (
-    <section className="w-full bg-background flex flex-col h-full overflow-hidden font-body">
+    <section className="w-full bg-background flex flex-col h-full overflow-hidden font-body" data-testid="profile-panel">
       <header className="h-16 px-10 flex items-center justify-between sticky top-0 bg-background/90 backdrop-blur-md z-20 border-b border-outline-variant/10">
         <div>
           <h1 className="font-headline text-lg font-black text-on-surface tracking-tight">

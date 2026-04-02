@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useMemo, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router';
 import { locales, Locale } from '../i18n';
+import { api } from '../lib/api';
 
 // localStorage helpers for Set<string> persistence
 function loadSet(key: string): Set<string> {
@@ -129,18 +130,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // Auto-seed schools + demo student on startup
   useEffect(() => {
     // Always seed schools (idempotent — skips existing)
-    fetch('/api/api/seed/schools', { method: 'POST' }).catch(() => {});
+    api.post('/seed/schools').catch(() => {});
 
     if (studentId) return;
-    fetch('/api/api/seed/demo-student', { method: 'POST' })
-      .then((r) => r.json())
+    api.post<{ student_id?: string }>('/seed/demo-student')
       .then((data) => {
         if (data.student_id) {
           setStudentId(data.student_id);
           setStudentName('Demo Student');
           // Also seed demo evaluations + offers (idempotent)
-          fetch('/api/api/seed/demo-evaluations', { method: 'POST' }).catch(() => {});
-          fetch('/api/api/seed/demo-offers', { method: 'POST' }).catch(() => {});
+          api.post('/seed/demo-evaluations').catch(() => {});
+          api.post('/seed/demo-offers').catch(() => {});
         }
       })
       .catch(() => {});

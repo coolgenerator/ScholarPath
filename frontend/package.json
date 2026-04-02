@@ -6,7 +6,14 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite",
-    "dev:proxy": "vite --host 0.0.0.0"
+    "dev:proxy": "vite --host 0.0.0.0",
+    "e2e": "playwright test",
+    "e2e:contract": "playwright test --project=contract",
+    "e2e:live": "playwright test --project=live",
+    "e2e:live:legacy": "playwright test --project=live --grep @legacy-probe",
+    "e2e:live:legacy:ci": "PLAYWRIGHT_SKIP_WEBSERVER=1 PLAYWRIGHT_BASE_URL=http://127.0.0.1:5173 playwright test --project=live --grep @legacy-probe",
+    "e2e:full": "playwright test --project=contract --project=live",
+    "e2e:full:ci": "PLAYWRIGHT_SKIP_WEBSERVER=1 PLAYWRIGHT_BASE_URL=http://127.0.0.1:5173 playwright test --project=contract --project=live"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",
@@ -72,6 +79,7 @@
     "vaul": "1.1.2"
   },
   "devDependencies": {
+    "@playwright/test": "1.55.0",
     "@tailwindcss/vite": "4.1.12",
     "@vitejs/plugin-react": "4.7.0",
     "tailwindcss": "4.1.12",

@@ -10,12 +10,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install Python deps
 COPY pyproject.toml .
 COPY scholarpath/__init__.py scholarpath/__init__.py
-RUN pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir -e ".[dev]"
 
 # Copy application code
 COPY alembic.ini .
 COPY alembic/ alembic/
 COPY scholarpath/ scholarpath/
+COPY tests/ tests/
 COPY entrypoint.sh .
 RUN chmod +x entrypoint.sh
 

@@ -46,7 +46,7 @@ export function HistoryPanel() {
   };
 
   return (
-    <section className="w-full bg-background flex flex-col h-full overflow-hidden font-body">
+    <section className="w-full bg-background flex flex-col h-full overflow-hidden font-body" data-testid="history-panel">
       <header className="h-16 px-10 flex items-center justify-between sticky top-0 bg-background/90 backdrop-blur-md z-20 border-b border-outline-variant/10">
         <div>
           <h1 className="font-headline text-lg font-black text-on-surface tracking-tight">{t.hist_title}</h1>
@@ -90,6 +90,7 @@ export function HistoryPanel() {
             return (
               <div
                 key={s.id}
+                data-testid="history-session-item"
                 className={`relative flex items-start gap-5 p-5 rounded-2xl border transition-all cursor-pointer ${
                   isCurrent
                     ? 'bg-primary/5 border-primary/20 shadow-sm'

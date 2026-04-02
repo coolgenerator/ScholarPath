@@ -67,6 +67,7 @@ function TopBar() {
       <div ref={dropdownRef} className="relative">
         <button
           onClick={() => setAvatarOpen(!avatarOpen)}
+          data-testid="topbar-avatar-toggle"
           className="flex items-center gap-2 pl-2 pr-1 py-1 rounded-xl hover:bg-surface-container-high/40 transition-colors"
         >
           <span className="text-xs font-bold text-on-surface hidden sm:inline">{studentName ?? 'Student'}</span>
@@ -86,6 +87,7 @@ function TopBar() {
             {/* Profile */}
             <button
               onClick={() => { setActiveNav('profile'); setAvatarOpen(false); }}
+              data-testid="topbar-profile"
               className="w-full text-left px-4 py-2.5 text-sm text-on-surface hover:bg-surface-container-high/40 transition-colors flex items-center gap-3"
             >
               <span className="material-symbols-outlined text-lg text-on-surface-variant">person</span>

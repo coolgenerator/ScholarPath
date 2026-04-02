@@ -78,7 +78,10 @@ scholarpath/.benchmarks/
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+frontend/output/playwright/
 frontend/package-lock.json
+!frontend/src/lib/
+!frontend/src/lib/**
 
 # Redis dump
 dump.rdb

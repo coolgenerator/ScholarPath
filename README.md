@@ -100,9 +100,9 @@ ScholarPath helps Chinese students navigate US undergraduate admissions through 
 | Embeddings | Google Gemini `gemini-embedding-001` (3072-dim) |
 | Database | PostgreSQL 16 + pgvector for semantic search |
 | Cache | Redis 7 (chat memory, session state, Celery broker) |
-| Task Queue | Celery (async DeepSearch, conflict detection) |
-| Causal Engine | networkx + numpy (DAG, Noisy-OR, do-calculus) |
-| Deploy | Docker Compose (5 services) |
+| Task Queue | Celery (async DeepSearch, conflict detection, causal training lifecycle) |
+| Causal Engine | Legacy DAG (networkx) + PyWhy stack (causal-learn, DoWhy, EconML) |
+| Deploy | Docker Compose (6 services, incl. isolated `causal_train` worker) |
 
 ## Key Features
 
@@ -124,8 +124,9 @@ git clone https://github.com/your-username/ScholarPath.git
 cd ScholarPath
 docker compose up --build -d
 
-# Verify Celery queues (must include deep_search + conflict)
+# Verify Celery queues
 docker compose exec celery_worker celery -A scholarpath.tasks.celery_app inspect active_queues
+docker compose exec celery_causal_train_worker celery -A scholarpath.tasks.celery_app inspect active_queues
 
 # One-time cleanup before a fresh rollout (records + clears backlog)
 docker compose exec redis redis-cli -n 0 LLEN deep_search
@@ -135,13 +136,13 @@ docker compose exec redis redis-cli -n 0 DEL deep_search conflict
 # Services:
 #   http://localhost:5173  — Frontend (Vite)
 #   http://localhost:8000  — Backend API (FastAPI)
-#   localhost:5432         — PostgreSQL + pgvector
-#   localhost:6379         — Redis
+#   localhost:55432        — PostgreSQL + pgvector
+#   localhost:56379        — Redis
 
 # Seed school data + demo student
-curl -X POST http://localhost:8000/api/api/seed/schools
-curl -X POST http://localhost:8000/api/api/seed/demo-student
-curl -X POST http://localhost:8000/api/api/seed/demo-evaluations
+curl -X POST http://localhost:8000/api/seed/schools
+curl -X POST http://localhost:8000/api/seed/demo-student
+curl -X POST http://localhost:8000/api/seed/demo-evaluations
 
 # Enrich with real data via LLM
 curl -X POST http://localhost:8000/api/enrich/schools
@@ -157,6 +158,45 @@ python -m pytest -q
 
 # Parallel (recommended on multi-core machines)
 python -m pytest -n auto -q
+
+# Playwright full blocking regression (contract + live)
+npm --prefix frontend run e2e:full
+
+# Playwright legacy route probe only (fail-fast hard-cut check)
+npm --prefix frontend run e2e:live:legacy
+
+# CI-equivalent gate (requires docker-compose frontend/app stack already running)
+npm --prefix frontend run e2e:full:ci
+
+# Advisor orchestrator gold eval (dual lane: stub + real)
+python -m scholarpath.scripts.advisor_orchestrator_eval \
+  --execution-lane both \
+  --real-capabilities undergrad.school.recommend,undergrad.school.query,offer.compare,offer.what_if \
+  --warning-gate
+```
+
+### Causal Training (High-Quality Local Profile)
+
+```bash
+# Recommended Docker Desktop resources on this machine profile:
+# CPU=8, Memory=12GB, Swap>=4GB
+
+# Optional: seed real+synthetic training assets only
+python -m scholarpath.scripts.causal_build_training_assets \
+  --seed-cases 40 \
+  --synthetic-multiplier 4
+
+# Activate/seed/train/promote via Celery with parallel bootstrap + checkpoint + early stop
+python -m scholarpath.scripts.causal_activate_pywhy \
+  --seed-cases 40 \
+  --synthetic-multiplier 4 \
+  --bootstrap-iters 300 \
+  --stability-threshold 0.75 \
+  --lookback-days 540 \
+  --bootstrap-parallelism 4 \
+  --checkpoint-interval 25 \
+  --early-stop-patience 40 \
+  --resume-from-checkpoint
 ```
 
 ### Environment Variables
@@ -176,27 +216,52 @@ WEB_SEARCH_API_URL=
 WEB_SEARCH_API_KEY=
 GOOGLE_API_KEY=your-gemini-api-key
 SCORECARD_API_KEY=your-data-gov-college-scorecard-api-key
+CAUSAL_ENGINE_MODE=shadow
+CAUSAL_MODEL_VERSION=latest_stable
+CAUSAL_PROXY_LABELS_ENABLED=true
+CAUSAL_SHADOW_LOGGING=true
 # Optional: tune DeepSearch throughput
 DEEPSEARCH_SCHOOL_CONCURRENCY=8
 DEEPSEARCH_SOURCE_HTTP_CONCURRENCY=16
 DEEPSEARCH_SELF_EXTRACT_CONCURRENCY=12
 DEEPSEARCH_INTERNAL_WEBSEARCH_CONCURRENCY=8
+# Advisor internal school-query DeepSearch补齐（缺关键字段时触发）
+ADVISOR_INTERNAL_DEEPSEARCH_ENABLED=true
+ADVISOR_INTERNAL_DEEPSEARCH_FRESHNESS_DAYS=90
+ADVISOR_INTERNAL_DEEPSEARCH_MAX_INTERNAL_WEBSEARCH_PER_SCHOOL=1
+ADVISOR_INTERNAL_DEEPSEARCH_BUDGET_MODE=balanced
+ADVISOR_STYLE_POLISH_ENABLED=true
+ADVISOR_STYLE_POLISH_CAPABILITIES=undergrad.school.recommend,offer.compare,offer.what_if
+ADVISOR_STYLE_POLISH_MAX_TOKENS=600
+ADVISOR_STYLE_POLISH_TEMPERATURE=0.2
 ```
 
 ## API Endpoints
 
 | Endpoint | Description |
 |----------|-------------|
-| `WS /api/chat/chat/{sessionId}` | Real-time chat via WebSocket |
-| `GET /api/chat/history/{sessionId}` | Load chat history |
+| `WS /api/advisor/v1/sessions/{session_id}/stream` | Advisor v1 unified streaming endpoint |
+| `GET /api/advisor/v1/sessions/{session_id}/history` | Load advisor session history |
 | `GET /api/schools/` | Search & list schools |
 | `GET /api/evaluations/students/{id}/tiers` | Tiered school list |
 | `POST /api/offers/students/{id}/offers` | Record admission offers |
+| `GET /api/offers/students/{id}/offers/compare` | Financial + causal offer comparison matrix |
 | `POST /api/simulations/students/{id}/schools/{id}/what-if` | Causal what-if simulation |
+| `POST /api/simulations/students/{id}/compare-scenarios` | Multi-scenario (cross-school) causal comparison |
 | `POST /api/reports/students/{id}/offers/{id}/go-no-go` | Generate Go/No-Go report |
 | `POST /api/vectors/search/schools` | pgvector semantic school search |
+| `POST /api/tasks/causal/train` | Trigger full-graph PyWhy training task |
+| `POST /api/tasks/causal/promote/{modelVersion}` | Promote trained model to active |
+| `POST /api/tasks/causal/shadow-audit` | Trigger shadow comparison quality audit |
+| `GET /api/tasks/{task_id}` | Poll queued task status |
+| `GET /api/tasks/{task_id}/result` | Fetch completed task result |
 | `GET /api/usage/summary` | Token usage analytics (`?days=` optional) |
 | `GET /api/sessions/student/{id}` | List chat sessions |
+
+`/api/chat/*` has been fully removed and is no longer mounted.
+Legacy duplicated paths are hard-cut and intentionally return `404`:
+`/api/api/seed/*`, `/api/offers/offers/*`, `/api/reports/reports/*`, `/api/tasks/tasks/*`,
+`/api/schools/schools/*`, `/api/evaluations/evaluations/*`, `/api/sessions/sessions/*`.
 
 ## Project Structure
 
@@ -210,7 +275,8 @@ scholarpath/
 │   ├── mediation.py          # Causal pathway decomposition
 │   ├── backdoor.py           # Confounder adjustment
 │   └── go_no_go.py           # Composite scoring engine
-├── chat/             # Chat agent + guided intake handlers
+├── advisor/          # Advisor orchestrator + contracts + adapters
+├── chat/             # Shared memory + handler layer reused by advisor adapters
 ├── search/           # Open DeepSearch engine
 ├── services/         # Business logic (recommendation, evaluation)
 ├── llm/              # LLM client + embeddings + usage tracking

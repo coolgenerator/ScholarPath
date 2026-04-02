@@ -36,7 +36,10 @@ export function Sidebar() {
   let lastGroup: string | null = null;
 
   return (
-    <aside className={`flex flex-col ${sidebarCollapsed ? 'w-[72px]' : 'w-64'} h-full py-8 bg-surface-container-low border-r border-outline-variant/20 fixed left-0 top-0 bottom-0 z-50 transition-all duration-300`}>
+    <aside
+      className={`flex flex-col ${sidebarCollapsed ? 'w-[72px]' : 'w-64'} h-full py-8 bg-surface-container-low border-r border-outline-variant/20 fixed left-0 top-0 bottom-0 z-50 transition-all duration-300`}
+      data-testid="sidebar"
+    >
       {/* Collapse toggle */}
       <button
         onClick={toggleSidebar}
@@ -93,6 +96,7 @@ export function Sidebar() {
                     : 'flex items-center gap-4 px-4 py-3 text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-all duration-200 rounded-xl group'
                 }
                 href="#"
+                data-testid={`nav-${item.id}`}
                 onClick={(e) => {
                   e.preventDefault();
                   setActiveNav(item.id);
@@ -119,6 +123,7 @@ export function Sidebar() {
       <div className="px-4 pb-4 shrink-0 relative z-[60]">
         <button
           onClick={handleNewSession}
+          data-testid="nav-new-session"
           className="w-full py-3 px-4 bg-primary text-on-primary rounded-xl font-bold text-sm flex items-center justify-center gap-2 hover:brightness-110 transition-all shadow-md cursor-pointer"
         >
           <span className="material-symbols-outlined text-sm">add</span>
