@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from scholarpath.causal import (
-    AdmissionDAGBuilder,
-    NoisyORPropagator,
-)
+from scholarpath.causal_engine import CausalRuntime
 from scholarpath.db.models import (
     GoNoGoReport,
     Offer,
@@ -22,6 +18,7 @@ from scholarpath.db.models import (
 from scholarpath.exceptions import ScholarPathError
 from scholarpath.llm.client import LLMClient
 from scholarpath.llm.prompts import GO_NO_GO_PROMPT, format_go_no_go
+from scholarpath.observability import log_fallback
 from scholarpath.services.evaluation_service import evaluate_school_fit
 from scholarpath.services.simulation_service import run_what_if
 from scholarpath.services.student_service import get_student
@@ -79,8 +76,20 @@ async def generate_go_no_go(
             session, llm, student_id, offer.school_id,
             {"financial_aid": 0.9},
         )
-    except Exception:
-        logger.warning("Aid appeal what-if failed", exc_info=True)
+    except Exception as exc:
+        log_fallback(
+            logger=logger,
+            component="services.report",
+            stage="what_if.aid_appeal",
+            reason="simulation_failed",
+            fallback_used=True,
+            exc=exc,
+            extra={
+                "student_id": str(student_id),
+                "offer_id": str(offer_id),
+                "school_id": str(offer.school_id),
+            },
+        )
         what_if_results["aid_appeal"] = {"error": "simulation failed"}
 
     # 4b. Major change (boost research opportunities as proxy)
@@ -89,8 +98,20 @@ async def generate_go_no_go(
             session, llm, student_id, offer.school_id,
             {"research_opportunities": 0.8},
         )
-    except Exception:
-        logger.warning("Major change what-if failed", exc_info=True)
+    except Exception as exc:
+        log_fallback(
+            logger=logger,
+            component="services.report",
+            stage="what_if.major_change",
+            reason="simulation_failed",
+            fallback_used=True,
+            exc=exc,
+            extra={
+                "student_id": str(student_id),
+                "offer_id": str(offer_id),
+                "school_id": str(offer.school_id),
+            },
+        )
         what_if_results["major_change"] = {"error": "simulation failed"}
 
     # 4c. Location weight = 0
@@ -99,22 +120,38 @@ async def generate_go_no_go(
             session, llm, student_id, offer.school_id,
             {"location_effect": 0.0},
         )
-    except Exception:
-        logger.warning("Location what-if failed", exc_info=True)
+    except Exception as exc:
+        log_fallback(
+            logger=logger,
+            component="services.report",
+            stage="what_if.ignore_location",
+            reason="simulation_failed",
+            fallback_used=True,
+            exc=exc,
+            extra={
+                "student_id": str(student_id),
+                "offer_id": str(offer_id),
+                "school_id": str(offer.school_id),
+            },
+        )
         what_if_results["ignore_location"] = {"error": "simulation failed"}
 
     # --- Step 5: Go/No-Go score ---
-    builder = AdmissionDAGBuilder()
-    propagator = NoisyORPropagator()
-    student_profile = {"gpa": student.gpa, "sat": student.sat_total or 1100}
-    school_data: dict[str, Any] = {}
-    if school.acceptance_rate is not None:
-        school_data["acceptance_rate"] = school.acceptance_rate
-
-    dag = builder.build_admission_dag(student_profile, school_data)
-    dag = propagator.propagate(dag)
-
-    ci = propagator.compute_confidence_intervals(dag, n_samples=500)
+    causal_runtime = CausalRuntime(session)
+    causal_result, _ = await causal_runtime.estimate(
+        student=student,
+        school=school,
+        offer=offer,
+        context="report",
+        outcomes=[
+            "admission_probability",
+            "academic_outcome",
+            "career_outcome",
+            "life_satisfaction",
+            "phd_probability",
+        ],
+        metadata={"service": "report_service"},
+    )
 
     # Overall Go/No-Go score = weighted Noisy-OR of the four dimension scores
     academic_score = evaluation.academic_fit
@@ -123,10 +160,10 @@ async def generate_go_no_go(
     life_score = evaluation.life_fit
     overall_score = evaluation.overall_score
 
-    # Confidence bounds from the causal CI on key outcome nodes
-    career_ci = ci.get("career_outcome", {"ci_lower": 0.3, "ci_upper": 0.7})
-    confidence_lower = round(max(0.0, overall_score - 0.15, career_ci["ci_lower"]), 4)
-    confidence_upper = round(min(1.0, overall_score + 0.15, career_ci["ci_upper"] + 0.2), 4)
+    # Confidence bounds from runtime confidence.
+    conf_span = max(0.05, 0.25 * (1.0 - causal_result.estimate_confidence))
+    confidence_lower = round(max(0.0, overall_score - conf_span), 4)
+    confidence_upper = round(min(1.0, overall_score + conf_span), 4)
 
     # Determine recommendation
     recommendation = _score_to_recommendation(overall_score)
@@ -182,7 +219,18 @@ async def generate_go_no_go(
         recommendation=recommendation,
         top_factors=top_factors,
         risks=risks,
-        what_if_results=what_if_results,
+        what_if_results={
+            **what_if_results,
+            "_causal_runtime": {
+                "causal_engine_version": causal_result.causal_engine_version,
+                "causal_model_version": causal_result.causal_model_version,
+                "estimate_confidence": causal_result.estimate_confidence,
+                "label_type": causal_result.label_type,
+                "label_confidence": causal_result.label_confidence,
+                "fallback_used": causal_result.fallback_used,
+                "fallback_reason": causal_result.fallback_reason,
+            },
+        },
         narrative=narrative,
     )
     session.add(report)

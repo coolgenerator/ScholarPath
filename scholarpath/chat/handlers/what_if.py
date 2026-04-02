@@ -37,6 +37,7 @@ async def handle_what_if(
     llm: LLMClient,
     session: AsyncSession,
     memory: ChatMemory,
+    session_id: str,
     student_id: uuid.UUID,
     message: str,
 ) -> str:
@@ -53,10 +54,8 @@ async def handle_what_if(
     str
         Simulation results in a conversational format.
     """
-    session_id = str(student_id)
-
     # Get context for school resolution
-    context = await memory.get_context(session_id)
+    context = await memory.get_context(session_id, domain="undergrad")
     current_school_id = context.get("current_school_id")
 
     # Extract scenario from natural language
@@ -80,7 +79,11 @@ async def handle_what_if(
         try:
             school_id = uuid.UUID(current_school_id)
         except ValueError:
-            pass
+            logger.info(
+                "Ignoring invalid school UUID in context: session=%s value=%s",
+                session_id,
+                current_school_id,
+            )
 
     if school_id is None:
         return (
@@ -113,10 +116,15 @@ async def handle_what_if(
         parts.append(f"\n{explanation}")
 
     # Store in context
-    await memory.save_context(session_id, "last_what_if", {
-        "interventions": interventions,
-        "deltas": deltas,
-    })
+    await memory.save_context(
+        session_id,
+        "last_what_if",
+        {
+            "interventions": interventions,
+            "deltas": deltas,
+        },
+        domain="offer",
+    )
 
     return "\n".join(parts)
 

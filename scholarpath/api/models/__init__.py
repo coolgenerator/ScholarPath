@@ -1,6 +1,5 @@
 """Pydantic API schemas for ScholarPath."""
 
-from .chat import ChatMessage, ChatResponse
 from .evaluation import (
     EvaluationRequest,
     EvaluationResponse,
@@ -22,6 +21,8 @@ from .school import (
 from .simulation import (
     ScenarioCompareRequest,
     ScenarioCompareResponse,
+    ScenarioRequest,
+    ScenarioResult,
     WhatIfRequest,
     WhatIfResponse,
 )
@@ -49,11 +50,10 @@ __all__ = [
     # Simulation
     "WhatIfRequest",
     "WhatIfResponse",
+    "ScenarioRequest",
+    "ScenarioResult",
     "ScenarioCompareRequest",
     "ScenarioCompareResponse",
     # Report
     "GoNoGoResponse",
-    # Chat
-    "ChatMessage",
-    "ChatResponse",
 ]

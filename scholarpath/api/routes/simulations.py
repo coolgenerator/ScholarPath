@@ -5,17 +5,22 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, HTTPException, status
+from sqlalchemy import select
 
-from scholarpath.api.deps import SessionDep
+from scholarpath.api.deps import LLMDep, SessionDep
 from scholarpath.api.models.simulation import (
     ScenarioCompareRequest,
     ScenarioCompareResponse,
     WhatIfRequest,
     WhatIfResponse,
 )
-from scholarpath.db.models.evaluation import SchoolEvaluation
 from scholarpath.db.models.school import School
 from scholarpath.db.models.student import Student
+from scholarpath.exceptions import ScholarPathError
+from scholarpath.services.simulation_service import (
+    compare_scenarios as compare_scenarios_service,
+    run_what_if as run_what_if_service,
+)
 
 router = APIRouter(prefix="/simulations", tags=["simulations"])
 
@@ -30,38 +35,6 @@ async def _require_student(session, student_id: uuid.UUID) -> Student:
     return student
 
 
-async def _run_what_if(
-    student: Student,
-    school: School,
-    interventions: dict[str, float | str],
-    session,
-) -> WhatIfResponse:
-    """Execute a single what-if simulation.
-
-    Delegates to the causal simulation engine when available;
-    returns a stub response otherwise.
-    """
-    try:
-        from scholarpath.causal import simulate_intervention  # type: ignore[import-untyped]
-
-        return await simulate_intervention(student, school, interventions, session)
-    except ImportError:
-        # Stub: return zeroed response until causal engine is wired up
-        original = {
-            "academic_fit": 0.0,
-            "financial_fit": 0.0,
-            "career_fit": 0.0,
-            "life_fit": 0.0,
-            "overall_score": 0.0,
-        }
-        return WhatIfResponse(
-            original_scores=original,
-            modified_scores=original,
-            deltas={k: 0.0 for k in original},
-            explanation="Simulation engine not yet implemented.",
-        )
-
-
 @router.post(
     "/students/{student_id}/schools/{school_id}/what-if",
     response_model=WhatIfResponse,
@@ -71,9 +44,10 @@ async def run_what_if(
     school_id: uuid.UUID,
     payload: WhatIfRequest,
     session: SessionDep,
+    llm: LLMDep,
 ) -> WhatIfResponse:
     """Run a what-if simulation for a specific student-school pair."""
-    student = await _require_student(session, student_id)
+    await _require_student(session, student_id)
 
     school = await session.get(School, school_id)
     if school is None:
@@ -82,7 +56,24 @@ async def run_what_if(
             detail=f"School {school_id} not found",
         )
 
-    return await _run_what_if(student, school, payload.interventions, session)
+    try:
+        result = await run_what_if_service(
+            session=session,
+            llm=llm,
+            student_id=student_id,
+            school_id=school_id,
+            interventions=payload.interventions,
+        )
+    except ScholarPathError as exc:
+        detail = str(exc)
+        status_code = (
+            status.HTTP_404_NOT_FOUND
+            if "not found" in detail.lower()
+            else status.HTTP_400_BAD_REQUEST
+        )
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+
+    return WhatIfResponse.model_validate(result)
 
 
 @router.post(
@@ -93,47 +84,59 @@ async def compare_scenarios(
     student_id: uuid.UUID,
     payload: ScenarioCompareRequest,
     session: SessionDep,
+    llm: LLMDep,
 ) -> ScenarioCompareResponse:
     """Compare multiple what-if scenarios side by side.
 
     Each scenario is run independently; the response includes a narrative
     summary comparing the outcomes.
     """
-    student = await _require_student(session, student_id)
+    await _require_student(session, student_id)
 
-    # For scenario comparison we need a reference school.  Use the first
-    # evaluation's school if the client doesn't specify one.
-    from sqlalchemy import select
-
-    stmt = (
-        select(SchoolEvaluation)
-        .where(SchoolEvaluation.student_id == student_id)
-        .limit(1)
-    )
-    result = await session.execute(stmt)
-    eval_row = result.scalars().first()
-
-    if eval_row is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No evaluations exist for this student. Evaluate a school first.",
+    scenario_school_ids = {scenario.school_id for scenario in payload.scenarios}
+    rows = (
+        (
+            await session.execute(
+                select(School.id).where(School.id.in_(scenario_school_ids)),
+            )
         )
-
-    school = await session.get(School, eval_row.school_id)
-    if school is None:
+        .scalars()
+        .all()
+    )
+    existing_school_ids = set(rows)
+    missing = scenario_school_ids - existing_school_ids
+    if missing:
+        missing_str = ", ".join(sorted(str(v) for v in missing))
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Reference school not found",
+            detail=f"School(s) not found: {missing_str}",
         )
 
-    results: list[WhatIfResponse] = []
-    for scenario in payload.scenarios:
-        resp = await _run_what_if(student, school, scenario.interventions, session)
-        results.append(resp)
+    scenarios_payload = [
+        {
+            "school_id": str(scenario.school_id),
+            "interventions": scenario.interventions,
+            "label": scenario.label or f"Scenario {idx + 1}",
+        }
+        for idx, scenario in enumerate(payload.scenarios)
+    ]
+    try:
+        result = await compare_scenarios_service(
+            session=session,
+            llm=llm,
+            student_id=student_id,
+            scenarios=scenarios_payload,
+        )
+    except ScholarPathError as exc:
+        detail = str(exc)
+        status_code = (
+            status.HTTP_404_NOT_FOUND
+            if "not found" in detail.lower()
+            else status.HTTP_400_BAD_REQUEST
+        )
+        raise HTTPException(status_code=status_code, detail=detail) from exc
 
-    summary = (
-        f"Compared {len(results)} scenarios. "
-        "See individual results for score deltas."
+    return ScenarioCompareResponse(
+        results=result.get("scenarios", []),
+        summary=str(result.get("summary") or ""),
     )
-
-    return ScenarioCompareResponse(results=results, summary=summary)

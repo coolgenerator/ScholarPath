@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends
@@ -13,7 +14,8 @@ from scholarpath.db.models import Offer, School, SchoolEvaluation, Student
 from scholarpath.db.session import get_session
 from scholarpath.llm.embeddings import get_embedding_service
 
-router = APIRouter(prefix="/api/seed", tags=["seed"])
+router = APIRouter(prefix="/seed", tags=["seed"])
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Sample school data
@@ -266,8 +268,12 @@ async def seed_schools(session: AsyncSession = Depends(get_session)):
             vectors = await emb.embed_batch(texts, task_type="RETRIEVAL_DOCUMENT")
             for s, vec in zip(new_schools, vectors):
                 s.embedding = vec
-        except Exception:
-            pass  # Embedding is best-effort during seeding
+        except Exception as exc:
+            logger.warning(
+                "Best-effort seed school embedding failed: created_count=%d stage=seed_schools",
+                len(created),
+                exc_info=exc,
+            )
 
     return {"created": created, "count": len(created)}
 
@@ -346,8 +352,12 @@ async def seed_demo_student(session: AsyncSession = Depends(get_session)):
         }
         student.profile_embedding = await emb.embed_student_profile(profile_data)
         await session.flush()
-    except Exception:
-        pass  # Embedding is best-effort
+    except Exception as exc:
+        logger.warning(
+            "Best-effort seed demo-student embedding failed: student=%s stage=seed_demo_student",
+            student.id,
+            exc_info=exc,
+        )
 
     return {"student_id": str(student.id), "status": "created"}
 
@@ -433,12 +443,12 @@ async def seed_demo_evaluations(session: AsyncSession = Depends(get_session)):
     for school in schools:
         # Skip if evaluation already exists
         existing = await session.execute(
-            select(SchoolEvaluation).where(
+            select(SchoolEvaluation.id).where(
                 SchoolEvaluation.student_id == student.id,
                 SchoolEvaluation.school_id == school.id,
-            )
+            ).limit(1)
         )
-        if existing.scalar_one_or_none() is not None:
+        if existing.scalar() is not None:
             continue
 
         tier = _SCHOOL_TIERS.get(school.name, "target")
@@ -602,12 +612,12 @@ async def seed_demo_offers(session: AsyncSession = Depends(get_session)):
 
         # Skip if offer already exists for this student+school
         existing = await session.execute(
-            select(Offer).where(
+            select(Offer.id).where(
                 Offer.student_id == student.id,
                 Offer.school_id == school.id,
-            )
+            ).limit(1)
         )
-        if existing.scalar_one_or_none() is not None:
+        if existing.scalar() is not None:
             continue
 
         total_aid = (

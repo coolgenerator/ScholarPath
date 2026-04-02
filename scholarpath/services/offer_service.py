@@ -11,10 +11,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from scholarpath.causal import AdmissionDAGBuilder, NoisyORPropagator
+from scholarpath.causal_engine import CausalRuntime
 from scholarpath.db.models import Offer, OfferStatus, School
 from scholarpath.exceptions import ScholarPathError
 from scholarpath.llm.client import LLMClient
+from scholarpath.observability import log_fallback
 from scholarpath.services.student_service import get_student
 
 logger = logging.getLogger(__name__)
@@ -102,35 +103,44 @@ async def compare_offers(
     if len(actionable) < 1:
         raise ScholarPathError("No admitted offers to compare")
 
-    builder = AdmissionDAGBuilder()
-    propagator = NoisyORPropagator()
+    causal_runtime = CausalRuntime(session)
 
     offer_summaries: list[dict[str, Any]] = []
     for offer in actionable:
         school = await session.get(School, offer.school_id)
         school_name = school.name if school else str(offer.school_id)
 
-        # Build a causal DAG for outcome estimation
-        student_profile = {"gpa": student.gpa, "sat": student.sat_total or 1100}
-        school_data: dict[str, Any] = {}
-        if school and school.acceptance_rate is not None:
-            school_data["acceptance_rate"] = school.acceptance_rate
-        if school and school.avg_net_price is not None:
-            school_data["avg_aid"] = max(0, (school.avg_net_price or 0) - (offer.net_cost or 0))
+        # Estimate outcomes via unified causal runtime
 
         try:
-            dag = builder.build_admission_dag(student_profile, school_data)
-            dag = propagator.propagate(dag)
-            career_score = dag.nodes.get("career_outcome", {}).get("propagated_belief", 0.5)
-            life_score = dag.nodes.get("life_satisfaction", {}).get("propagated_belief", 0.5)
-            academic_score = dag.nodes.get("academic_outcome", {}).get("propagated_belief", 0.5)
-        except Exception:
-            logger.warning("Causal scoring failed for offer %s", offer.id, exc_info=True)
+            causal_result, _ = await causal_runtime.estimate(
+                student=student,
+                school=school,
+                offer=offer,
+                context="offer_compare",
+                outcomes=["career_outcome", "life_satisfaction", "academic_outcome"],
+                metadata={"service": "offer_service"},
+            )
+            career_score = causal_result.scores.get("career_outcome", 0.5)
+            life_score = causal_result.scores.get("life_satisfaction", 0.5)
+            academic_score = causal_result.scores.get("academic_outcome", 0.5)
+        except Exception as exc:
+            log_fallback(
+                logger=logger,
+                component="services.offer",
+                stage="compare_offers.causal_estimate",
+                reason="causal_estimate_failed",
+                fallback_used=True,
+                exc=exc,
+                extra={"student_id": str(student_id), "offer_id": str(offer.id)},
+            )
             career_score = life_score = academic_score = 0.5
+            causal_result = None
 
         offer_summaries.append(
             {
                 "offer_id": str(offer.id),
+                "school_id": str(offer.school_id),
                 "school": school_name,
                 "status": offer.status,
                 "net_cost": offer.net_cost,
@@ -142,6 +152,14 @@ async def compare_offers(
                     "career_outcome": round(career_score, 3),
                     "life_satisfaction": round(life_score, 3),
                     "academic_outcome": round(academic_score, 3),
+                },
+                "causal_meta": {
+                    "causal_engine_version": (causal_result.causal_engine_version if causal_result else "legacy_dag_v1"),
+                    "causal_model_version": (causal_result.causal_model_version if causal_result else "legacy"),
+                    "estimate_confidence": (causal_result.estimate_confidence if causal_result else 0.5),
+                    "label_type": (causal_result.label_type if causal_result else "proxy"),
+                    "fallback_used": (causal_result.fallback_used if causal_result else True),
+                    "fallback_reason": (causal_result.fallback_reason if causal_result else "runtime_exception"),
                 },
             }
         )

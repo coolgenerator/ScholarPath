@@ -7,7 +7,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
-from scholarpath.api.deps import SessionDep
+from scholarpath.api.deps import LLMDep, SessionDep
 from scholarpath.api.models.offer import (
     OfferComparisonResponse,
     OfferCreate,
@@ -17,6 +17,10 @@ from scholarpath.api.models.offer import (
 from scholarpath.db.models.offer import Offer
 from scholarpath.db.models.school import School
 from scholarpath.db.models.student import Student
+from scholarpath.exceptions import ScholarPathError
+from scholarpath.services.offer_service import (
+    compare_offers as compare_offers_service,
+)
 
 router = APIRouter(prefix="/offers", tags=["offers"])
 
@@ -150,7 +154,7 @@ async def list_offers(
     return responses
 
 
-@router.put("/offers/{offer_id}", response_model=OfferResponse)
+@router.put("/{offer_id}", response_model=OfferResponse)
 async def update_offer(
     offer_id: uuid.UUID,
     payload: OfferUpdate,
@@ -200,6 +204,7 @@ async def update_offer(
 async def compare_offers(
     student_id: uuid.UUID,
     session: SessionDep,
+    llm: LLMDep,
 ) -> OfferComparisonResponse:
     """Compare all admitted offers side-by-side."""
     await _require_student(session, student_id)
@@ -220,27 +225,67 @@ async def compare_offers(
         )
 
     offer_responses = []
-    comparison_scores = []
     for offer, school_name in rows:
         resp = OfferResponse.model_validate(offer)
         resp.school_name = school_name
         offer_responses.append(resp)
 
-        comparison_scores.append(
-            {
-                "offer_id": str(offer.id),
-                "school_id": str(offer.school_id),
-                "school_name": school_name,
-                "tuition": offer.tuition,
-                "total_cost": offer.total_cost,
-                "total_aid": offer.total_aid,
-                "net_cost": offer.net_cost,
-                "merit_scholarship": offer.merit_scholarship,
-                "honors_program": offer.honors_program,
-            }
+    try:
+        comparison = await compare_offers_service(
+            session=session,
+            llm=llm,
+            student_id=student_id,
         )
+    except ScholarPathError as exc:
+        detail = str(exc)
+        status_code = (
+            status.HTTP_404_NOT_FOUND
+            if "not found" in detail.lower()
+            else status.HTTP_400_BAD_REQUEST
+        )
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+
+    comparison_scores = list(comparison.get("offers") or [])
+    matrix = comparison.get("comparison_matrix")
+    causal_matrix = matrix if isinstance(matrix, dict) else {}
+
+    causal_engine_version = None
+    causal_model_version = None
+    estimate_confidence_values: list[float] = []
+    fallback_used = False
+    for score_row in comparison_scores:
+        if not isinstance(score_row, dict):
+            continue
+        meta = score_row.get("causal_meta")
+        if not isinstance(meta, dict):
+            continue
+        if causal_engine_version is None and meta.get("causal_engine_version"):
+            causal_engine_version = str(meta.get("causal_engine_version"))
+        if causal_model_version is None and meta.get("causal_model_version"):
+            causal_model_version = str(meta.get("causal_model_version"))
+        if meta.get("fallback_used") is True:
+            fallback_used = True
+        confidence_raw = meta.get("estimate_confidence")
+        if isinstance(confidence_raw, (int, float)):
+            estimate_confidence_values.append(float(confidence_raw))
+
+    avg_confidence = (
+        round(sum(estimate_confidence_values) / len(estimate_confidence_values), 4)
+        if estimate_confidence_values
+        else None
+    )
 
     return OfferComparisonResponse(
         offers=offer_responses,
         comparison_scores=comparison_scores,
+        causal_comparison_matrix=causal_matrix,
+        recommendation=(
+            str(comparison.get("recommendation"))
+            if comparison.get("recommendation") is not None
+            else None
+        ),
+        causal_engine_version=causal_engine_version,
+        causal_model_version=causal_model_version,
+        estimate_confidence=avg_confidence,
+        fallback_used=fallback_used,
     )

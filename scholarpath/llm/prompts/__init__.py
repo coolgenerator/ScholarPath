@@ -4,10 +4,6 @@ from scholarpath.llm.prompts.profile_extraction import (
     SYSTEM_PROMPT as PROFILE_EXTRACTION_PROMPT,
     format_user_prompt as format_profile_extraction,
 )
-from scholarpath.llm.prompts.intent_classification import (
-    SYSTEM_PROMPT as INTENT_CLASSIFICATION_PROMPT,
-    format_user_prompt as format_intent_classification,
-)
 from scholarpath.llm.prompts.query_decomposition import (
     SYSTEM_PROMPT as QUERY_DECOMPOSITION_PROMPT,
     format_user_prompt as format_query_decomposition,
@@ -40,8 +36,6 @@ from scholarpath.llm.prompts.go_no_go import (
 __all__ = [
     "PROFILE_EXTRACTION_PROMPT",
     "format_profile_extraction",
-    "INTENT_CLASSIFICATION_PROMPT",
-    "format_intent_classification",
     "QUERY_DECOMPOSITION_PROMPT",
     "format_query_decomposition",
     "ENTITY_ALIGNMENT_PROMPT",

@@ -1048,7 +1048,8 @@ def _parse_json_object(text: str) -> dict[str, Any]:
         if isinstance(data, list):
             return {"data": data}
     except json.JSONDecodeError:
-        pass
+        # Fall through to regex-based object extraction.
+        ...
 
     match = re.search(r"\{.*\}", raw, flags=re.DOTALL)
     if match:

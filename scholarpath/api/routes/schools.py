@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import List, Optional
 
@@ -21,6 +22,7 @@ from scholarpath.db.models.school import School
 from scholarpath.db.models.student import Student
 
 router = APIRouter(prefix="/schools", tags=["schools"])
+logger = logging.getLogger(__name__)
 
 
 def _apply_filters(stmt, params: SchoolSearchParams):
@@ -130,8 +132,12 @@ async def generate_school_list_endpoint(
 
         result = generate_school_list_task.delay(str(student_id), hints_dict)
         return {"task_id": result.id, "status": "PENDING"}
-    except ImportError:
-        pass
+    except ImportError as exc:
+        logger.info(
+            "School-list Celery task unavailable, fallback to sync generation: student=%s",
+            student_id,
+            exc_info=exc,
+        )
 
     # Synchronous fallback
     from scholarpath.services.school_service import generate_school_list as gen_list
@@ -310,7 +316,11 @@ async def lookup_school(
         vectors = await emb.embed_batch([". ".join(parts)], task_type="RETRIEVAL_DOCUMENT")
         if vectors:
             school.embedding = vectors[0]
-    except Exception:
-        pass  # Best effort
+    except Exception as exc:
+        logger.warning(
+            "Best-effort school lookup embedding failed: school=%s stage=lookup_school",
+            school.name,
+            exc_info=exc,
+        )
 
     return school

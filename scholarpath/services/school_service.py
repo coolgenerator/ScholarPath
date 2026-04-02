@@ -26,6 +26,7 @@ from scholarpath.llm.prompts import (
     SCHOOL_EVALUATION_PROMPT,
     format_school_evaluation,
 )
+from scholarpath.observability import log_fallback
 from scholarpath.services.student_service import get_student
 
 logger = logging.getLogger(__name__)
@@ -178,8 +179,16 @@ async def generate_school_list(
                 "Vector pre-filtered %d candidate schools for student %s",
                 len(vector_candidates), student_id,
             )
-        except Exception:
-            logger.warning("Vector pre-filtering failed, using LLM only", exc_info=True)
+        except Exception as exc:
+            log_fallback(
+                logger=logger,
+                component="services.school",
+                stage="generate_school_list.vector_prefilter",
+                reason="vector_prefilter_failed",
+                fallback_used=True,
+                exc=exc,
+                extra={"student_id": str(student_id)},
+            )
 
     # Build profile dict for the prompt
     profile = {

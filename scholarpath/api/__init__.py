@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from scholarpath.api.routes.chat import router as chat_router
+from scholarpath.api.routes.advisor import router as advisor_router
 from scholarpath.api.routes.evaluations import router as evaluations_router
 from scholarpath.api.routes.offers import router as offers_router
 from scholarpath.api.routes.reports import router as reports_router
@@ -25,7 +25,7 @@ router.include_router(evaluations_router)
 router.include_router(offers_router)
 router.include_router(simulations_router)
 router.include_router(reports_router)
-router.include_router(chat_router)
+router.include_router(advisor_router)
 router.include_router(tasks_router)
 router.include_router(seed_router)
 router.include_router(vectors_router)

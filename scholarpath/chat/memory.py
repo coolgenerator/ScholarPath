@@ -18,6 +18,13 @@ _CONTEXT_PREFIX = "scholarpath:chat:context:"
 _MAX_HISTORY = 50
 
 
+def _context_field_name(*, key: str, domain: str | None) -> str:
+    """Build a namespaced context field key."""
+    if not domain:
+        return key
+    return f"{domain}::{key}"
+
+
 class ChatMemory:
     """Manages per-session conversation history and extracted context in Redis.
 
@@ -94,6 +101,8 @@ class ChatMemory:
         session_id: str,
         key: str,
         value: Any,
+        *,
+        domain: str | None = None,
     ) -> None:
         """Store an extracted context value (e.g. current school name).
 
@@ -101,11 +110,14 @@ class ChatMemory:
         strings, numbers, lists, or dicts.
         """
         redis_key = f"{_CONTEXT_PREFIX}{session_id}"
-        await self._redis.hset(redis_key, key, json.dumps(value, ensure_ascii=False))
+        field = _context_field_name(key=key, domain=domain)
+        await self._redis.hset(redis_key, field, json.dumps(value, ensure_ascii=False))
 
     async def get_context(
         self,
         session_id: str,
+        *,
+        domain: str | None = None,
     ) -> dict[str, Any]:
         """Return all extracted context for a session.
 
@@ -114,11 +126,18 @@ class ChatMemory:
         redis_key = f"{_CONTEXT_PREFIX}{session_id}"
         raw = await self._redis.hgetall(redis_key)
         context: dict[str, Any] = {}
+        domain_prefix = f"{domain}::" if domain else None
         for k, v in raw.items():
+            if domain_prefix is not None:
+                if not k.startswith(domain_prefix):
+                    continue
+                out_key = k[len(domain_prefix):]
+            else:
+                out_key = k
             try:
-                context[k] = json.loads(v)
+                context[out_key] = json.loads(v)
             except json.JSONDecodeError:
-                context[k] = v
+                context[out_key] = v
         return context
 
     # ------------------------------------------------------------------

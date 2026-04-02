@@ -35,6 +35,17 @@ class Settings(BaseSettings):
     DEEPSEARCH_SOURCE_HTTP_CONCURRENCY: int = 16
     DEEPSEARCH_SELF_EXTRACT_CONCURRENCY: int = 12
     DEEPSEARCH_INTERNAL_WEBSEARCH_CONCURRENCY: int = 8
+    # Advisor internal DeepSearch refresh (on school query when critical fields are missing).
+    ADVISOR_INTERNAL_DEEPSEARCH_ENABLED: bool = True
+    ADVISOR_INTERNAL_DEEPSEARCH_FRESHNESS_DAYS: int = 90
+    ADVISOR_INTERNAL_DEEPSEARCH_MAX_INTERNAL_WEBSEARCH_PER_SCHOOL: int = 1
+    ADVISOR_INTERNAL_DEEPSEARCH_BUDGET_MODE: str = "balanced"
+    ADVISOR_STYLE_POLISH_ENABLED: bool = True
+    ADVISOR_STYLE_POLISH_CAPABILITIES: str = (
+        "undergrad.school.recommend,offer.compare,offer.what_if"
+    )
+    ADVISOR_STYLE_POLISH_MAX_TOKENS: int = 600
+    ADVISOR_STYLE_POLISH_TEMPERATURE: float = 0.2
 
     # Optional web search provider for DeepSearch source.
     WEB_SEARCH_API_URL: str = ""
@@ -45,6 +56,15 @@ class Settings(BaseSettings):
     GOOGLE_API_KEY: str = ""
     EMBEDDING_MODEL: str = "gemini-embedding-001"
     EMBEDDING_DIMENSION: int = 3072  # gemini-embedding-001 outputs 3072-dim vectors
+
+    # Causal engine rollout
+    CAUSAL_ENGINE_MODE: str = "shadow"  # legacy | pywhy | shadow
+    # In shadow mode, route this percentage of requests to PyWhy as primary.
+    # 0 keeps legacy as primary for all requests.
+    CAUSAL_PYWHY_PRIMARY_PERCENT: int = 0
+    CAUSAL_MODEL_VERSION: str = "latest_stable"
+    CAUSAL_PROXY_LABELS_ENABLED: bool = True
+    CAUSAL_SHADOW_LOGGING: bool = True
 
     # CORS
     CORS_ORIGINS: str = '["http://localhost:5173"]'
@@ -79,6 +99,26 @@ class Settings(BaseSettings):
             keys.append(self.ZAI_API_KEY.strip())
 
         return keys
+
+    @property
+    def advisor_style_polish_capabilities(self) -> set[str]:
+        raw = (self.ADVISOR_STYLE_POLISH_CAPABILITIES or "").strip()
+        if not raw:
+            return set()
+
+        values: list[str] = []
+        if raw.startswith("["):
+            try:
+                obj = json.loads(raw)
+                if isinstance(obj, list):
+                    values = [str(item).strip() for item in obj]
+            except json.JSONDecodeError:
+                values = []
+
+        if not values:
+            values = [item.strip() for item in raw.replace("\n", ",").split(",")]
+
+        return {item for item in values if item}
 
 
 settings = Settings()

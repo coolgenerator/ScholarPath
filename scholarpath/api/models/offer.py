@@ -92,10 +92,22 @@ class OfferResponse(BaseModel):
 
 
 class OfferComparisonResponse(BaseModel):
-    """Side-by-side comparison of admitted offers."""
+    """Side-by-side comparison of admitted offers (financial + causal)."""
 
     offers: list[OfferResponse]
     comparison_scores: list[dict[str, Any]] = Field(
         default_factory=list,
         description="Per-offer scoring breakdown for side-by-side comparison",
     )
+    causal_comparison_matrix: dict[str, dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Dimension-by-dimension causal comparison matrix by school name",
+    )
+    recommendation: str | None = Field(
+        default=None,
+        description="LLM-generated comparison recommendation",
+    )
+    causal_engine_version: str | None = None
+    causal_model_version: str | None = None
+    estimate_confidence: float | None = None
+    fallback_used: bool | None = None

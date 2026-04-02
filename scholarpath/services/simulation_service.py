@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from scholarpath.causal import AdmissionDAGBuilder, NoisyORPropagator
+from scholarpath.causal_engine import CausalRuntime
 from scholarpath.db.models import School
 from scholarpath.exceptions import ScholarPathError
 from scholarpath.llm.client import LLMClient
@@ -67,41 +67,28 @@ async def run_what_if(
     if school is None:
         raise ScholarPathError(f"School {school_id} not found")
 
-    builder = AdmissionDAGBuilder()
-    propagator = NoisyORPropagator()
+    causal_runtime = CausalRuntime(session)
+    baseline_result, _ = await causal_runtime.estimate(
+        student=student,
+        school=school,
+        offer=None,
+        context="simulation",
+        outcomes=_OUTCOME_NODES,
+        metadata={"service": "simulation_service"},
+    )
+    intervention_result, _ = await causal_runtime.intervene(
+        student=student,
+        school=school,
+        offer=None,
+        context="simulation",
+        interventions=interventions,
+        outcomes=_OUTCOME_NODES,
+        metadata={"service": "simulation_service"},
+    )
 
-    student_profile = {"gpa": student.gpa, "sat": student.sat_total or 1100}
-    school_data: dict[str, Any] = {}
-    if school.acceptance_rate is not None:
-        school_data["acceptance_rate"] = school.acceptance_rate
-
-    # --- Baseline ---
-    dag_base = builder.build_admission_dag(student_profile, school_data)
-    dag_base = propagator.propagate(dag_base)
-    original_scores = _extract_outcome_scores(dag_base)
-
-    # --- Intervened ---
-    dag_mod = builder.build_admission_dag(student_profile, school_data)
-    # Apply do-interventions: clamp node priors and sever incoming edges
-    for node_id, value in interventions.items():
-        if node_id not in dag_mod:
-            logger.warning("Intervention node '%s' not in DAG; skipping.", node_id)
-            continue
-        dag_mod.nodes[node_id]["prior_belief"] = float(value)
-        dag_mod.nodes[node_id]["confidence"] = 1.0
-        # Sever incoming edges (do-calculus: remove parents)
-        parents = list(dag_mod.predecessors(node_id))
-        for parent in parents:
-            dag_mod.remove_edge(parent, node_id)
-
-    dag_mod = propagator.propagate(dag_mod)
-    modified_scores = _extract_outcome_scores(dag_mod)
-
-    # --- Deltas ---
-    deltas = {
-        k: round(modified_scores[k] - original_scores[k], 4)
-        for k in original_scores
-    }
+    original_scores = {k: round(v, 4) for k, v in baseline_result.scores.items()}
+    modified_scores = {k: round(v, 4) for k, v in intervention_result.modified_scores.items()}
+    deltas = {k: round(v, 4) for k, v in intervention_result.deltas.items()}
 
     # --- LLM explanation ---
     messages = [
@@ -139,6 +126,13 @@ async def run_what_if(
         "modified_scores": modified_scores,
         "deltas": deltas,
         "explanation": explanation,
+        "causal_engine_version": intervention_result.causal_engine_version,
+        "causal_model_version": intervention_result.causal_model_version,
+        "estimate_confidence": intervention_result.estimate_confidence,
+        "label_type": intervention_result.label_type,
+        "label_confidence": intervention_result.label_confidence,
+        "fallback_used": intervention_result.fallback_used,
+        "fallback_reason": intervention_result.fallback_reason,
     }
 
 
@@ -173,13 +167,19 @@ async def compare_scenarios(
         school_id = scenario.get("school_id")
         if school_id is None:
             raise ScholarPathError(f"Scenario {i} missing 'school_id'")
-        interventions = scenario.get("interventions", {})
+        interventions_raw = scenario.get("interventions", {})
+        if not isinstance(interventions_raw, dict):
+            raise ScholarPathError(f"Scenario {i} interventions must be an object")
+        interventions = {
+            str(k): float(v) for k, v in interventions_raw.items()
+        }
         label = scenario.get("label", f"Scenario {i + 1}")
 
         result = await run_what_if(
             session, llm, student_id, uuid.UUID(str(school_id)), interventions
         )
         result["label"] = label
+        result["school_id"] = str(school_id)
         results.append(result)
 
     # Comparative summary via LLM
@@ -206,14 +206,3 @@ async def compare_scenarios(
         "scenarios": results,
         "summary": summary,
     }
-
-
-def _extract_outcome_scores(dag: Any) -> dict[str, float]:
-    """Pull propagated beliefs for outcome nodes from a DAG."""
-    scores: dict[str, float] = {}
-    for node_id in _OUTCOME_NODES:
-        if node_id in dag:
-            scores[node_id] = round(
-                dag.nodes[node_id].get("propagated_belief", 0.5), 4
-            )
-    return scores

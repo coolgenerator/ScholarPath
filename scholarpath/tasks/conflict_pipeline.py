@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
 from typing import Any
 
+from scholarpath.tasks.async_runtime import run_async
 from scholarpath.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -40,7 +40,7 @@ def run_conflict_detection(
     logger.info("Starting conflict detection for school %s", school_id)
 
     try:
-        result = asyncio.run(_run_conflict_detection_async(uuid.UUID(school_id)))
+        result = run_async(_run_conflict_detection_async(uuid.UUID(school_id)))
         return result
     except Exception as exc:
         logger.exception("Conflict detection failed for school %s", school_id)

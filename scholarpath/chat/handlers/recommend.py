@@ -20,6 +20,7 @@ async def handle_recommendation(
     llm: LLMClient,
     session: AsyncSession,
     memory: ChatMemory,
+    session_id: str,
     student_id: uuid.UUID,
     message: str,
 ) -> str:
@@ -49,8 +50,6 @@ async def handle_recommendation(
     str
         Formatted recommendation response.
     """
-    session_id = str(student_id)
-
     try:
         results = await generate_recommendations(session, llm, student_id)
     except Exception:
@@ -80,6 +79,7 @@ async def handle_recommendation(
             "school_names": [s["school_name"] for s in schools],
             "tier_counts": strategy.get("tier_counts", {}),
         },
+        domain="undergrad",
     )
 
     # Build structured recommendation data
@@ -127,7 +127,7 @@ async def handle_recommendation(
     }
 
     # Short text summary + structured data marker
-    context = await memory.get_context(session_id)
+    context = await memory.get_context(session_id, domain="undergrad")
     lang = context.get("user_language", "en")
     if lang == "zh":
         summary = f"基于你的背景分析，我为你推荐了 {len(schools)} 所学校。"

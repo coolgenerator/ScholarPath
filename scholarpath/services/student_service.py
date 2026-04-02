@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Any
 
@@ -11,6 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from scholarpath.db.models import Student
 from scholarpath.exceptions import ScholarPathError
 from scholarpath.llm.embeddings import get_embedding_service
+from scholarpath.observability import log_fallback
+
+logger = logging.getLogger(__name__)
 
 # Fields required for a complete profile, mapped to human-readable labels.
 _REQUIRED_FIELDS: dict[str, str] = {
@@ -200,8 +204,13 @@ async def _maybe_embed_profile(student: Student) -> None:
             "budget_usd": student.budget_usd,
         }
         student.profile_embedding = await emb.embed_student_profile(profile_data)
-    except Exception:
-        import logging
-        logging.getLogger(__name__).warning(
-            "Failed to embed profile for student %s", student.id, exc_info=True,
+    except Exception as exc:
+        log_fallback(
+            logger=logger,
+            component="services.student",
+            stage="maybe_embed_profile",
+            reason="embedding_generation_failed",
+            fallback_used=True,
+            exc=exc,
+            extra={"student_id": str(student.id)},
         )

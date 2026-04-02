@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
 from typing import Any
 
 from scholarpath.tasks.celery_app import celery_app
+from scholarpath.tasks.async_runtime import run_async
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,7 @@ def run_deep_search(
     scorecard_api_key = _require_scorecard_api_key(settings.SCORECARD_API_KEY)
 
     try:
-        result = asyncio.run(
+        result = run_async(
             _run_deep_search_async(
                 uuid.UUID(student_id),
                 school_names,

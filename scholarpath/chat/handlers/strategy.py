@@ -19,6 +19,7 @@ async def handle_strategy(
     llm: LLMClient,
     session: AsyncSession,
     memory: ChatMemory,
+    session_id: str,
     student_id: uuid.UUID,
     message: str,
 ) -> str:
@@ -32,8 +33,6 @@ async def handle_strategy(
     str
         Strategy advice response text.
     """
-    session_id = str(student_id)
-
     # Check if the student has evaluations
     tiered = await get_tiered_list(session, student_id)
     total_schools = sum(len(v) for v in tiered.values())
@@ -96,6 +95,11 @@ async def handle_strategy(
         )
 
     # Store in context
-    await memory.save_context(session_id, "last_strategy", strategy)
+    await memory.save_context(
+        session_id,
+        "last_strategy",
+        strategy,
+        domain="undergrad",
+    )
 
     return "\n\n".join(parts)

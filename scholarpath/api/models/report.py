@@ -29,6 +29,11 @@ class GoNoGoResponse(BaseModel):
     risks: list[Any]
     narrative: str
     what_if_results: dict[str, Any] | None = None
+    causal_engine_version: str | None = None
+    causal_model_version: str | None = None
+    estimate_confidence: float | None = None
+    label_type: str | None = None
+    fallback_used: bool | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -37,6 +42,7 @@ class GoNoGoResponse(BaseModel):
         # When constructing from an ORM object, data is the object itself.
         if hasattr(data, "academic_score") and not isinstance(data, dict):
             obj = data
+            runtime_meta = (obj.what_if_results or {}).get("_causal_runtime", {})
             sub = {
                 "academic": obj.academic_score,
                 "financial": obj.financial_score,
@@ -58,6 +64,11 @@ class GoNoGoResponse(BaseModel):
                 "risks": obj.risks,
                 "narrative": obj.narrative,
                 "what_if_results": obj.what_if_results,
+                "causal_engine_version": runtime_meta.get("causal_engine_version"),
+                "causal_model_version": runtime_meta.get("causal_model_version"),
+                "estimate_confidence": runtime_meta.get("estimate_confidence"),
+                "label_type": runtime_meta.get("label_type"),
+                "fallback_used": runtime_meta.get("fallback_used"),
             }
             return d
         return data

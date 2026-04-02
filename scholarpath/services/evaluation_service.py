@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from scholarpath.causal import AdmissionDAGBuilder, NoisyORPropagator
+from scholarpath.causal_engine import CausalRuntime
 from scholarpath.db.models import School, SchoolEvaluation, Student, Tier
 from scholarpath.exceptions import ScholarPathError
 from scholarpath.llm.client import LLMClient
@@ -88,7 +88,27 @@ async def evaluate_school_fit(
     )
 
     # --- Admission probability via causal DAG ---
-    admission_prob = _estimate_admission_probability(student, school)
+    causal_runtime = CausalRuntime(session)
+    causal_result, _ = await causal_runtime.estimate(
+        student=student,
+        school=school,
+        offer=None,
+        context="evaluation",
+        outcomes=[
+            "admission_probability",
+            "academic_outcome",
+            "career_outcome",
+            "life_satisfaction",
+            "phd_probability",
+        ],
+        metadata={"service": "evaluation_service"},
+    )
+    admission_prob = float(
+        max(
+            0.0,
+            min(1.0, causal_result.scores.get("admission_probability", school.acceptance_rate or 0.3)),
+        )
+    )
 
     # --- Tier ---
     tier = _assign_tier(admission_prob)
@@ -144,6 +164,17 @@ async def evaluate_school_fit(
                 "career_fit": career,
                 "life_fit": life,
             },
+            "causal_metadata": {
+                "causal_engine_version": causal_result.causal_engine_version,
+                "causal_model_version": causal_result.causal_model_version,
+                "estimate_confidence": causal_result.estimate_confidence,
+                "label_type": causal_result.label_type,
+                "label_confidence": causal_result.label_confidence,
+                "fallback_used": causal_result.fallback_used,
+                "fallback_reason": causal_result.fallback_reason,
+            },
+            "causal_scores": causal_result.scores,
+            "causal_confidence_by_outcome": causal_result.confidence_by_outcome,
         },
     )
     session.add(evaluation)
@@ -358,37 +389,6 @@ def _compute_life_fit(student: Student, school: School) -> float:
             score += 0.15
 
     return max(0.0, min(1.0, score))
-
-
-def _estimate_admission_probability(student: Student, school: School) -> float:
-    """Estimate admission probability using the causal DAG and Noisy-OR."""
-    try:
-        builder = AdmissionDAGBuilder()
-        student_profile = {
-            "gpa": student.gpa,
-            "sat": student.sat_total or 1100,
-        }
-        school_data: dict[str, Any] = {}
-        if school.acceptance_rate is not None:
-            school_data["acceptance_rate"] = school.acceptance_rate
-
-        dag = builder.build_admission_dag(student_profile, school_data)
-        propagator = NoisyORPropagator()
-        dag = propagator.propagate(dag)
-
-        prob = dag.nodes.get("admission_probability", {}).get(
-            "propagated_belief", 0.3
-        )
-        return float(max(0.0, min(1.0, prob)))
-    except Exception:
-        logger.warning(
-            "Causal DAG estimation failed; falling back to heuristic.",
-            exc_info=True,
-        )
-        # Simple heuristic fallback
-        if school.acceptance_rate is not None:
-            return float(school.acceptance_rate)
-        return 0.3
 
 
 def _assign_tier(admission_probability: float) -> str:

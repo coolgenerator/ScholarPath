@@ -19,6 +19,7 @@ async def handle_offer_decision(
     llm: LLMClient,
     session: AsyncSession,
     memory: ChatMemory,
+    session_id: str,
     student_id: uuid.UUID,
     message: str,
 ) -> str:
@@ -29,8 +30,6 @@ async def handle_offer_decision(
     str
         A structured comparison with a recommendation in conversational format.
     """
-    session_id = str(student_id)
-
     # Check if the student has any offers
     offers = await list_offers(session, student_id)
     if not offers:
@@ -86,8 +85,11 @@ async def handle_offer_decision(
         parts.append(f"\n**My recommendation:**\n{recommendation}")
 
     # Store comparison in context
-    await memory.save_context(session_id, "last_comparison", {
-        "offers": [o.get("school", "") for o in comparison.get("offers", [])],
-    })
+    await memory.save_context(
+        session_id,
+        "last_comparison",
+        {"offers": [o.get("school", "") for o in comparison.get("offers", [])]},
+        domain="offer",
+    )
 
     return "\n\n".join(parts)

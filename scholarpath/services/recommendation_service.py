@@ -13,17 +13,11 @@ from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
-from scholarpath.causal import (
-    AdmissionDAGBuilder,
-    GoNoGoScorer,
-    MediationAnalyzer,
-    NoisyORPropagator,
-)
+from scholarpath.causal_engine import CausalRuntime
 from scholarpath.db.models import School, SchoolEvaluation, Tier
 from scholarpath.llm.client import LLMClient
-from scholarpath.llm.embeddings import get_embedding_service
+from scholarpath.observability import log_fallback
 from scholarpath.services.student_service import get_student
 
 logger = logging.getLogger(__name__)
@@ -97,10 +91,15 @@ async def generate_recommendations(
                 len(candidate_schools),
                 student_id,
             )
-        except Exception:
-            logger.warning(
-                "Vector similarity search failed; falling back to rank-based selection",
-                exc_info=True,
+        except Exception as exc:
+            log_fallback(
+                logger=logger,
+                component="services.recommendation",
+                stage="vector_candidate_search",
+                reason="vector_search_failed",
+                fallback_used=True,
+                exc=exc,
+                extra={"student_id": str(student_id)},
             )
 
     # Fallback: if no candidates from vector search, use top-ranked schools
@@ -114,41 +113,30 @@ async def generate_recommendations(
         candidate_schools = list(result.scalars().all())
 
     # ------------------------------------------------------------------
-    # Step 2: Build causal DAGs and compute scores per school
+    # Step 2: Run causal runtime per school
     # ------------------------------------------------------------------
-    builder = AdmissionDAGBuilder()
-    propagator = NoisyORPropagator()
-    mediator = MediationAnalyzer(propagator)
-    scorer = GoNoGoScorer(propagator)
-
-    student_profile_for_dag = {
-        "gpa": student.gpa or 3.0,
-        "sat": student.sat_total or 1100,
-    }
-    if student.budget_usd:
-        student_profile_for_dag["family_income"] = student.budget_usd * 2  # rough proxy
+    causal_runtime = CausalRuntime(session)
 
     school_results: list[dict[str, Any]] = []
 
     for school in candidate_schools:
         try:
-            school_result = _evaluate_school_with_causal(
+            school_result = await _evaluate_school_with_causal(
                 student=student,
-                student_profile_for_dag=student_profile_for_dag,
                 school=school,
                 preferences=preferences,
-                builder=builder,
-                propagator=propagator,
-                mediator=mediator,
-                scorer=scorer,
+                causal_runtime=causal_runtime,
             )
             school_results.append(school_result)
-        except Exception:
-            logger.warning(
-                "Failed to evaluate school %s for student %s",
-                school.name,
-                student_id,
-                exc_info=True,
+        except Exception as exc:
+            log_fallback(
+                logger=logger,
+                component="services.recommendation",
+                stage="evaluate_school_with_causal",
+                reason="school_evaluation_failed",
+                fallback_used=True,
+                exc=exc,
+                extra={"student_id": str(student_id), "school_id": str(school.id)},
             )
 
     # Sort by overall_score descending
@@ -176,11 +164,19 @@ async def generate_recommendations(
                 },
             )
             session.add(evaluation)
-        except Exception:
-            logger.warning(
-                "Failed to persist evaluation for school %s",
-                sr.get("school_name"),
-                exc_info=True,
+        except Exception as exc:
+            log_fallback(
+                logger=logger,
+                component="services.recommendation",
+                stage="persist_school_evaluation",
+                reason="evaluation_persist_failed",
+                fallback_used=True,
+                exc=exc,
+                extra={
+                    "student_id": str(student_id),
+                    "school_name": str(sr.get("school_name", "")),
+                    "school_id": str(sr.get("school_id", "")),
+                },
             )
 
     await session.flush()
@@ -202,75 +198,67 @@ async def generate_recommendations(
     }
 
 
-def _evaluate_school_with_causal(
+async def _evaluate_school_with_causal(
     *,
     student: Any,
-    student_profile_for_dag: dict[str, Any],
     school: School,
     preferences: dict[str, Any],
-    builder: AdmissionDAGBuilder,
-    propagator: NoisyORPropagator,
-    mediator: MediationAnalyzer,
-    scorer: GoNoGoScorer,
+    causal_runtime: CausalRuntime,
 ) -> dict[str, Any]:
     """Run the full causal evaluation pipeline for one student-school pair."""
 
-    # Build school data for the DAG
-    school_data: dict[str, Any] = {}
-    if school.acceptance_rate is not None:
-        school_data["acceptance_rate"] = school.acceptance_rate
-    if school.avg_net_price is not None:
-        school_data["avg_aid"] = max(0, (school.tuition_oos or 60000) - school.avg_net_price)
-    if school.endowment_per_student is not None:
-        school_data["research_expenditure"] = school.endowment_per_student * 50  # rough proxy
-    if school.campus_setting:
-        setting_map = {"urban": 4, "suburban": 3, "rural": 2}
-        school_data["location_tier"] = setting_map.get(school.campus_setting.lower(), 3)
-
-    # Build and propagate the causal DAG
-    dag = builder.build_admission_dag(student_profile_for_dag, school_data)
-    dag = propagator.propagate(dag)
-
-    # Get admission probability from the DAG
-    admission_prob = dag.nodes.get("admission_probability", {}).get(
-        "propagated_belief", 0.3
+    causal_result, _ = await causal_runtime.estimate(
+        student=student,
+        school=school,
+        offer=None,
+        context="recommendation",
+        outcomes=[
+            "admission_probability",
+            "academic_outcome",
+            "career_outcome",
+            "life_satisfaction",
+        ],
+        metadata={"service": "recommendation_service"},
     )
-    admission_prob = float(max(0.0, min(1.0, admission_prob)))
 
-    # Compute Go/No-Go score
-    # Adjust weights based on student preferences
+    admission_prob = float(max(0.0, min(1.0, causal_result.scores.get("admission_probability", 0.3))))
+
     weights = _adjust_weights_for_preferences(preferences)
-    go_no_go = scorer.compute_score({}, dag, weights=weights)
+    sub_scores = {
+        "academic": causal_result.scores.get("academic_outcome", 0.5),
+        "financial": max(0.0, min(1.0, 1.0 - float((school.avg_net_price or 50000) / max((student.budget_usd or 50000), 1)))),
+        "career": causal_result.scores.get("career_outcome", 0.5),
+        "life": causal_result.scores.get("life_satisfaction", 0.5),
+    }
+    overall_score = (
+        sub_scores["academic"] * weights["academic"]
+        + sub_scores["financial"] * weights["financial"]
+        + sub_scores["career"] * weights["career"]
+        + sub_scores["life"] * weights["life"]
+    )
 
-    # Mediation analysis: explain the key causal pathways
-    causal_pathways: list[dict[str, Any]] = []
+    causal_pathways: list[dict[str, Any]] = [
+        {
+            "path": "school_selectivity -> admission_probability",
+            "effect": round(admission_prob, 3),
+            "percentage": round(admission_prob * 100, 1),
+            "mechanism": "Observed from active causal engine outcome estimate",
+        },
+        {
+            "path": "school_quality -> career_outcome",
+            "effect": round(sub_scores["career"], 3),
+            "percentage": round(sub_scores["career"] * 100, 1),
+            "mechanism": "Aggregated from school public metrics and model priors",
+        },
+    ]
     key_reasons: list[str] = []
-
-    try:
-        # Analyze pathway from school selectivity to career outcome
-        pathways = mediator.decompose_pathways(
-            dag, "school_selectivity", "career_outcome", max_length=4
-        )
-        for p in pathways[:3]:
-            causal_pathways.append({
-                "path": " -> ".join(p["path"]),
-                "effect": round(p["effect"], 3),
-                "percentage": round(p["percentage"], 1),
-                "mechanism": p["mechanism"],
-            })
-    except Exception:
-        logger.debug("Mediation analysis failed for %s", school.name)
-
-    # Generate key reasons from Go/No-Go factors
-    try:
-        factors = scorer.generate_key_factors(go_no_go, dag)
-        for f in factors[:3]:
-            direction = "+" if f["direction"] == "positive" else "-"
-            key_reasons.append(
-                f"{direction} {f['label']}: {f['belief']:.0%}"
-            )
-    except Exception:
-        pass
+    for label, score in (
+        ("Academic outlook", sub_scores["academic"]),
+        ("Career outlook", sub_scores["career"]),
+        ("Life fit outlook", sub_scores["life"]),
+    ):
+        direction = "+" if score >= 0.5 else "-"
+        key_reasons.append(f"{direction} {label}: {score:.0%}")
 
     # Additional reason based on financial fit
     if student.budget_usd and school.avg_net_price:
@@ -286,13 +274,22 @@ def _evaluate_school_with_causal(
         "school_name": school.name,
         "school_name_cn": school.name_cn,
         "tier": tier,
-        "overall_score": go_no_go["overall_score"],
+        "overall_score": overall_score,
         "admission_probability": admission_prob,
-        "sub_scores": go_no_go["sub_scores"],
-        "go_no_go_tier": go_no_go["tier"],
+        "sub_scores": sub_scores,
+        "go_no_go_tier": tier,
         "key_reasons": key_reasons,
         "causal_pathways": causal_pathways,
-        "confidence_interval": go_no_go.get("confidence_interval", {}),
+        "confidence_interval": causal_result.confidence_by_outcome,
+        "causal_runtime": {
+            "causal_engine_version": causal_result.causal_engine_version,
+            "causal_model_version": causal_result.causal_model_version,
+            "estimate_confidence": causal_result.estimate_confidence,
+            "label_type": causal_result.label_type,
+            "label_confidence": causal_result.label_confidence,
+            "fallback_used": causal_result.fallback_used,
+            "fallback_reason": causal_result.fallback_reason,
+        },
         "school_info": {
             "rank": school.us_news_rank,
             "acceptance_rate": school.acceptance_rate,
@@ -443,8 +440,16 @@ async def _generate_narrative(
             caller="recommendation.narrative",
         )
         return narrative
-    except Exception:
-        logger.warning("Failed to generate recommendation narrative", exc_info=True)
+    except Exception as exc:
+        log_fallback(
+            logger=logger,
+            component="services.recommendation",
+            stage="generate_narrative",
+            reason="llm_narrative_failed",
+            fallback_used=True,
+            exc=exc,
+            extra={"student_id": str(student.id) if getattr(student, "id", None) else None},
+        )
         # Fallback: build a simple narrative
         reach = sum(1 for s in school_results if s["tier"] == "reach")
         target = sum(1 for s in school_results if s["tier"] == "target")

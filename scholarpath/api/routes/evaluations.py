@@ -7,7 +7,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
-from scholarpath.api.deps import SessionDep
+from scholarpath.api.deps import LLMDep, SessionDep
 from scholarpath.api.models.evaluation import (
     EvaluationResponse,
     TieredSchoolList,
@@ -15,6 +15,10 @@ from scholarpath.api.models.evaluation import (
 from scholarpath.db.models.evaluation import SchoolEvaluation
 from scholarpath.db.models.school import School
 from scholarpath.db.models.student import Student
+from scholarpath.exceptions import ScholarPathError
+from scholarpath.services.evaluation_service import (
+    evaluate_school_fit as evaluate_school_fit_service,
+)
 
 router = APIRouter(prefix="/evaluations", tags=["evaluations"])
 
@@ -38,6 +42,7 @@ async def evaluate_school_fit(
     student_id: uuid.UUID,
     school_id: uuid.UUID,
     session: SessionDep,
+    llm: LLMDep,
 ) -> SchoolEvaluation:
     """Evaluate how well a school fits a student's profile.
 
@@ -52,28 +57,21 @@ async def evaluate_school_fit(
             detail=f"School {school_id} not found",
         )
 
-    # Delegate to the evaluation pipeline (stub -- real implementation
-    # will call the causal + LLM pipeline).
     try:
-        from scholarpath.pipeline import evaluate  # type: ignore[import-untyped]
-
-        evaluation = await evaluate(student, school, session)
-    except ImportError:
-        # Fallback: create a placeholder evaluation so the API contract works.
-        evaluation = SchoolEvaluation(
+        evaluation = await evaluate_school_fit_service(
+            session=session,
+            llm=llm,
             student_id=student_id,
             school_id=school_id,
-            tier="target",
-            academic_fit=0.0,
-            financial_fit=0.0,
-            career_fit=0.0,
-            life_fit=0.0,
-            overall_score=0.0,
-            reasoning="Evaluation pipeline not yet implemented.",
         )
-        session.add(evaluation)
-        await session.flush()
-        await session.refresh(evaluation)
+    except ScholarPathError as exc:
+        detail = str(exc)
+        status_code = (
+            status.HTTP_404_NOT_FOUND
+            if "not found" in detail.lower()
+            else status.HTTP_400_BAD_REQUEST
+        )
+        raise HTTPException(status_code=status_code, detail=detail) from exc
 
     return evaluation
 

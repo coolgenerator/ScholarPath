@@ -7,6 +7,7 @@ import time
 from typing import Any
 
 from scholarpath.db.models.token_usage import TokenUsage
+from scholarpath.observability import log_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -62,12 +63,22 @@ async def record_usage(
             "Tracked usage  model=%s caller=%s tokens=%d (p=%d c=%d)",
             model, caller, total_tokens, prompt_tokens, completion_tokens,
         )
-    except Exception:
+    except Exception as exc:
         # Fall back to in-memory log
         _in_memory_log.append(entry)
-        logger.debug(
-            "Usage tracked in-memory (DB unavailable)  model=%s tokens=%d",
-            model, total_tokens,
+        log_fallback(
+            logger=logger,
+            component="llm.usage_tracker",
+            stage="record_usage.persist",
+            reason="db_unavailable",
+            fallback_used=True,
+            exc=exc,
+            extra={
+                "model": model,
+                "caller": caller,
+                "provider": provider,
+                "total_tokens": total_tokens,
+            },
         )
 
 

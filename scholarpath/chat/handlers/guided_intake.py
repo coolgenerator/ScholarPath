@@ -387,6 +387,7 @@ async def handle_guided_intake(
     llm: LLMClient,
     session: AsyncSession,
     memory: ChatMemory,
+    session_id: str,
     student_id: uuid.UUID,
     message: str,
 ) -> str:
@@ -418,10 +419,8 @@ async def handle_guided_intake(
         Response text. If all steps are done the response starts with
         ``[INTAKE_COMPLETE]`` so the agent can detect completion.
     """
-    session_id = str(student_id)
-
     # --- Determine current step ---
-    context = await memory.get_context(session_id)
+    context = await memory.get_context(session_id, domain="undergrad")
     step_index = context.get("intake_step", 0)
     if not isinstance(step_index, int) or step_index < 0:
         step_index = 0
@@ -460,7 +459,12 @@ async def handle_guided_intake(
     user_lang = extracted.get("user_language", "en")
     if user_lang not in ("zh", "en"):
         user_lang = "en"
-    await memory.save_context(session_id, "user_language", user_lang)
+    await memory.save_context(
+        session_id,
+        "user_language",
+        user_lang,
+        domain="undergrad",
+    )
 
     # --- Update Student model with extracted direct fields ---
     update_data: dict[str, Any] = {}
@@ -490,7 +494,12 @@ async def handle_guided_intake(
 
     if update_data:
         student = await update_student(session, student_id, update_data)
-        await memory.save_context(session_id, "last_extracted", update_data)
+        await memory.save_context(
+            session_id,
+            "last_extracted",
+            update_data,
+            domain="undergrad",
+        )
 
     # --- Determine which steps to skip ---
     completed_step_ids: list[str] = extracted.get("completed_step_ids", [])
@@ -518,15 +527,30 @@ async def handle_guided_intake(
     if not isinstance(previously_completed, list):
         previously_completed = []
     all_completed = list(set(previously_completed + completed_step_ids))
-    await memory.save_context(session_id, "completed_steps", all_completed)
+    await memory.save_context(
+        session_id,
+        "completed_steps",
+        all_completed,
+        domain="undergrad",
+    )
 
     # --- Find the next unanswered step ---
     next_step_index = _find_next_step(step_index, all_completed)
 
     if next_step_index is None:
         # All steps done
-        await memory.save_context(session_id, "intake_step", len(INTAKE_STEPS))
-        await memory.save_context(session_id, "intake_complete", True)
+        await memory.save_context(
+            session_id,
+            "intake_step",
+            len(INTAKE_STEPS),
+            domain="undergrad",
+        )
+        await memory.save_context(
+            session_id,
+            "intake_complete",
+            True,
+            domain="undergrad",
+        )
 
         # Update profile embedding
         try:
@@ -560,7 +584,12 @@ async def handle_guided_intake(
         )
 
     # Advance to next step
-    await memory.save_context(session_id, "intake_step", next_step_index)
+    await memory.save_context(
+        session_id,
+        "intake_step",
+        next_step_index,
+        domain="undergrad",
+    )
     next_step = INTAKE_STEPS[next_step_index]
 
     # Build a friendly response acknowledging what was captured

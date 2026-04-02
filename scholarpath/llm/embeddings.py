@@ -108,8 +108,11 @@ class EmbeddingService:
                     error=error_msg,
                     latency_ms=latency_ms,
                 )
-            except Exception:
-                pass  # tracking is best-effort
+            except Exception as exc:
+                logger.warning(
+                    "Best-effort embedding usage tracking failed: caller=embedding.embed_text",
+                    exc_info=exc,
+                )
 
     @_RETRY
     async def embed_batch(
@@ -164,8 +167,11 @@ class EmbeddingService:
                     error=error_msg,
                     latency_ms=latency_ms,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(
+                    "Best-effort embedding usage tracking failed: caller=embedding.embed_batch",
+                    exc_info=exc,
+                )
 
     async def embed_student_profile(self, profile: dict) -> list[float]:
         """Generate an embedding for a student profile.

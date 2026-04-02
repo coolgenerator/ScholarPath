@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 
 from fastapi import APIRouter, HTTPException, status
@@ -17,6 +18,7 @@ from scholarpath.db.models.student import Student
 from scholarpath.llm.embeddings import get_embedding_service
 
 router = APIRouter(prefix="/students", tags=["students"])
+logger = logging.getLogger(__name__)
 
 
 @router.post(
@@ -41,8 +43,12 @@ async def create_student(payload: StudentCreate, session: SessionDep) -> Student
                 payload.model_dump(exclude_unset=True)
             )
             await session.flush()
-        except Exception:
-            pass  # Embedding is best-effort
+        except Exception as exc:
+            logger.warning(
+                "Best-effort student create embedding failed: student=%s stage=create_profile",
+                student.id,
+                exc_info=exc,
+            )
 
     await session.refresh(student)
     return student
@@ -95,8 +101,12 @@ async def update_student(
                 "budget_usd": student.budget_usd,
             }
             student.profile_embedding = await emb.embed_student_profile(profile_data)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "Best-effort student update embedding failed: student=%s stage=update_profile",
+                student.id,
+                exc_info=exc,
+            )
 
     await session.flush()
     await session.refresh(student)
