@@ -100,9 +100,9 @@ ScholarPath helps Chinese students navigate US undergraduate admissions through 
 | Embeddings | Google Gemini `gemini-embedding-001` (3072-dim) |
 | Database | PostgreSQL 16 + pgvector for semantic search |
 | Cache | Redis 7 (chat memory, session state, Celery broker) |
-| Task Queue | Celery (async DeepSearch, conflict detection) |
+| Task Queue | Celery (deep_search/conflict + causal_train workers + beat) |
 | Causal Engine | networkx + numpy (DAG, Noisy-OR, do-calculus) |
-| Deploy | Docker Compose (5 services) |
+| Deploy | Docker Compose (7 services) |
 
 ## Key Features
 
@@ -124,8 +124,9 @@ git clone https://github.com/your-username/ScholarPath.git
 cd ScholarPath
 docker compose up --build -d
 
-# Verify Celery queues (must include deep_search + conflict)
+# Verify Celery queues
 docker compose exec celery_worker celery -A scholarpath.tasks.celery_app inspect active_queues
+docker compose exec celery_causal_train_worker celery -A scholarpath.tasks.celery_app inspect active_queues
 
 # One-time cleanup before a fresh rollout (records + clears backlog)
 docker compose exec redis redis-cli -n 0 LLEN deep_search
@@ -135,8 +136,8 @@ docker compose exec redis redis-cli -n 0 DEL deep_search conflict
 # Services:
 #   http://localhost:5173  — Frontend (Vite)
 #   http://localhost:8000  — Backend API (FastAPI)
-#   localhost:5432         — PostgreSQL + pgvector
-#   localhost:6379         — Redis
+#   localhost:55432        — PostgreSQL + pgvector
+#   localhost:56379        — Redis
 
 # Seed school data + demo student
 curl -X POST http://localhost:8000/api/api/seed/schools
@@ -176,12 +177,36 @@ WEB_SEARCH_API_URL=
 WEB_SEARCH_API_KEY=
 GOOGLE_API_KEY=your-gemini-api-key
 SCORECARD_API_KEY=your-data-gov-college-scorecard-api-key
+# Optional: IPEDS/CN official bulk dataset (CSV/JSON)
+IPEDS_DATASET_URL=
+IPEDS_DATASET_PATH=
+# Optional: Common App trend-only dataset (CSV/JSON)
+COMMON_APP_TREND_URL=
+COMMON_APP_TREND_PATH=
 # Optional: tune DeepSearch throughput
 DEEPSEARCH_SCHOOL_CONCURRENCY=8
 DEEPSEARCH_SOURCE_HTTP_CONCURRENCY=16
 DEEPSEARCH_SELF_EXTRACT_CONCURRENCY=12
 DEEPSEARCH_INTERNAL_WEBSEARCH_CONCURRENCY=8
 ```
+
+### Real Admission Pipeline (strict mini-before-full)
+
+```bash
+python -m scholarpath.scripts.causal_real_admission_pipeline \
+  --ingest-ipeds \
+  --top-schools 1000 \
+  --years 5 \
+  --school-selection applicants \
+  --ingest-common-app-trends \
+  --events-file scholarpath/data/admission_events_seed.json \
+  --cycle-year 2026 \
+  --max-rpm-total 180 \
+  --judge-concurrency 2 \
+  --full-candidates 3
+```
+
+The script enforces `Gate0 (docker+alembic+tables) -> mini gate -> full stage4 K=3` and does **not** auto-promote the full-run champion. Common App signals are trend-only and are not used as causal truth labels.
 
 ## API Endpoints
 
@@ -197,6 +222,11 @@ DEEPSEARCH_INTERNAL_WEBSEARCH_CONCURRENCY=8
 | `POST /api/vectors/search/schools` | pgvector semantic school search |
 | `GET /api/usage/summary` | Token usage analytics (`?days=` optional) |
 | `GET /api/sessions/student/{id}` | List chat sessions |
+| `POST /api/students/{id}/admission-evidence` | Write evidence artifact (authoritative) |
+| `POST /api/students/{id}/admission-events` | Write admission event (authoritative) |
+| `GET /api/causal/datasets/{version}` | Read causal dataset version |
+
+`/api/causal-data/*` write routes are deprecated compatibility endpoints and return `410 Gone`.
 
 ## Project Structure
 

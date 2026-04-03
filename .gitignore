@@ -73,12 +73,17 @@ scholarpath/.benchmarks/
 
 # Playwright MCP artifacts
 .playwright-mcp/
+.playwright-cli/
+test-results/
+frontend/output/
 
 # Frontend
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
 frontend/package-lock.json
+!frontend/src/lib/
+!frontend/src/lib/**
 
 # Redis dump
 dump.rdb
