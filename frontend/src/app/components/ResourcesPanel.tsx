@@ -1,15 +1,22 @@
 import React, { useState, useEffect } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import { useSchools } from '../../hooks/useSchools';
 import { useEvaluations } from '../../hooks/useEvaluations';
 import { useApp } from '../../context/AppContext';
 import { evaluationsApi } from '../../lib/api/evaluations';
 import { schoolsApi } from '../../lib/api/schools';
 import type { SchoolResponse } from '../../lib/types';
-
-function formatCurrency(value: number | null | undefined): string {
-  if (value == null) return 'N/A';
-  return `$${value.toLocaleString()}`;
-}
+import {
+  DASHBOARD_SELECT_EMPTY_VALUE,
+  DashboardFieldLabel,
+  DashboardSelect,
+  DashboardSelectContent,
+  DashboardSelectItem,
+  DashboardSelectTrigger,
+  DashboardSelectValue,
+} from './ui/dashboard-select';
+import { DashboardInput } from './ui/dashboard-input';
+import { AnimatedWorkspacePage, MotionItem, MotionSection, MotionStagger, MotionSurface } from './WorkspaceMotion';
 
 const STATE_OPTIONS = [
   '', 'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
@@ -63,12 +70,14 @@ export function ResourcesPanel({ studentId }: ResourcesPanelProps) {
   };
 
   return (
-    <section className="w-full bg-background flex flex-col h-full overflow-hidden font-body">
-      <header className="h-16 px-10 flex items-center justify-between sticky top-0 bg-background/90 backdrop-blur-md z-20 border-b border-outline-variant/10">
+    <AnimatedWorkspacePage className="w-full bg-background font-body">
+      <section className="flex h-full w-full flex-col overflow-hidden">
+      <header className="sticky top-0 z-20 border-b border-outline-variant/10 bg-background/90 px-4 py-3 backdrop-blur-md sm:px-6 lg:px-8">
+        <MotionSection role="toolbar" className="flex items-center justify-between gap-4">
         <div>
           <h1 className="font-headline text-lg font-black text-on-surface tracking-tight">{t.disc_title}</h1>
           <p className="text-[9px] text-on-surface-variant font-bold tracking-[0.1em] uppercase">
-            {t.disc_subtitle} {total > 0 && `\u2022 ${total} Schools`}
+            {t.disc_subtitle}{total > 0 && ` • ${t.disc_total_schools(total)}`}
           </p>
         </div>
         <button
@@ -77,71 +86,92 @@ export function ResourcesPanel({ studentId }: ResourcesPanelProps) {
             showFilters ? 'bg-primary/10 text-primary' : 'text-on-surface-variant hover:bg-surface-container-high'
           }`}
         >
-          <span className="material-symbols-outlined text-[20px]">filter_list</span>
-        </button>
+            <span className="material-symbols-outlined text-[20px]">filter_list</span>
+          </button>
+        </MotionSection>
       </header>
 
-      <div className="flex-1 overflow-y-auto px-10 py-8 space-y-8">
-        <div className="space-y-4">
-          <div className="relative flex items-center bg-surface-container-lowest rounded-2xl px-6 py-3 border border-outline-variant/20 focus-within:border-primary-fixed-dim focus-within:ring-4 focus-within:ring-primary/5 transition-all">
+      <div className="flex-1 overflow-y-auto px-4 py-5 space-y-6 sm:px-6 sm:py-6 lg:px-8">
+        <MotionSection delay={0.02} className="space-y-4">
+          <div className="dashboard-toolbar-rail relative flex items-center gap-3 px-4 py-3">
             <span className="material-symbols-outlined text-on-surface-variant/50 text-xl mr-3">search</span>
-            <input
-              className="flex-1 bg-transparent border-none focus:ring-0 text-sm placeholder:text-on-surface-variant/60 py-1 outline-none"
+            <DashboardInput
+              variant="rail"
+              className="flex-1"
               placeholder={t.disc_search_placeholder}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={handleKeyDown}
             />
-            <button
-              onClick={handleSearch}
-              className="ml-3 px-4 py-2 bg-primary text-on-primary rounded-xl text-xs font-bold hover:brightness-110 transition-all"
-            >
+              <button
+                onClick={handleSearch}
+                className="ml-3 px-4 py-2 bg-primary text-on-primary rounded-xl text-xs font-bold hover:brightness-110 transition-all"
+              >
               {t.sl_search}
             </button>
           </div>
 
-          {showFilters && (
-            <div className="bg-surface-container-lowest rounded-2xl p-6 border border-outline-variant/10 space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-on-surface uppercase tracking-widest">{t.disc_filters}</span>
-                <button onClick={clearFilters} className="text-xs text-primary font-bold hover:underline">
-                  {t.disc_clear_all}
-                </button>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-1 block">{t.disc_state}</label>
-                  <select
-                    className="w-full bg-surface-container-high/40 border border-outline-variant/20 rounded-xl px-4 py-2.5 text-sm text-on-surface outline-none focus:border-primary transition-colors"
-                    value={stateFilter}
-                    onChange={(e) => setStateFilter(e.target.value)}
-                  >
-                    <option value="">{t.disc_all_states}</option>
-                    {STATE_OPTIONS.filter(Boolean).map((s) => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-1 block">{t.disc_max_rank}</label>
-                  <input
-                    className="w-full bg-surface-container-high/40 border border-outline-variant/20 rounded-xl px-4 py-2.5 text-sm text-on-surface outline-none focus:border-primary transition-colors"
-                    type="number"
-                    placeholder="e.g. 50"
-                    value={maxRank}
-                    onChange={(e) => setMaxRank(e.target.value)}
-                  />
-                </div>
-              </div>
-              <button
-                onClick={handleSearch}
-                className="w-full py-2.5 bg-primary/5 text-primary rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-primary/10 transition-colors border border-primary/15"
+          <AnimatePresence initial={false}>
+            {showFilters && (
+              <motion.div
+                initial={{ opacity: 0, height: 0, y: 8 }}
+                animate={{ opacity: 1, height: 'auto', y: 0 }}
+                exit={{ opacity: 0, height: 0, y: -6 }}
+                transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
+                className="overflow-hidden"
               >
-                {t.disc_apply_filters}
-              </button>
-            </div>
-          )}
-        </div>
+                <div className="dashboard-surface-soft space-y-4 p-6">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-widest text-on-surface">{t.disc_filters}</span>
+                    <button onClick={clearFilters} className="text-xs font-bold text-primary hover:underline">
+                      {t.disc_clear_all}
+                    </button>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <DashboardFieldLabel>{t.disc_state}</DashboardFieldLabel>
+                      <DashboardSelect
+                        value={stateFilter || undefined}
+                        onValueChange={(value) => {
+                          setStateFilter(value === DASHBOARD_SELECT_EMPTY_VALUE ? '' : value);
+                        }}
+                      >
+                        <DashboardSelectTrigger>
+                          <DashboardSelectValue placeholder={t.disc_all_states} />
+                        </DashboardSelectTrigger>
+                        <DashboardSelectContent>
+                          <DashboardSelectItem value={DASHBOARD_SELECT_EMPTY_VALUE}>
+                            {t.disc_all_states}
+                          </DashboardSelectItem>
+                          {STATE_OPTIONS.filter(Boolean).map((s) => (
+                            <DashboardSelectItem key={s} value={s}>
+                              {s}
+                            </DashboardSelectItem>
+                          ))}
+                        </DashboardSelectContent>
+                      </DashboardSelect>
+                    </div>
+                    <div>
+                      <DashboardFieldLabel>{t.disc_max_rank}</DashboardFieldLabel>
+                      <DashboardInput
+                        type="number"
+                        placeholder={t.disc_max_rank_placeholder}
+                        value={maxRank}
+                        onChange={(e) => setMaxRank(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleSearch}
+                    className="w-full rounded-xl border border-primary/15 bg-primary/5 py-2.5 text-xs font-bold uppercase tracking-widest text-primary transition-colors hover:bg-primary/10"
+                  >
+                    {t.disc_apply_filters}
+                  </button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </MotionSection>
 
         {isLoading && (
           <div className="space-y-4">
@@ -152,7 +182,7 @@ export function ResourcesPanel({ studentId }: ResourcesPanelProps) {
         )}
 
         {!isLoading && schools.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-16 text-center">
+          <MotionSurface className="flex flex-col items-center justify-center py-16 text-center">
             <div className="w-20 h-20 rounded-3xl bg-surface-container-high/40 flex items-center justify-center mb-6">
               <span className="material-symbols-outlined text-4xl text-on-surface-variant/50">search_off</span>
             </div>
@@ -179,54 +209,56 @@ export function ResourcesPanel({ studentId }: ResourcesPanelProps) {
                   {lookupLoading ? 'progress_activity' : 'travel_explore'}
                 </span>
                 {lookupLoading
-                  ? (t.disc_agent_searching ?? 'Agent is searching...')
-                  : (t.disc_agent_search ?? `Search for "${query}" with AI Agent`)}
+                  ? t.disc_agent_searching
+                  : t.disc_search_with_agent(query)}
               </button>
             )}
-          </div>
+          </MotionSurface>
         )}
 
         {/* Agent lookup result */}
         {lookupResult && (
-          <div className="space-y-3">
+          <MotionSection className="space-y-3" delay={0.08}>
             <div className="flex items-center gap-2 px-1">
               <span className="material-symbols-outlined text-tertiary text-base" style={{ fontVariationSettings: "'FILL' 1" }}>auto_awesome</span>
-              <span className="text-xs font-bold text-tertiary uppercase tracking-widest">{t.disc_agent_found ?? 'AI Agent Found'}</span>
+              <span className="text-xs font-bold text-tertiary uppercase tracking-widest">{t.disc_agent_found}</span>
             </div>
             <SchoolCard
               school={lookupResult}
               isOnList={evaluatedSchoolIds.has(lookupResult.id)}
               studentId={studentId}
-              onAdded={() => { refetchEvals(); setLookupResult(null); }}
-              t={t}
-            />
-          </div>
+                onAdded={() => { refetchEvals(); setLookupResult(null); }}
+                t={t}
+              />
+          </MotionSection>
         )}
 
         {lookupError && (
           <div className="text-center py-4 text-sm text-error/70">
-            {t.disc_agent_error ?? 'Could not find this school. Try a different name.'}
+            {t.disc_agent_error}
           </div>
         )}
 
         {!isLoading && schools.length > 0 && (
-          <div className="space-y-4">
+          <MotionStagger className="space-y-4" delay={0.06} stagger={0.06}>
             {schools.map((school) => (
-              <SchoolCard
-                key={school.id}
-                school={school}
-                isOnList={evaluatedSchoolIds.has(school.id)}
-                studentId={studentId}
-                onAdded={refetchEvals}
-                t={t}
-              />
+              <MotionItem key={school.id}>
+                <SchoolCard
+                  school={school}
+                  isOnList={evaluatedSchoolIds.has(school.id)}
+                  studentId={studentId}
+                  onAdded={refetchEvals}
+                  t={t}
+                />
+              </MotionItem>
             ))}
-          </div>
+          </MotionStagger>
         )}
 
         <div className="h-12" />
       </div>
     </section>
+    </AnimatedWorkspacePage>
   );
 }
 
@@ -252,7 +284,7 @@ function SchoolCard({ school, isOnList, studentId, onAdded, t }: {
   };
 
   return (
-    <div className="bg-surface-container-lowest rounded-2xl p-6 border border-outline-variant/10 hover:shadow-md transition-all group">
+    <div className="dashboard-surface dashboard-hover-lift p-6 group">
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-center gap-4">
           <div className={`w-12 h-12 rounded-xl flex items-center justify-center transition-colors ${
@@ -285,7 +317,7 @@ function SchoolCard({ school, isOnList, studentId, onAdded, t }: {
         {school.us_news_rank && (
           <div className="text-right">
             <div className="text-2xl font-headline font-black text-primary">#{school.us_news_rank}</div>
-            <div className="text-[8px] font-bold text-on-surface-variant/60 uppercase tracking-widest">US News</div>
+            <div className="text-[8px] font-bold text-on-surface-variant/60 uppercase tracking-widest">{t.disc_us_news_rank}</div>
           </div>
         )}
       </div>
@@ -293,19 +325,19 @@ function SchoolCard({ school, isOnList, studentId, onAdded, t }: {
       <div className="grid grid-cols-4 gap-3">
         <div className="bg-surface-container-low/40 px-3 py-2.5 rounded-xl border border-outline-variant/5">
           <div className="text-[8px] text-on-surface-variant font-bold uppercase tracking-widest">{t.sl_acceptance}</div>
-          <div className="text-sm font-black text-on-surface">{school.acceptance_rate != null ? `${Math.round(school.acceptance_rate <= 1 ? school.acceptance_rate * 100 : school.acceptance_rate)}%` : 'N/A'}</div>
+          <div className="text-sm font-black text-on-surface">{school.acceptance_rate != null ? `${Math.round(school.acceptance_rate <= 1 ? school.acceptance_rate * 100 : school.acceptance_rate)}%` : t.common_na}</div>
         </div>
         <div className="bg-surface-container-low/40 px-3 py-2.5 rounded-xl border border-outline-variant/5">
           <div className="text-[8px] text-on-surface-variant font-bold uppercase tracking-widest">{t.sl_net_price}</div>
-          <div className="text-sm font-black text-on-surface">{school.avg_net_price ? `$${(school.avg_net_price / 1000).toFixed(0)}K` : 'N/A'}</div>
+          <div className="text-sm font-black text-on-surface">{school.avg_net_price ? `$${(school.avg_net_price / 1000).toFixed(0)}K` : t.common_na}</div>
         </div>
         <div className="bg-surface-container-low/40 px-3 py-2.5 rounded-xl border border-outline-variant/5">
-          <div className="text-[8px] text-on-surface-variant font-bold uppercase tracking-widest">SAT Range</div>
-          <div className="text-sm font-black text-on-surface">{school.sat_25 && school.sat_75 ? `${school.sat_25}–${school.sat_75}` : 'N/A'}</div>
+          <div className="text-[8px] text-on-surface-variant font-bold uppercase tracking-widest">{t.disc_sat_range}</div>
+          <div className="text-sm font-black text-on-surface">{school.sat_25 && school.sat_75 ? `${school.sat_25}–${school.sat_75}` : t.common_na}</div>
         </div>
         <div className="bg-surface-container-low/40 px-3 py-2.5 rounded-xl border border-outline-variant/5">
           <div className="text-[8px] text-on-surface-variant font-bold uppercase tracking-widest">{t.sl_graduation}</div>
-          <div className="text-sm font-black text-on-surface">{school.graduation_rate_4yr != null ? `${Math.round(school.graduation_rate_4yr <= 1 ? school.graduation_rate_4yr * 100 : school.graduation_rate_4yr)}%` : 'N/A'}</div>
+          <div className="text-sm font-black text-on-surface">{school.graduation_rate_4yr != null ? `${Math.round(school.graduation_rate_4yr <= 1 ? school.graduation_rate_4yr * 100 : school.graduation_rate_4yr)}%` : t.common_na}</div>
         </div>
       </div>
 

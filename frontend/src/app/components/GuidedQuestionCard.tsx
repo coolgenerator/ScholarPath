@@ -1,5 +1,13 @@
 import React, { useState, useCallback } from 'react';
 import type { GuidedQuestion } from '../../hooks/useChat';
+import { useApp } from '../../context/AppContext';
+import { DashboardInput } from './ui/dashboard-input';
+import { DashboardSegmentedGroup, DashboardSegmentedItem } from './ui/dashboard-segmented';
+import {
+  StructuredCardHeader,
+  StructuredCardSection,
+  StructuredCardShell,
+} from './StructuredCardPrimitives';
 
 interface Props {
   questions: GuidedQuestion[];
@@ -7,6 +15,7 @@ interface Props {
 }
 
 export function GuidedQuestionCard({ questions, onSubmit }: Props) {
+  const { t, locale } = useApp();
   const [currentIndex, setCurrentIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string | string[]>>({});
   const [customInputs, setCustomInputs] = useState<Record<string, string>>({});
@@ -16,31 +25,6 @@ export function GuidedQuestionCard({ questions, onSubmit }: Props) {
   const isLast = currentIndex === totalSteps - 1;
 
   const selectedValues = answers[question.id] || (question.multi_select ? [] : '');
-
-  const handleOptionClick = useCallback(
-    (value: string) => {
-      setAnswers((prev) => {
-        const current = prev[question.id];
-        if (question.multi_select) {
-          const arr = Array.isArray(current) ? [...current] : [];
-          const idx = arr.indexOf(value);
-          if (idx >= 0) {
-            arr.splice(idx, 1);
-          } else {
-            arr.push(value);
-          }
-          return { ...prev, [question.id]: arr };
-        }
-        // Single-select: toggle off if same value clicked
-        if (current === value) {
-          const { [question.id]: _, ...rest } = prev;
-          return rest;
-        }
-        return { ...prev, [question.id]: value };
-      });
-    },
-    [question.id, question.multi_select],
-  );
 
   const handleCustomInputChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -71,13 +55,6 @@ export function GuidedQuestionCard({ questions, onSubmit }: Props) {
     [question.id, question.multi_select, customInputs],
   );
 
-  const isOptionSelected = (value: string) => {
-    if (question.multi_select) {
-      return Array.isArray(selectedValues) && selectedValues.includes(value);
-    }
-    return selectedValues === value;
-  };
-
   const handleNext = () => {
     if (isLast) {
       // Merge any pending custom input
@@ -102,101 +79,113 @@ export function GuidedQuestionCard({ questions, onSubmit }: Props) {
   const hasIcons = question.options.some((o) => o.icon);
 
   return (
-    <div className="mt-3 bg-white rounded-2xl border border-outline-variant/20 shadow-sm overflow-hidden transition-all duration-300">
-      {/* Step indicator */}
-      {totalSteps > 1 && (
-        <div className="px-5 pt-4 flex items-center gap-2">
-          {questions.map((_, i) => (
-            <div
-              key={i}
-              className={`h-1 flex-1 rounded-full transition-colors duration-300 ${
-                i <= currentIndex ? 'bg-primary' : 'bg-outline-variant/20'
-              }`}
-            />
-          ))}
-          <span className="ml-2 text-[10px] font-bold text-on-surface-variant/50 uppercase tracking-widest">
-            {currentIndex + 1}/{totalSteps}
-          </span>
-        </div>
-      )}
+    <StructuredCardShell className="overflow-hidden">
+      <StructuredCardHeader
+        kicker={t.chat_guided_title}
+        title={question.title}
+        description={question.description}
+        badge={totalSteps > 1 ? `${currentIndex + 1}/${totalSteps}` : (question.multi_select ? t.chat_guided_multi : null)}
+        aside={totalSteps > 1 ? (
+          <div className="structured-guided-progress">
+            {questions.map((_, i) => (
+              <div
+                key={i}
+                className={`structured-guided-progress-segment ${i <= currentIndex ? 'is-active' : ''}`}
+              />
+            ))}
+          </div>
+        ) : null}
+      />
 
-      {/* Question title */}
-      <div className="px-5 pt-4 pb-2">
-        <h3 className="font-headline text-sm font-bold text-on-surface">{question.title}</h3>
-        {question.description && (
-          <p className="text-xs text-on-surface-variant/70 mt-1">{question.description}</p>
-        )}
-        {question.multi_select && (
-          <span className="inline-block mt-1 text-[10px] font-bold text-primary/70 uppercase tracking-wider">
-            Select multiple
-          </span>
-        )}
-      </div>
-
-      {/* Options */}
-      <div className="px-5 pb-3 flex flex-wrap gap-2">
-        {question.options.map((opt) => (
-          <button
-            key={opt.value}
-            onClick={() => handleOptionClick(opt.value)}
-            className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all duration-200 border ${
-              isOptionSelected(opt.value)
-                ? 'bg-primary text-on-primary border-primary shadow-md shadow-primary/15 scale-[1.02]'
-                : 'bg-surface-container-high/30 text-on-surface border-outline-variant/15 hover:bg-primary/5 hover:border-primary/30'
-            }`}
+      <StructuredCardSection
+        title={question.multi_select ? t.chat_guided_multi : undefined}
+        contentClassName="space-y-3"
+      >
+        {question.multi_select ? (
+          <DashboardSegmentedGroup
+            type="multiple"
+            size="compact"
+            value={Array.isArray(selectedValues) ? selectedValues : []}
+            onValueChange={(values) => {
+              setAnswers((prev) => ({ ...prev, [question.id]: values }));
+            }}
           >
-            {hasIcons && opt.icon && (
-              <span
-                className={`material-symbols-outlined text-[16px] ${
-                  isOptionSelected(opt.value) ? 'text-on-primary' : 'text-primary'
-                }`}
-                style={{ fontVariationSettings: "'FILL' 1" }}
-              >
-                {opt.icon}
-              </span>
-            )}
-            {opt.label}
-          </button>
-        ))}
-      </div>
+            {question.options.map((opt) => (
+              <DashboardSegmentedItem key={opt.value} value={opt.value} size="compact" accent="primary">
+                {hasIcons && opt.icon ? (
+                  <span className="material-symbols-outlined text-[16px]" style={{ fontVariationSettings: "'FILL' 1" }}>
+                    {opt.icon}
+                  </span>
+                ) : null}
+                {opt.label}
+              </DashboardSegmentedItem>
+            ))}
+          </DashboardSegmentedGroup>
+        ) : (
+          <DashboardSegmentedGroup
+            type="single"
+            allowDeselect
+            size="compact"
+            value={typeof selectedValues === 'string' ? selectedValues : ''}
+            onValueChange={(value) => {
+              setAnswers((prev) => {
+                if (!value) {
+                  const { [question.id]: _removed, ...rest } = prev;
+                  return rest;
+                }
+                return { ...prev, [question.id]: value };
+              });
+            }}
+          >
+            {question.options.map((opt) => (
+              <DashboardSegmentedItem key={opt.value} value={opt.value} size="compact" accent="primary">
+                {hasIcons && opt.icon ? (
+                  <span className="material-symbols-outlined text-[16px]" style={{ fontVariationSettings: "'FILL' 1" }}>
+                    {opt.icon}
+                  </span>
+                ) : null}
+                {opt.label}
+              </DashboardSegmentedItem>
+            ))}
+          </DashboardSegmentedGroup>
+        )}
+      </StructuredCardSection>
 
-      {/* Custom input */}
-      {question.allow_custom && (
-        <div className="px-5 pb-3">
-          <input
+      {question.allow_custom ? (
+        <StructuredCardSection title={locale === 'zh' ? '补充说明' : 'Add your own detail'}>
+          <DashboardInput
             type="text"
             value={customInputs[question.id] || ''}
             onChange={handleCustomInputChange}
             onKeyDown={handleCustomInputKeyDown}
-            placeholder={question.custom_placeholder || 'Type your answer...'}
-            className="w-full px-3.5 py-2 text-xs bg-surface-container-highest/50 border border-outline-variant/15 rounded-xl placeholder:text-on-surface-variant/40 focus:outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/5 transition-all"
+            placeholder={question.custom_placeholder || t.chat_guided_custom_placeholder}
+            className="w-full py-2 text-xs"
           />
-        </div>
-      )}
+        </StructuredCardSection>
+      ) : null}
 
-      {/* Navigation buttons */}
-      <div className="px-5 pb-4 flex items-center justify-between">
+      <div className="structured-guided-footer">
         <div>
           {currentIndex > 0 && (
             <button
               onClick={handleBack}
-              className="px-4 py-2 text-xs font-bold text-on-surface-variant/70 hover:text-on-surface transition-colors flex items-center gap-1"
+              className="structured-guided-back"
             >
               <span className="material-symbols-outlined text-sm">arrow_back</span>
-              Back
+              {t.chat_guided_back}
             </button>
           )}
         </div>
         <button
           onClick={handleNext}
-          className="px-5 py-2 bg-primary text-on-primary text-xs font-bold rounded-xl hover:scale-105 transition-transform shadow-lg shadow-primary/20 flex items-center gap-1.5"
+          className="structured-guided-primary"
         >
-          {isLast ? 'Submit' : 'Next'}
+          {isLast ? t.chat_guided_submit : t.chat_guided_next}
           <span className="material-symbols-outlined text-sm">
             {isLast ? 'check' : 'arrow_forward'}
           </span>
         </button>
       </div>
-    </div>
+    </StructuredCardShell>
   );
 }

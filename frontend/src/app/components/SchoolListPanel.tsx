@@ -1,30 +1,43 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import { useEvaluations } from '../../hooks/useEvaluations';
 import { useSchools } from '../../hooks/useSchools';
 import { useApp } from '../../context/AppContext';
 import { evaluationsApi } from '../../lib/api/evaluations';
 import { schoolsApi } from '../../lib/api/schools';
 import { reportsApi } from '../../lib/api/reports';
+import { portfolioApi } from '../../lib/api/portfolio';
 import type { EvaluationWithSchool, SchoolResponse } from '../../lib/types';
+import {
+  DASHBOARD_SELECT_EMPTY_VALUE,
+  DashboardSelect,
+  DashboardSelectContent,
+  DashboardSelectItem,
+  DashboardSelectTrigger,
+  DashboardSelectValue,
+} from './ui/dashboard-select';
+import { DashboardInput } from './ui/dashboard-input';
+import { DashboardSegmentedGroup, DashboardSegmentedItem } from './ui/dashboard-segmented';
+import { AnimatedWorkspacePage, MotionItem, MotionSection, MotionStagger, MotionSurface } from './WorkspaceMotion';
 
 // ─── Helpers ───
 
 function formatPercent(value: number | null | undefined): string {
-  if (value == null) return 'N/A';
+  if (value == null) return '—';
   const pct = value <= 1 ? Math.round(value * 100) : Math.round(value);
   return `${pct}%`;
 }
 
 function formatCurrency(value: number | null | undefined): string {
-  if (value == null) return 'N/A';
+  if (value == null) return '—';
   return `$${value.toLocaleString()}`;
 }
 
-const TIER_CFG: Record<string, { bg: string; text: string; label: string; bar: string }> = {
-  reach:  { bg: 'bg-secondary-fixed/50', text: 'text-on-secondary-fixed-variant', label: 'Reach',  bar: 'bg-secondary' },
-  target: { bg: 'bg-tertiary-fixed/50',  text: 'text-on-tertiary-fixed-variant',  label: 'Target', bar: 'bg-tertiary' },
-  safety: { bg: 'bg-primary/10',         text: 'text-primary',                     label: 'Safety', bar: 'bg-primary' },
-  likely: { bg: 'bg-tertiary/10',        text: 'text-tertiary',                    label: 'Likely', bar: 'bg-tertiary/60' },
+const TIER_CFG: Record<string, { bg: string; text: string; labelKey: 'sl_tier_reach' | 'sl_tier_target' | 'sl_tier_safety' | 'sl_tier_likely'; bar: string }> = {
+  reach:  { bg: 'bg-secondary-fixed/50', text: 'text-on-secondary-fixed-variant', labelKey: 'sl_tier_reach', bar: 'bg-secondary' },
+  target: { bg: 'bg-tertiary-fixed/50',  text: 'text-on-tertiary-fixed-variant',  labelKey: 'sl_tier_target', bar: 'bg-tertiary' },
+  safety: { bg: 'bg-primary/10',         text: 'text-primary',                     labelKey: 'sl_tier_safety', bar: 'bg-primary' },
+  likely: { bg: 'bg-tertiary/10',        text: 'text-tertiary',                    labelKey: 'sl_tier_likely', bar: 'bg-tertiary/60' },
 };
 
 function MiniBar({ value, color }: { value: number; color: string }) {
@@ -72,7 +85,7 @@ function TierSummary({ tieredCounts, total, avgScore, t }: { tieredCounts: Recor
             <div key={tier} className="flex items-center gap-1.5">
               <div className={`w-2 h-2 rounded-full ${TIER_CFG[tier].bar}`} />
               <span className="text-[9px] font-bold text-on-surface-variant/60 uppercase tracking-widest">
-                {TIER_CFG[tier].label} {tieredCounts[tier]}
+                {t[TIER_CFG[tier].labelKey]} {tieredCounts[tier]}
               </span>
             </div>
           ))}
@@ -107,7 +120,7 @@ function SchoolRow({ ev, isFavorite, isBlacklisted, onToggleFavorite, onToggleBl
   if (isBlacklisted) return null;
 
   return (
-    <div className={`bg-surface-container-lowest rounded-2xl border transition-all ${
+    <motion.div layout className={`dashboard-hover-lift bg-surface-container-lowest rounded-2xl border transition-all ${
       expanded ? 'border-primary/20 shadow-md' : 'border-outline-variant/10 hover:shadow-sm'
     }`}>
       {/* Compact row */}
@@ -131,7 +144,7 @@ function SchoolRow({ ev, isFavorite, isBlacklisted, onToggleFavorite, onToggleBl
         {/* School info */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="font-headline text-sm font-bold text-on-surface truncate">{ev.school?.name ?? 'School'}</span>
+            <span className="font-headline text-sm font-bold text-on-surface truncate">{ev.school?.name ?? t.common_school}</span>
             {ev.school?.name_cn && (
               <span className="text-xs text-on-surface-variant/50 truncate">{ev.school.name_cn}</span>
             )}
@@ -143,7 +156,7 @@ function SchoolRow({ ev, isFavorite, isBlacklisted, onToggleFavorite, onToggleBl
 
         {/* Tier badge */}
         <span className={`px-2 py-1 ${tier.bg} ${tier.text} text-[8px] font-black uppercase tracking-widest rounded-md shrink-0`}>
-          {tier.label}
+          {t[tier.labelKey]}
         </span>
 
         {/* Mini score bars */}
@@ -181,14 +194,22 @@ function SchoolRow({ ev, isFavorite, isBlacklisted, onToggleFavorite, onToggleBl
       </div>
 
       {/* Expanded: Level 1 Causal Visualization */}
-      {expanded && (
-        <div className="px-6 pb-6 pt-2 border-t border-outline-variant/10 space-y-6">
+      <AnimatePresence initial={false}>
+        {expanded && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.34, ease: [0.22, 1, 0.36, 1] }}
+            className="overflow-hidden"
+          >
+            <div className="px-6 pb-6 pt-2 border-t border-outline-variant/10 space-y-6">
           {/* Score breakdown */}
           <div className="grid grid-cols-2 gap-x-8 gap-y-4">
-            <ScoreBar label="Academic Fit" score={ev.academic_fit} color="bg-primary" />
-            <ScoreBar label="Financial Fit" score={ev.financial_fit} color="bg-tertiary" />
-            <ScoreBar label="Career Fit" score={ev.career_fit} color="bg-secondary" />
-            <ScoreBar label="Life Fit" score={ev.life_fit} color="bg-primary-fixed-dim" />
+            <ScoreBar label={t.common_academic} score={ev.academic_fit} color="bg-primary" />
+            <ScoreBar label={t.common_financial} score={ev.financial_fit} color="bg-tertiary" />
+            <ScoreBar label={t.common_career} score={ev.career_fit} color="bg-secondary" />
+            <ScoreBar label={t.common_life} score={ev.life_fit} color="bg-primary-fixed-dim" />
           </div>
 
           {/* Key metrics */}
@@ -249,9 +270,11 @@ function SchoolRow({ ev, isFavorite, isBlacklisted, onToggleFavorite, onToggleBl
               </div>
             </div>
           )}
-        </div>
-      )}
-    </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
   );
 }
 
@@ -285,8 +308,8 @@ function AddSchoolModal({ studentId, onClose, onAdded, t }: { studentId: string;
             </button>
           </div>
           <div className="flex gap-2">
-            <input
-              className="flex-1 bg-surface-container-highest rounded-xl px-4 py-2.5 text-sm outline-none border border-outline-variant/20 focus:border-primary transition-colors"
+            <DashboardInput
+              className="flex-1"
               placeholder={t.sl_search_placeholder}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -334,24 +357,121 @@ interface SchoolListPanelProps {
 // ─── Interest Tags for AI Preferences ───
 
 const INTEREST_TAGS = [
-  { id: 'cs', label: 'Computer Science', icon: 'code' },
-  { id: 'engineering', label: 'Engineering', icon: 'engineering' },
-  { id: 'business', label: 'Business', icon: 'business_center' },
-  { id: 'biology', label: 'Biology / Pre-Med', icon: 'biotech' },
-  { id: 'arts', label: 'Arts & Humanities', icon: 'palette' },
-  { id: 'social', label: 'Social Sciences', icon: 'groups' },
-  { id: 'math', label: 'Math & Statistics', icon: 'calculate' },
-  { id: 'research', label: 'Strong Research', icon: 'science' },
+  { id: 'cs', labelKey: 'sl_interest_cs' as const, icon: 'code' },
+  { id: 'engineering', labelKey: 'sl_interest_engineering' as const, icon: 'engineering' },
+  { id: 'business', labelKey: 'sl_interest_business' as const, icon: 'business_center' },
+  { id: 'biology', labelKey: 'sl_interest_biology' as const, icon: 'biotech' },
+  { id: 'arts', labelKey: 'sl_interest_arts' as const, icon: 'palette' },
+  { id: 'social', labelKey: 'sl_interest_social' as const, icon: 'groups' },
+  { id: 'math', labelKey: 'sl_interest_math' as const, icon: 'calculate' },
+  { id: 'research', labelKey: 'sl_interest_research' as const, icon: 'science' },
 ];
 
 const PREFERENCE_TAGS = [
-  { id: 'more_reach', label_key: 'sl_more_reach' as const, icon: 'trending_up' },
-  { id: 'more_safety', label_key: 'sl_more_safety' as const, icon: 'shield' },
-  { id: 'low_cost', label: 'Low Cost', icon: 'savings' },
-  { id: 'urban', label: 'Urban Campus', icon: 'location_city' },
-  { id: 'small', label: 'Small Class Size', icon: 'group' },
-  { id: 'international', label: 'International Friendly', icon: 'public' },
+  { id: 'more_reach', labelKey: 'sl_more_reach' as const, icon: 'trending_up' },
+  { id: 'more_safety', labelKey: 'sl_more_safety' as const, icon: 'shield' },
+  { id: 'low_cost', labelKey: 'sl_preference_low_cost' as const, icon: 'savings' },
+  { id: 'urban', labelKey: 'sl_preference_urban' as const, icon: 'location_city' },
+  { id: 'small', labelKey: 'sl_preference_small_class' as const, icon: 'group' },
+  { id: 'international', labelKey: 'sl_preference_international' as const, icon: 'public' },
 ];
+
+function toStringArray(raw: unknown): string[] {
+  if (Array.isArray(raw)) {
+    return raw.filter((item): item is string => typeof item === 'string');
+  }
+  if (typeof raw === 'string' && raw.trim()) return [raw.trim()];
+  return [];
+}
+
+function inferSelectedPrefsFromPreferences(preferences: Record<string, unknown>): Set<string> {
+  const tags = new Set<string>(toStringArray(preferences.ui_preference_tags));
+
+  const risk = typeof preferences.risk_preference === 'string' ? preferences.risk_preference : '';
+  if (risk === 'reach') tags.add('more_reach');
+  if (risk === 'safety') tags.add('more_safety');
+
+  const cost = typeof preferences.cost_priority === 'string' ? preferences.cost_priority : '';
+  if (cost === 'low_cost') tags.add('low_cost');
+
+  const location = toStringArray(preferences.location ?? preferences.location_preference);
+  if (location.includes('urban')) tags.add('urban');
+
+  const size = toStringArray(preferences.size ?? preferences.school_size_preference);
+  if (size.includes('small')) tags.add('small');
+
+  const culture = toStringArray(preferences.culture ?? preferences.campus_culture);
+  if (culture.includes('international_friendly')) tags.add('international');
+
+  return tags;
+}
+
+function mergePreferenceTags(
+  base: Record<string, unknown>,
+  selectedInterests: Set<string>,
+  selectedPrefs: Set<string>,
+): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...base };
+  next.interests = [...selectedInterests];
+  next.ui_preference_tags = [...selectedPrefs];
+
+  if (selectedPrefs.has('more_reach') && !selectedPrefs.has('more_safety')) {
+    next.risk_preference = 'reach';
+  } else if (selectedPrefs.has('more_safety') && !selectedPrefs.has('more_reach')) {
+    next.risk_preference = 'safety';
+  } else {
+    delete next.risk_preference;
+  }
+
+  if (selectedPrefs.has('low_cost')) next.cost_priority = 'low_cost';
+  else if (next.cost_priority === 'low_cost') delete next.cost_priority;
+
+  const location = new Set<string>(toStringArray(base.location ?? base.location_preference));
+  if (selectedPrefs.has('urban')) location.add('urban');
+  else location.delete('urban');
+  if (location.size > 0) next.location = [...location];
+  else delete next.location;
+
+  const schoolSize = new Set<string>(toStringArray(base.size ?? base.school_size_preference));
+  if (selectedPrefs.has('small')) schoolSize.add('small');
+  else schoolSize.delete('small');
+  if (schoolSize.size > 0) next.size = [...schoolSize];
+  else delete next.size;
+
+  const campusCulture = new Set<string>(toStringArray(base.culture ?? base.campus_culture));
+  if (selectedPrefs.has('international')) campusCulture.add('international_friendly');
+  else campusCulture.delete('international_friendly');
+  if (campusCulture.size > 0) next.culture = [...campusCulture];
+  else delete next.culture;
+
+  delete next.location_preference;
+  delete next.school_size_preference;
+  delete next.campus_culture;
+
+  return next;
+}
+
+function buildCanonicalPreferenceHints(preferences: Record<string, unknown>): string[] {
+  const hints: string[] = [];
+
+  const risk = typeof preferences.risk_preference === 'string' ? preferences.risk_preference : '';
+  if (risk) hints.push(`risk:${risk}`);
+
+  const cost = typeof preferences.cost_priority === 'string' ? preferences.cost_priority : '';
+  if (cost) hints.push(`cost:${cost}`);
+
+  for (const location of toStringArray(preferences.location ?? preferences.location_preference)) {
+    hints.push(`location:${location}`);
+  }
+  for (const culture of toStringArray(preferences.culture ?? preferences.campus_culture)) {
+    hints.push(`culture:${culture}`);
+  }
+  for (const size of toStringArray(preferences.size ?? preferences.school_size_preference)) {
+    hints.push(`size:${size}`);
+  }
+
+  return hints;
+}
 
 function AIPreferencesPanel({ studentId, onGenerated, t }: {
   studentId: string;
@@ -360,32 +480,60 @@ function AIPreferencesPanel({ studentId, onGenerated, t }: {
 }) {
   const [selectedInterests, setSelectedInterests] = useState<Set<string>>(new Set());
   const [selectedPrefs, setSelectedPrefs] = useState<Set<string>>(new Set());
+  const [basePreferences, setBasePreferences] = useState<Record<string, unknown>>({});
   const [generating, setGenerating] = useState(false);
   const [status, setStatus] = useState<'idle' | 'polling' | 'done' | 'error'>('idle');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const toggleTag = (set: Set<string>, id: string, setter: React.Dispatch<React.SetStateAction<Set<string>>>) => {
-    setter((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
 
   // Cleanup polling on unmount
   useEffect(() => {
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadPreferences = async () => {
+      try {
+        const portfolio = await portfolioApi.get(studentId);
+        if (cancelled) return;
+        const preferences = (portfolio.preferences ?? {}) as Record<string, unknown>;
+        setBasePreferences(preferences);
+        setSelectedInterests(new Set(toStringArray(preferences.interests)));
+        setSelectedPrefs(inferSelectedPrefsFromPreferences(preferences));
+      } catch {
+        if (!cancelled) {
+          setBasePreferences({});
+          setSelectedInterests(new Set());
+          setSelectedPrefs(new Set());
+        }
+      }
+    };
+
+    loadPreferences();
+
+    return () => { cancelled = true; };
+  }, [studentId]);
+
   const handleGenerate = async () => {
     if (!studentId) return;
     setGenerating(true);
     setStatus('polling');
 
+    const mergedPreferences = mergePreferenceTags(basePreferences, selectedInterests, selectedPrefs);
+
+    try {
+      await portfolioApi.patch(studentId, {
+        preferences: mergedPreferences as any,
+      });
+      setBasePreferences(mergedPreferences);
+    } catch {
+      // Keep generation non-blocking even if preference persistence fails.
+    }
+
     const hints = {
       interests: [...selectedInterests],
-      preferences: [...selectedPrefs],
+      preferences: buildCanonicalPreferenceHints(mergedPreferences),
     };
 
     try {
@@ -451,51 +599,56 @@ function AIPreferencesPanel({ studentId, onGenerated, t }: {
 
       {/* Interest tags */}
       <div>
-        <div className="text-[9px] font-bold text-on-surface-variant/50 uppercase tracking-widest mb-2">Interests</div>
-        <div className="flex flex-wrap gap-2">
+        <div className="text-[9px] font-bold text-on-surface-variant/50 uppercase tracking-widest mb-2">{t.sl_interests_label}</div>
+        <DashboardSegmentedGroup
+          type="multiple"
+          value={[...selectedInterests]}
+          onValueChange={(values) => setSelectedInterests(new Set(values))}
+          className="items-start"
+        >
           {INTEREST_TAGS.map((tag) => {
-            const selected = selectedInterests.has(tag.id);
+            const label = t[tag.labelKey];
             return (
-              <button
+              <DashboardSegmentedItem
                 key={tag.id}
-                onClick={() => toggleTag(selectedInterests, tag.id, setSelectedInterests)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                  selected
-                    ? 'bg-primary/10 text-primary border border-primary/20'
-                    : 'bg-surface-container-high/30 text-on-surface-variant border border-transparent hover:border-outline-variant/20'
-                }`}
+                value={tag.id}
+                accent="primary"
+                size="compact"
+                className="min-h-9"
               >
                 <span className="material-symbols-outlined text-sm">{tag.icon}</span>
-                {tag.label}
-              </button>
+                {label}
+              </DashboardSegmentedItem>
             );
           })}
-        </div>
+        </DashboardSegmentedGroup>
       </div>
 
       {/* Preference tags */}
       <div>
-        <div className="text-[9px] font-bold text-on-surface-variant/50 uppercase tracking-widest mb-2">Preferences</div>
-        <div className="flex flex-wrap gap-2">
+        <div className="text-[9px] font-bold text-on-surface-variant/50 uppercase tracking-widest mb-2">{t.sl_preferences_label}</div>
+        <DashboardSegmentedGroup
+          type="multiple"
+          value={[...selectedPrefs]}
+          onValueChange={(values) => setSelectedPrefs(new Set(values))}
+          className="items-start"
+        >
           {PREFERENCE_TAGS.map((tag) => {
-            const selected = selectedPrefs.has(tag.id);
-            const label = tag.label_key ? (t as Record<string, any>)[tag.label_key] : tag.label;
+            const label = t[tag.labelKey];
             return (
-              <button
+              <DashboardSegmentedItem
                 key={tag.id}
-                onClick={() => toggleTag(selectedPrefs, tag.id, setSelectedPrefs)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                  selected
-                    ? 'bg-tertiary/10 text-tertiary border border-tertiary/20'
-                    : 'bg-surface-container-high/30 text-on-surface-variant border border-transparent hover:border-outline-variant/20'
-                }`}
+                value={tag.id}
+                accent="tertiary"
+                size="compact"
+                className="min-h-9"
               >
                 <span className="material-symbols-outlined text-sm">{tag.icon}</span>
                 {label}
-              </button>
+              </DashboardSegmentedItem>
             );
           })}
-        </div>
+        </DashboardSegmentedGroup>
       </div>
 
       {/* Generate button + status */}
@@ -596,89 +749,105 @@ export function SchoolListPanel({ studentId }: SchoolListPanelProps) {
   }, [refetch]);
 
   return (
-    <section className="w-full bg-background flex flex-col h-full overflow-hidden font-body">
-      {/* Header */}
-      <header className="h-16 px-10 flex items-center justify-between sticky top-0 bg-background/90 backdrop-blur-md z-20 border-b border-outline-variant/10">
-        <div>
-          <h1 className="font-headline text-lg font-black text-on-surface tracking-tight">{t.sl_title}</h1>
-          <p className="text-[9px] text-on-surface-variant font-bold tracking-[0.1em] uppercase">{t.sl_subtitle}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <select
-            className="bg-surface-container-highest/60 border border-outline-variant/20 rounded-xl px-3 py-2 text-xs font-bold text-on-surface outline-none"
-            value={sortBy}
-            onChange={(e) => setSortBy(e.target.value as 'score' | 'tier' | 'favorite')}
-          >
-            <option value="score">{t.sl_sort_score}</option>
-            <option value="tier">{t.sl_sort_tier}</option>
-            <option value="favorite">{t.sl_sort_fav}</option>
-          </select>
+    <AnimatedWorkspacePage className="w-full bg-background font-body">
+      <section className="flex h-full w-full flex-col overflow-hidden">
+        <header className="sticky top-0 z-20 border-b border-outline-variant/10 bg-background/90 px-4 py-3 backdrop-blur-md sm:px-6 lg:px-8">
+          <MotionSection role="toolbar" className="space-y-3">
+            <div className="flex flex-col gap-1">
+              <h1 className="font-headline text-lg font-black tracking-tight text-on-surface">{t.sl_title}</h1>
+              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-on-surface-variant/60">{t.sl_subtitle}</p>
+            </div>
 
-          <select
-            className="bg-surface-container-highest/60 border border-outline-variant/20 rounded-xl px-3 py-2 text-xs font-bold text-on-surface outline-none"
-            value={tierFilter ?? ''}
-            onChange={(e) => setTierFilter(e.target.value || null)}
-          >
-            <option value="">{t.sl_all_tiers}</option>
-            <option value="reach">Reach</option>
-            <option value="target">Target</option>
-            <option value="safety">Safety</option>
-            <option value="likely">Likely</option>
-          </select>
+            <div className="dashboard-toolbar-rail">
+              <div className="dashboard-scroll-rail sm:flex sm:flex-wrap sm:items-center sm:gap-2 sm:overflow-visible sm:pb-0">
+                <DashboardSelect
+                  value={sortBy}
+                  onValueChange={(value) => setSortBy(value as 'score' | 'tier' | 'favorite')}
+                >
+                  <DashboardSelectTrigger size="toolbar" className="shrink-0">
+                    <DashboardSelectValue placeholder={t.sl_sort_score} />
+                  </DashboardSelectTrigger>
+                  <DashboardSelectContent>
+                    <DashboardSelectItem value="score">{t.sl_sort_score}</DashboardSelectItem>
+                    <DashboardSelectItem value="tier">{t.sl_sort_tier}</DashboardSelectItem>
+                    <DashboardSelectItem value="favorite">{t.sl_sort_fav}</DashboardSelectItem>
+                  </DashboardSelectContent>
+                </DashboardSelect>
 
-          {/* Refresh */}
-          <button
-            onClick={handleRefresh}
-            className="w-9 h-9 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container-high transition-colors"
-            title={t.sl_refresh_list}
-          >
-            <span className="material-symbols-outlined text-[20px]">refresh</span>
-          </button>
+                <DashboardSelect
+                  value={tierFilter || undefined}
+                  onValueChange={(value) => {
+                    setTierFilter(value === DASHBOARD_SELECT_EMPTY_VALUE ? null : value);
+                  }}
+                >
+                  <DashboardSelectTrigger size="toolbar" className="shrink-0">
+                    <DashboardSelectValue placeholder={t.sl_all_tiers} />
+                  </DashboardSelectTrigger>
+                  <DashboardSelectContent>
+                    <DashboardSelectItem value={DASHBOARD_SELECT_EMPTY_VALUE}>
+                      {t.sl_all_tiers}
+                    </DashboardSelectItem>
+                    <DashboardSelectItem value="reach">{t.sl_tier_reach}</DashboardSelectItem>
+                    <DashboardSelectItem value="target">{t.sl_tier_target}</DashboardSelectItem>
+                    <DashboardSelectItem value="safety">{t.sl_tier_safety}</DashboardSelectItem>
+                    <DashboardSelectItem value="likely">{t.sl_tier_likely}</DashboardSelectItem>
+                  </DashboardSelectContent>
+                </DashboardSelect>
 
-          <button
-            onClick={() => setShowAddModal(true)}
-            className="px-4 py-2 bg-primary/5 text-primary text-xs font-bold uppercase tracking-widest rounded-xl border border-primary/15 hover:bg-primary/10 transition-colors flex items-center gap-1.5"
-          >
-            <span className="material-symbols-outlined text-sm">add</span>
-            {t.sl_add_school}
-          </button>
+                <button
+                  onClick={handleRefresh}
+                  className="dashboard-hover-lift flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-on-surface-variant transition-colors hover:bg-surface-container-high"
+                  title={t.sl_refresh_list}
+                >
+                  <span className="material-symbols-outlined text-[20px]">refresh</span>
+                </button>
 
-          <button
-            onClick={() => setShowPrefs(!showPrefs)}
-            className={`px-4 py-2 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 ${
-              showPrefs
-                ? 'bg-primary text-on-primary shadow-md'
-                : 'bg-primary text-on-primary hover:brightness-110 shadow-md'
-            }`}
-          >
-            <span className="material-symbols-outlined text-sm">auto_awesome</span>
-            {t.sl_ai_recommend}
-          </button>
-        </div>
-      </header>
+                <button
+                  onClick={() => setShowAddModal(true)}
+                  className="dashboard-hover-lift inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-primary/15 bg-primary/5 px-4 py-2 text-xs font-bold uppercase tracking-widest text-primary transition-colors hover:bg-primary/10"
+                >
+                  <span className="material-symbols-outlined text-sm">add</span>
+                  {t.sl_add_school}
+                </button>
 
-      <div className="flex-1 overflow-y-auto px-10 py-8 space-y-6">
+                <button
+                  onClick={() => setShowPrefs(!showPrefs)}
+                  className="dashboard-hover-lift inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-on-primary shadow-md transition-all hover:brightness-110"
+                >
+                  <span className="material-symbols-outlined text-sm">auto_awesome</span>
+                  {t.sl_ai_recommend}
+                </button>
+              </div>
+            </div>
+          </MotionSection>
+        </header>
+
+        <div className="flex-1 overflow-y-auto px-4 py-5 space-y-6 sm:px-6 sm:py-6 lg:px-8">
         {/* Chat update notification */}
         {chatUpdated && (
-          <div className="flex items-center gap-3 p-3 bg-tertiary/5 border border-tertiary/15 rounded-xl">
-            <span className="material-symbols-outlined text-tertiary text-lg">notifications_active</span>
-            <span className="text-xs font-bold text-tertiary flex-1">{t.sl_chat_updated}</span>
-            <button
-              onClick={handleRefresh}
-              className="px-3 py-1 bg-tertiary/10 text-tertiary text-xs font-bold rounded-lg hover:bg-tertiary/15 transition-colors"
-            >
-              {t.sl_refresh_list}
-            </button>
-          </div>
+          <MotionSection>
+            <div className="dashboard-surface-soft flex items-center gap-3 border-tertiary/15 bg-tertiary/5 p-3">
+              <span className="material-symbols-outlined text-lg text-tertiary">notifications_active</span>
+              <span className="flex-1 text-xs font-bold text-tertiary">{t.sl_chat_updated}</span>
+              <button
+                onClick={handleRefresh}
+                className="rounded-lg bg-tertiary/10 px-3 py-1 text-xs font-bold text-tertiary transition-colors hover:bg-tertiary/15"
+              >
+                {t.sl_refresh_list}
+              </button>
+            </div>
+          </MotionSection>
         )}
 
         {/* AI Preferences Panel */}
         {showPrefs && studentId && (
-          <AIPreferencesPanel
-            studentId={studentId}
-            onGenerated={() => { refetch(); }}
-            t={t}
-          />
+          <MotionSection delay={0.04}>
+            <AIPreferencesPanel
+              studentId={studentId}
+              onGenerated={() => { refetch(); }}
+              t={t}
+            />
+          </MotionSection>
         )}
 
         {/* Loading */}
@@ -693,7 +862,7 @@ export function SchoolListPanel({ studentId }: SchoolListPanelProps) {
 
         {/* Empty state */}
         {!isLoading && total === 0 && !showPrefs && (
-          <div className="flex flex-col items-center justify-center py-24 text-center">
+          <MotionSurface className="flex flex-col items-center justify-center py-24 text-center">
             <div className="w-20 h-20 rounded-3xl bg-surface-container-high/40 flex items-center justify-center mb-6">
               <span className="material-symbols-outlined text-4xl text-on-surface-variant/50">school</span>
             </div>
@@ -713,38 +882,45 @@ export function SchoolListPanel({ studentId }: SchoolListPanelProps) {
                 {t.sl_ai_smart}
               </button>
             </div>
-          </div>
+          </MotionSurface>
         )}
 
         {/* Personalization banner + Tier Summary */}
         {!isLoading && total > 0 && (
-          <>
-            <div className="flex items-start gap-3 p-4 bg-primary/3 border border-primary/10 rounded-xl">
-              <span className="material-symbols-outlined text-primary text-lg mt-0.5" style={{ fontVariationSettings: "'FILL' 1" }}>person_pin</span>
-              <div className="flex-1">
-                <p className="text-xs text-on-surface/70 leading-relaxed">{t.sl_personalized_banner}</p>
-                <p className="text-[10px] text-primary/60 mt-1 font-bold">{t.sl_personalized_chat_tip}</p>
+          <MotionStagger className="space-y-4" delay={0.04} role="metric">
+            <MotionItem role="surface">
+              <div className="dashboard-surface-soft flex items-start gap-3 border-primary/10 bg-primary/3 p-4">
+                <span className="material-symbols-outlined mt-0.5 text-lg text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>person_pin</span>
+                <div className="flex-1">
+                  <p className="text-xs leading-relaxed text-on-surface/70">{t.sl_personalized_banner}</p>
+                  <p className="mt-1 text-[10px] font-bold text-primary/60">{t.sl_personalized_chat_tip}</p>
+                </div>
               </div>
-            </div>
-            <TierSummary tieredCounts={tieredCounts} total={total} avgScore={avgScore} t={t} />
-          </>
+            </MotionItem>
+            <MotionItem role="metric">
+              <MotionSurface className="p-0">
+                <TierSummary tieredCounts={tieredCounts} total={total} avgScore={avgScore} t={t} />
+              </MotionSurface>
+            </MotionItem>
+          </MotionStagger>
         )}
 
         {/* School Rows */}
         {!isLoading && visibleEvals.length > 0 && (
-          <div className="space-y-2">
+          <MotionStagger className="space-y-2" delay={0.08} stagger={0.05} role="surface" key={`school-list-${listVersion}-${total}`}>
             {visibleEvals.map((ev) => (
-              <SchoolRow
-                key={ev.id}
-                ev={ev}
-                isFavorite={favoriteSchoolIds.has(ev.school_id)}
-                isBlacklisted={blacklistedSchoolIds.has(ev.school_id)}
-                onToggleFavorite={() => toggleFavorite(ev.school_id)}
-                onToggleBlacklist={() => toggleBlacklist(ev.school_id)}
-                t={t}
-              />
+              <MotionItem key={ev.id} role="surface">
+                <SchoolRow
+                  ev={ev}
+                  isFavorite={favoriteSchoolIds.has(ev.school_id)}
+                  isBlacklisted={blacklistedSchoolIds.has(ev.school_id)}
+                  onToggleFavorite={() => toggleFavorite(ev.school_id)}
+                  onToggleBlacklist={() => toggleBlacklist(ev.school_id)}
+                  t={t}
+                />
+              </MotionItem>
             ))}
-          </div>
+          </MotionStagger>
         )}
 
         {!isLoading && blacklistedSchoolIds.size > 0 && (
@@ -754,16 +930,17 @@ export function SchoolListPanel({ studentId }: SchoolListPanelProps) {
         )}
 
         <div className="h-12" />
-      </div>
+        </div>
 
-      {showAddModal && studentId && (
-        <AddSchoolModal
-          studentId={studentId}
-          onClose={() => setShowAddModal(false)}
-          onAdded={() => { refetch(); }}
-          t={t}
-        />
-      )}
-    </section>
+        {showAddModal && studentId && (
+          <AddSchoolModal
+            studentId={studentId}
+            onClose={() => setShowAddModal(false)}
+            onAdded={() => { refetch(); }}
+            t={t}
+          />
+        )}
+      </section>
+    </AnimatedWorkspacePage>
   );
 }

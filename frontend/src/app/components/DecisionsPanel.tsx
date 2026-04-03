@@ -1,8 +1,23 @@
-import React, { useState, useMemo } from 'react';
+import React, { Suspense, lazy, useState, useMemo } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import { useApp } from '../../context/AppContext';
 import { useEvaluations } from '../../hooks/useEvaluations';
-import { CausalDagD3 } from './CausalDagD3';
-import type { EvaluationWithSchool } from '../../lib/types';
+import { useSimulations } from '../../hooks/useSimulations';
+import { WhatIfDeltaCard } from './StructuredMessageCards';
+import type { EvaluationWithSchool, WhatIfResponse, WhatIfViewModel } from '../../lib/types';
+import {
+  DASHBOARD_SELECT_EMPTY_VALUE,
+  DashboardFieldLabel,
+  DashboardSelect,
+  DashboardSelectContent,
+  DashboardSelectItem,
+  DashboardSelectTrigger,
+  DashboardSelectValue,
+} from './ui/dashboard-select';
+import { DashboardSegmentedGroup, DashboardSegmentedItem } from './ui/dashboard-segmented';
+import { AnimatedWorkspacePage, MotionItem, MotionSection, MotionStagger, MotionSurface } from './WorkspaceMotion';
+
+const LazyCausalDagD3 = lazy(() => import('./CausalDagD3').then((module) => ({ default: module.CausalDagD3 })));
 
 // ─── Priority Dimensions ───
 
@@ -144,7 +159,7 @@ function RankedSchoolCard({ item, isCn }: { item: RankedSchool; isCn: boolean })
   const ev = item.eval;
 
   return (
-    <div className="bg-surface-container-lowest rounded-2xl border border-outline-variant/10 hover:shadow-sm transition-all">
+    <motion.div layout className="dashboard-surface dashboard-hover-lift">
       <div
         className="flex items-center gap-4 p-5 cursor-pointer"
         onClick={() => setExpanded(!expanded)}
@@ -159,7 +174,7 @@ function RankedSchoolCard({ item, isCn }: { item: RankedSchool; isCn: boolean })
         {/* School info */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <h3 className="font-headline text-sm font-bold text-on-surface truncate">{ev.school?.name ?? 'School'}</h3>
+            <h3 className="font-headline text-sm font-bold text-on-surface truncate">{ev.school?.name ?? t.common_school}</h3>
             {ev.school?.name_cn && (
               <span className="text-xs text-on-surface-variant/50 truncate">{ev.school.name_cn}</span>
             )}
@@ -200,8 +215,16 @@ function RankedSchoolCard({ item, isCn }: { item: RankedSchool; isCn: boolean })
       </div>
 
       {/* Expanded: Causal reasoning */}
+      <AnimatePresence initial={false}>
       {expanded && (
-        <div className="px-5 pb-5 pt-1 border-t border-outline-variant/10 space-y-4">
+        <motion.div
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: 'auto' }}
+          exit={{ opacity: 0, height: 0 }}
+          transition={{ duration: 0.34, ease: [0.22, 1, 0.36, 1] }}
+          className="overflow-hidden"
+        >
+          <div className="px-5 pb-5 pt-1 border-t border-outline-variant/10 space-y-4">
           {/* Factor breakdown */}
           <div>
             <div className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-3">
@@ -230,7 +253,7 @@ function RankedSchoolCard({ item, isCn }: { item: RankedSchool; isCn: boolean })
           </div>
 
           {/* Key metrics */}
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <div className="bg-surface-container-low/40 px-3 py-2.5 rounded-xl border border-outline-variant/5">
               <div className="text-[8px] text-on-surface-variant font-bold uppercase tracking-widest">{isCn ? '录取概率' : 'Admit Prob'}</div>
               <div className="text-sm font-black text-primary">{formatPercent(ev.admission_probability ?? 0)}</div>
@@ -251,7 +274,7 @@ function RankedSchoolCard({ item, isCn }: { item: RankedSchool; isCn: boolean })
 
           {/* AI Reasoning */}
           {ev.reasoning && (
-            <div className="bg-surface-container-high/20 rounded-xl p-4 border border-outline-variant/10">
+            <div className="rounded-2xl bg-surface-container-low/50 p-4 shadow-sm ring-1 ring-outline-variant/8">
               <div className="flex items-center gap-2 mb-2">
                 <span className="material-symbols-outlined text-tertiary text-base" style={{ fontVariationSettings: "'FILL' 1" }}>psychology</span>
                 <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">
@@ -261,9 +284,11 @@ function RankedSchoolCard({ item, isCn }: { item: RankedSchool; isCn: boolean })
               <p className="text-sm text-on-surface/80 leading-relaxed">{ev.reasoning}</p>
             </div>
           )}
-        </div>
+          </div>
+        </motion.div>
       )}
-    </div>
+      </AnimatePresence>
+    </motion.div>
   );
 }
 
@@ -284,6 +309,208 @@ const PRESETS: Preset[] = [
   { id: 'value', icon: 'savings', label: 'Best Value', labelCn: '最高性价比', weights: { academic: 40, financial: 95, career: 40, life: 40 } },
   { id: 'experience', icon: 'emoji_people', label: 'Best Experience', labelCn: '最佳体验', weights: { academic: 30, financial: 20, career: 30, life: 95 } },
 ];
+
+type ScenarioNodeKey =
+  | 'student_ability'
+  | 'financial_aid'
+  | 'research_opportunities'
+  | 'brand_signal'
+  | 'career_services'
+  | 'peer_network'
+  | 'location_effect'
+  | 'family_ses';
+
+const SCENARIO_NODE_KEYS: ScenarioNodeKey[] = [
+  'student_ability',
+  'financial_aid',
+  'research_opportunities',
+  'brand_signal',
+  'career_services',
+  'peer_network',
+  'location_effect',
+  'family_ses',
+];
+
+interface ScenarioInterventionDraft {
+  id: string;
+  key: ScenarioNodeKey;
+  value: number;
+}
+
+interface ScenarioDraft {
+  id: string;
+  name: string;
+  interventions: ScenarioInterventionDraft[];
+}
+
+const SCENARIO_DEFAULTS: Array<{ key: ScenarioNodeKey; value: number }> = [
+  { key: 'financial_aid', value: 1.0 },
+  { key: 'research_opportunities', value: 0.8 },
+  { key: 'career_services', value: 0.85 },
+];
+
+function createLocalId(prefix: string): string {
+  return `${prefix}-${crypto.randomUUID?.() ?? Math.random().toString(36).slice(2)}`;
+}
+
+function createInterventionDraft(key: ScenarioNodeKey, value: number): ScenarioInterventionDraft {
+  return {
+    id: createLocalId('scenario-intervention'),
+    key,
+    value,
+  };
+}
+
+function createScenarioDraft(index: number, isCn = false): ScenarioDraft {
+  const fallback = SCENARIO_DEFAULTS[index] ?? SCENARIO_DEFAULTS[SCENARIO_DEFAULTS.length - 1];
+  return {
+    id: createLocalId('scenario'),
+    name: isCn ? `场景 ${String.fromCharCode(65 + index)}` : `Scenario ${String.fromCharCode(65 + index)}`,
+    interventions: [createInterventionDraft(fallback.key, fallback.value)],
+  };
+}
+
+function buildScenarioComparePayload(scenarios: ScenarioDraft[]): Array<{ interventions: Record<string, number> }> {
+  return scenarios.map((scenario) => ({
+    interventions: scenario.interventions.reduce<Record<string, number>>((acc, intervention) => {
+      acc[intervention.key] = Number(intervention.value.toFixed(2));
+      return acc;
+    }, {}),
+  }));
+}
+
+function mapSimulationResultToViewModel(result: WhatIfResponse): WhatIfViewModel {
+  return {
+    deltas: Object.entries(result.deltas ?? {}).map(([key, value]) => ({
+      key,
+      value,
+    })),
+    explanation: result.explanation,
+    suggestions: [],
+  };
+}
+
+function localizeScenarioNodeLabel(key: ScenarioNodeKey, t: Record<string, any>): string {
+  const labels: Record<ScenarioNodeKey, string> = {
+    student_ability: t.dec_student_ability,
+    financial_aid: t.dec_financial_aid,
+    research_opportunities: t.dec_research,
+    brand_signal: t.dec_brand_signal,
+    career_services: t.dec_career_services,
+    peer_network: t.dec_peer_network,
+    location_effect: t.dec_location,
+    family_ses: t.dec_family_ses,
+  };
+  return labels[key];
+}
+
+function ScenarioDraftCard({
+  scenario,
+  isCn,
+  t,
+  canRemoveScenario,
+  onRemoveScenario,
+  onAddIntervention,
+  onRemoveIntervention,
+  onChangeIntervention,
+}: {
+  scenario: ScenarioDraft;
+  isCn: boolean;
+  t: Record<string, any>;
+  canRemoveScenario: boolean;
+  onRemoveScenario: () => void;
+  onAddIntervention: () => void;
+  onRemoveIntervention: (interventionId: string) => void;
+  onChangeIntervention: (interventionId: string, patch: Partial<Omit<ScenarioInterventionDraft, 'id'>>) => void;
+}) {
+  return (
+    <div className="rounded-2xl bg-surface-container-lowest p-4 shadow-sm ring-1 ring-outline-variant/8">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-black text-on-surface">{scenario.name}</div>
+          <div className="mt-1 text-[10px] font-bold uppercase tracking-[0.14em] text-on-surface-variant/55">
+            {scenario.interventions.length} {isCn ? '个干预项' : 'interventions'}
+          </div>
+        </div>
+        {canRemoveScenario && (
+          <button
+            onClick={onRemoveScenario}
+            className="inline-flex items-center gap-1 rounded-lg border border-outline-variant/10 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-on-surface-variant transition-colors hover:bg-surface-container-high/50"
+          >
+            <span className="material-symbols-outlined text-sm">delete</span>
+            {t.dec_compare_remove}
+          </button>
+        )}
+      </div>
+
+      <div className="space-y-3">
+        {scenario.interventions.map((intervention) => (
+          <div key={intervention.id} className="rounded-2xl bg-white px-4 py-3 shadow-sm ring-1 ring-outline-variant/8">
+            <div className="flex items-start gap-3">
+              <div className="min-w-0 flex-1 space-y-3">
+                <div>
+                  <DashboardFieldLabel>{t.dec_compare_variable}</DashboardFieldLabel>
+                  <DashboardSelect
+                    value={intervention.key}
+                    onValueChange={(value) =>
+                      onChangeIntervention(intervention.id, { key: value as ScenarioNodeKey })
+                    }
+                  >
+                    <DashboardSelectTrigger>
+                      <DashboardSelectValue placeholder={t.dec_compare_variable} />
+                    </DashboardSelectTrigger>
+                    <DashboardSelectContent>
+                      {SCENARIO_NODE_KEYS.map((key) => (
+                        <DashboardSelectItem key={key} value={key}>
+                          {localizeScenarioNodeLabel(key, t)}
+                        </DashboardSelectItem>
+                      ))}
+                    </DashboardSelectContent>
+                  </DashboardSelect>
+                </div>
+
+                <div>
+                  <div className="mb-1 flex items-center justify-between gap-3 text-[10px] font-bold uppercase tracking-[0.14em] text-on-surface-variant/55">
+                    <span>{t.dec_compare_strength}</span>
+                    <span className="text-primary">{Math.round(intervention.value * 100)}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={intervention.value}
+                    onChange={(event) => onChangeIntervention(intervention.id, { value: Number(event.target.value) })}
+                    className="w-full cursor-pointer appearance-none rounded-full accent-primary"
+                  />
+                </div>
+              </div>
+
+              {scenario.interventions.length > 1 && (
+                <button
+                  onClick={() => onRemoveIntervention(intervention.id)}
+                  className="mt-6 inline-flex h-9 w-9 items-center justify-center rounded-full border border-outline-variant/10 text-on-surface-variant transition-colors hover:bg-surface-container-high/50"
+                >
+                  <span className="material-symbols-outlined text-sm">remove</span>
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {scenario.interventions.length < 3 && (
+        <button
+          onClick={onAddIntervention}
+          className="mt-4 inline-flex items-center gap-2 rounded-xl border border-primary/15 bg-primary/5 px-3 py-2 text-xs font-bold text-primary transition-colors hover:bg-primary/10"
+        >
+          <span className="material-symbols-outlined text-sm">add</span>
+          {t.dec_compare_add_intervention}
+        </button>
+      )}
+    </div>
+  );
+}
 
 // ─── Causal DAG Section ───
 
@@ -334,25 +561,45 @@ function CausalDagSection({ ranked, studentId, isCn, t }: {
       {showDag && (
         <div className="space-y-3">
           {/* School selector */}
-          <select
-            className="w-full bg-surface-container-highest/60 border border-outline-variant/20 rounded-xl px-4 py-2.5 text-sm text-on-surface outline-none focus:border-primary max-w-md"
-            value={dagSchoolId}
-            onChange={(e) => setDagSchoolId(e.target.value)}
-          >
-            <option value="">{isCn ? '选择学校查看因果图...' : 'Select school to view DAG...'}</option>
-            {schools.map((r) => (
-              <option key={r.eval.school_id} value={r.eval.school_id}>
-                #{r.rank} {r.eval.school?.name ?? 'School'}
-              </option>
-            ))}
-          </select>
+          <div className="max-w-md">
+            <DashboardFieldLabel>{t.common_school}</DashboardFieldLabel>
+            <DashboardSelect
+              value={dagSchoolId || undefined}
+              onValueChange={(value) => {
+                setDagSchoolId(value === DASHBOARD_SELECT_EMPTY_VALUE ? '' : value);
+              }}
+            >
+              <DashboardSelectTrigger>
+                <DashboardSelectValue placeholder={t.dec_dag_empty} />
+              </DashboardSelectTrigger>
+              <DashboardSelectContent>
+                <DashboardSelectItem value={DASHBOARD_SELECT_EMPTY_VALUE}>
+                  {t.dec_dag_empty}
+                </DashboardSelectItem>
+                {schools.map((r) => (
+                  <DashboardSelectItem key={r.eval.school_id} value={r.eval.school_id}>
+                    #{r.rank} {r.eval.school?.name ?? t.common_school}
+                  </DashboardSelectItem>
+                ))}
+              </DashboardSelectContent>
+            </DashboardSelect>
+          </div>
 
           {dagSchoolId && studentId && (
-            <CausalDagD3
-              studentId={studentId}
-              schoolId={dagSchoolId}
-              t={t}
-            />
+            <Suspense
+              fallback={(
+                <div className="rounded-3xl border border-outline-variant/10 bg-surface-container-lowest p-6 shadow-sm">
+                  <div className="mb-3 h-3 w-32 animate-pulse rounded-full bg-surface-container-high/60" />
+                  <div className="h-[360px] animate-pulse rounded-[1.5rem] bg-surface-container-high/45" />
+                </div>
+              )}
+            >
+              <LazyCausalDagD3
+                studentId={studentId}
+                schoolId={dagSchoolId}
+                t={t}
+              />
+            </Suspense>
           )}
         </div>
       )}
@@ -370,6 +617,13 @@ export function DecisionsPanel({ studentId }: DecisionsPanelProps) {
   const { t, locale } = useApp();
   const isCn = locale === 'zh';
   const { tieredList, isLoading } = useEvaluations(studentId);
+  const {
+    comparisonResult,
+    isLoading: isComparingScenarios,
+    error: simulationError,
+    compareScenarios,
+    clearComparison,
+  } = useSimulations();
 
   const [weights, setWeights] = useState<Record<string, number>>({
     academic: 50,
@@ -378,6 +632,10 @@ export function DecisionsPanel({ studentId }: DecisionsPanelProps) {
     life: 50,
   });
   const [activePreset, setActivePreset] = useState<string>('balanced');
+  const [scenarios, setScenarios] = useState<ScenarioDraft[]>([
+    createScenarioDraft(0, isCn),
+    createScenarioDraft(1, isCn),
+  ]);
 
   const allEvals = useMemo<EvaluationWithSchool[]>(() => {
     if (!tieredList) return [];
@@ -399,10 +657,69 @@ export function DecisionsPanel({ studentId }: DecisionsPanelProps) {
     setActivePreset('');
   };
 
+  const handleAddScenario = () => {
+    setScenarios((prev) => {
+      if (prev.length >= 3) return prev;
+      return [...prev, createScenarioDraft(prev.length, isCn)];
+    });
+  };
+
+  const handleRemoveScenario = (scenarioId: string) => {
+    setScenarios((prev) => prev
+      .filter((scenario) => scenario.id !== scenarioId)
+      .map((scenario, index) => ({
+        ...scenario,
+        name: isCn ? `场景 ${String.fromCharCode(65 + index)}` : `Scenario ${String.fromCharCode(65 + index)}`,
+      })));
+  };
+
+  const handleAddIntervention = (scenarioId: string) => {
+    setScenarios((prev) => prev.map((scenario) => {
+      if (scenario.id !== scenarioId || scenario.interventions.length >= 3) return scenario;
+      return {
+        ...scenario,
+        interventions: [...scenario.interventions, createInterventionDraft('student_ability', 0.5)],
+      };
+    }));
+  };
+
+  const handleRemoveIntervention = (scenarioId: string, interventionId: string) => {
+    setScenarios((prev) => prev.map((scenario) => {
+      if (scenario.id !== scenarioId || scenario.interventions.length <= 1) return scenario;
+      return {
+        ...scenario,
+        interventions: scenario.interventions.filter((intervention) => intervention.id !== interventionId),
+      };
+    }));
+  };
+
+  const handleInterventionChange = (
+    scenarioId: string,
+    interventionId: string,
+    patch: Partial<Omit<ScenarioInterventionDraft, 'id'>>,
+  ) => {
+    setScenarios((prev) => prev.map((scenario) => {
+      if (scenario.id !== scenarioId) return scenario;
+      return {
+        ...scenario,
+        interventions: scenario.interventions.map((intervention) => (
+          intervention.id === interventionId ? { ...intervention, ...patch } : intervention
+        )),
+      };
+    }));
+  };
+
+  const handleCompareScenarios = async () => {
+    if (!studentId) return;
+    await compareScenarios(studentId, buildScenarioComparePayload(scenarios));
+  };
+
   return (
-    <section className="w-full bg-background flex flex-col h-full overflow-hidden font-body">
-      <header className="h-16 px-10 flex items-center justify-between sticky top-0 bg-background/90 backdrop-blur-md z-20 border-b border-outline-variant/10">
-        <div>
+    <AnimatedWorkspacePage className="w-full bg-background font-body">
+      <section className="w-full bg-background flex flex-col h-full overflow-hidden font-body">
+      <header className="sticky top-0 z-20 flex min-h-16 items-center justify-between border-b border-outline-variant/10 bg-background/90 px-4 py-3 backdrop-blur-md sm:px-6 lg:px-8">
+        <MotionSection role="toolbar">
+          <div>
           <h1 className="font-headline text-lg font-black text-on-surface tracking-tight">
             {isCn ? '智能择校' : 'Smart Ranking'}
           </h1>
@@ -410,38 +727,48 @@ export function DecisionsPanel({ studentId }: DecisionsPanelProps) {
             {isCn ? '基于因果推理的个性化排名' : 'Personalized ranking powered by causal inference'}
             {ranked.length > 0 && ` • ${ranked.length} ${isCn ? '所学校' : 'Schools'}`}
           </p>
-        </div>
+          </div>
+        </MotionSection>
       </header>
 
       <div className="flex-1 overflow-y-auto">
-        <div className="flex h-full">
+        <div className="flex h-full flex-col lg:flex-row">
           {/* Left: Priority Controls */}
-          <div className="w-80 shrink-0 border-r border-outline-variant/10 p-6 space-y-6 overflow-y-auto">
+          <MotionStagger className="w-full shrink-0 border-b border-outline-variant/10 p-4 space-y-6 overflow-y-auto sm:p-6 lg:w-80 lg:border-b-0 lg:border-r" delay={0.03} stagger={0.06}>
             {/* Quick presets */}
+            <MotionItem role="toolbar">
             <div>
               <div className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-3">
                 {isCn ? '快速选择' : 'Quick Presets'}
               </div>
-              <div className="flex flex-wrap gap-2">
+              <DashboardSegmentedGroup
+                type="single"
+                value={activePreset ?? ''}
+                onValueChange={(value) => {
+                  if (!value) return;
+                  const preset = PRESETS.find((item) => item.id === value);
+                  if (preset) handlePreset(preset);
+                }}
+              >
                 {PRESETS.map((preset) => (
-                  <button
+                  <DashboardSegmentedItem
                     key={preset.id}
-                    onClick={() => handlePreset(preset)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 ${
-                      activePreset === preset.id
-                        ? 'bg-primary text-on-primary shadow-sm'
-                        : 'bg-surface-container-high/30 text-on-surface-variant hover:bg-surface-container-high/50'
-                    }`}
+                    value={preset.id}
+                    accent="primary"
+                    size="compact"
+                    className="min-h-9"
                   >
                     <span className="material-symbols-outlined text-sm">{preset.icon}</span>
                     {isCn ? preset.labelCn : preset.label}
-                  </button>
+                  </DashboardSegmentedItem>
                 ))}
-              </div>
+              </DashboardSegmentedGroup>
             </div>
+            </MotionItem>
 
             {/* Priority sliders */}
-            <div>
+            <MotionItem role="section">
+            <MotionSurface className="p-4 sm:p-5">
               <div className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-3">
                 {isCn ? '调整你的优先级' : 'Your Priorities'}
               </div>
@@ -456,10 +783,12 @@ export function DecisionsPanel({ studentId }: DecisionsPanelProps) {
                   />
                 ))}
               </div>
-            </div>
+            </MotionSurface>
+            </MotionItem>
 
             {/* How it works */}
-            <div className="bg-surface-container-high/20 rounded-xl p-4 border border-outline-variant/5">
+            <MotionItem role="section">
+            <div className="dashboard-surface-soft p-4">
               <div className="flex items-center gap-2 mb-2">
                 <span className="material-symbols-outlined text-primary text-sm">info</span>
                 <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">
@@ -472,10 +801,80 @@ export function DecisionsPanel({ studentId }: DecisionsPanelProps) {
                   : 'The causal inference engine re-weights each school\'s fit scores based on your priorities. Expand any school card to see the detailed score × weight breakdown for each dimension.'}
               </p>
             </div>
-          </div>
+            </MotionItem>
+
+            <MotionItem role="section">
+            <MotionSurface className="p-4 sm:p-5">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-on-surface-variant/55">
+                    {t.dec_compare_kicker}
+                  </div>
+                  <h3 className="mt-1 font-headline text-sm font-black text-on-surface">
+                    {t.dec_compare_title}
+                  </h3>
+                  <p className="mt-1 text-xs leading-relaxed text-on-surface-variant/70">
+                    {t.dec_compare_desc}
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    setScenarios([createScenarioDraft(0, isCn), createScenarioDraft(1, isCn)]);
+                    clearComparison();
+                  }}
+                  className="inline-flex items-center gap-1 rounded-lg border border-outline-variant/10 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-on-surface-variant transition-colors hover:bg-surface-container-high/50"
+                >
+                  <span className="material-symbols-outlined text-sm">restart_alt</span>
+                  {t.dec_compare_reset}
+                </button>
+              </div>
+
+              <div className="mt-4 space-y-4">
+                {scenarios.map((scenario) => (
+                  <ScenarioDraftCard
+                    key={scenario.id}
+                    scenario={scenario}
+                    isCn={isCn}
+                    t={t}
+                    canRemoveScenario={scenarios.length > 2}
+                    onRemoveScenario={() => handleRemoveScenario(scenario.id)}
+                    onAddIntervention={() => handleAddIntervention(scenario.id)}
+                    onRemoveIntervention={(interventionId) => handleRemoveIntervention(scenario.id, interventionId)}
+                    onChangeIntervention={(interventionId, patch) => handleInterventionChange(scenario.id, interventionId, patch)}
+                  />
+                ))}
+              </div>
+
+              {scenarios.length < 3 && (
+                <button
+                  onClick={handleAddScenario}
+                  className="mt-4 inline-flex items-center gap-2 rounded-xl border border-primary/15 bg-primary/5 px-3 py-2 text-xs font-bold text-primary transition-colors hover:bg-primary/10"
+                >
+                  <span className="material-symbols-outlined text-sm">add</span>
+                  {t.dec_compare_add_scenario}
+                </button>
+              )}
+
+              {simulationError && (
+                <div className="mt-4 rounded-2xl border border-error/15 bg-error/5 px-4 py-3 text-sm text-error">
+                  {simulationError.message}
+                </div>
+              )}
+
+              <button
+                onClick={() => { void handleCompareScenarios(); }}
+                disabled={!studentId || isComparingScenarios}
+                className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-bold text-on-primary shadow-md transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <span className="material-symbols-outlined text-sm">compare_arrows</span>
+                {isComparingScenarios ? t.dec_compare_running : t.dec_compare_run}
+              </button>
+            </MotionSurface>
+            </MotionItem>
+          </MotionStagger>
 
           {/* Right: Ranked Results */}
-          <div className="flex-1 overflow-y-auto px-8 py-6">
+          <div className="flex-1 overflow-y-auto px-4 py-5 sm:px-6 sm:py-6 lg:px-8">
             {isLoading && (
               <div className="space-y-3">
                 {[...Array(4)].map((_, i) => (
@@ -485,7 +884,7 @@ export function DecisionsPanel({ studentId }: DecisionsPanelProps) {
             )}
 
             {!isLoading && ranked.length === 0 && (
-              <div className="flex flex-col items-center justify-center py-24 text-center">
+              <MotionSurface className="flex flex-col items-center justify-center py-24 text-center">
                 <div className="w-20 h-20 rounded-3xl bg-surface-container-high/40 flex items-center justify-center mb-6">
                   <span className="material-symbols-outlined text-4xl text-on-surface-variant/50">leaderboard</span>
                 </div>
@@ -493,22 +892,57 @@ export function DecisionsPanel({ studentId }: DecisionsPanelProps) {
                   {isCn ? '暂无学校数据' : 'No Schools Yet'}
                 </h3>
                 <p className="text-sm text-on-surface-variant/70 max-w-sm leading-relaxed">
-                  {isCn ? '先在 School List 中添加学校，然后回来查看个性化排名。' : 'Add schools to your School List first, then come back to see your personalized ranking.'}
+                  {isCn ? '先在选校列表中添加学校，然后回来查看个性化排名。' : 'Add schools to your School List first, then come back to see your personalized ranking.'}
                 </p>
+              </MotionSurface>
+            )}
+
+            {!isLoading && comparisonResult && (
+              <MotionSection delay={0.08}>
+              <div className="mb-6 rounded-3xl bg-surface-container-lowest p-6 shadow-sm ring-1 ring-outline-variant/8">
+                <div className="mb-4">
+                  <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-on-surface-variant/55">
+                    {t.dec_compare_results_kicker}
+                  </div>
+                  <h2 className="mt-1 font-headline text-lg font-black text-on-surface">
+                    {t.dec_compare_results_title}
+                  </h2>
+                  <p className="mt-2 text-sm leading-relaxed text-on-surface-variant/70">
+                    {comparisonResult.summary}
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 2xl:grid-cols-2">
+                  {comparisonResult.results.map((result, index) => (
+                    <WhatIfDeltaCard
+                      key={`scenario-result-${index}`}
+                      data={mapSimulationResultToViewModel(result as WhatIfResponse)}
+                      kicker={{ en: `Scenario ${String.fromCharCode(65 + index)}`, zh: `场景 ${String.fromCharCode(65 + index)}` }}
+                      title={{ en: `${scenarios[index]?.name ?? `Scenario ${String.fromCharCode(65 + index)}`} Deltas`, zh: `${scenarios[index]?.name ?? `场景 ${String.fromCharCode(65 + index)}`} 变化` }}
+                      description={{ en: 'Side-by-side outcome deltas for this configured scenario.', zh: '展示当前配置场景下的关键结果变化。' }}
+                      showSuggestions={false}
+                    />
+                  ))}
+                </div>
               </div>
+              </MotionSection>
             )}
 
             {!isLoading && ranked.length > 0 && (
-              <div className="space-y-2">
+              <MotionStagger className="space-y-2" delay={0.1} stagger={0.06}>
                 {ranked.map((item) => (
-                  <RankedSchoolCard key={item.eval.id} item={item} isCn={isCn} />
+                  <MotionItem key={item.eval.id} role="surface">
+                    <RankedSchoolCard item={item} isCn={isCn} />
+                  </MotionItem>
                 ))}
-              </div>
+              </MotionStagger>
             )}
 
             {/* Causal DAG Section */}
             {!isLoading && ranked.length > 0 && (
-              <CausalDagSection ranked={ranked} studentId={studentId} isCn={isCn} t={t} />
+              <MotionSection delay={0.12}>
+                <CausalDagSection ranked={ranked} studentId={studentId} isCn={isCn} t={t} />
+              </MotionSection>
             )}
 
             <div className="h-12" />
@@ -516,5 +950,6 @@ export function DecisionsPanel({ studentId }: DecisionsPanelProps) {
         </div>
       </div>
     </section>
+    </AnimatedWorkspacePage>
   );
 }

@@ -1,9 +1,33 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
 import { useApp } from '../../context/AppContext';
 import { useOffers } from '../../hooks/useOffers';
 import { useEvaluations } from '../../hooks/useEvaluations';
-import type { EvaluationWithSchool } from '../../lib/types';
+import { useReports } from '../../hooks/useReports';
+import { normalizeOfferComparison } from '../../lib/chatRichContent';
+import type { EvaluationWithSchool, GoNoGoReport } from '../../lib/types';
 import type { OfferResponse } from '../../lib/api/offers';
+import { OfferCompareCard } from './StructuredMessageCards';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from './ui/sheet';
+import {
+  DASHBOARD_SELECT_EMPTY_VALUE,
+  DashboardFieldLabel,
+  DashboardSelect,
+  DashboardSelectContent,
+  DashboardSelectItem,
+  DashboardSelectTrigger,
+  DashboardSelectValue,
+} from './ui/dashboard-select';
+import { DashboardCheckboxField } from './ui/dashboard-checkbox';
+import { DashboardInput, DashboardTextarea } from './ui/dashboard-input';
+import { DashboardSegmentedGroup, DashboardSegmentedItem } from './ui/dashboard-segmented';
+import { AnimatedWorkspacePage, MotionItem, MotionSection, MotionStagger, MotionSurface } from './WorkspaceMotion';
 
 function formatCurrency(value: number | null | undefined): string {
   if (value == null) return '—';
@@ -24,13 +48,86 @@ const STATUS_STYLES: Record<string, { bg: string; text: string }> = {
   declined:  { bg: 'bg-on-surface-variant/10', text: 'text-on-surface-variant' },
 };
 
+const STATUS_ACCENTS: Record<string, 'status-admitted' | 'status-waitlisted' | 'status-denied' | 'status-deferred'> = {
+  admitted: 'status-admitted',
+  waitlisted: 'status-waitlisted',
+  denied: 'status-denied',
+  deferred: 'status-deferred',
+};
+
+function getOfferStatusLabel(status: string, t: Record<string, any>): string {
+  switch (status) {
+    case 'admitted':
+      return t.off_status_admitted;
+    case 'waitlisted':
+      return t.off_status_waitlisted;
+    case 'denied':
+      return t.off_status_denied;
+    case 'deferred':
+      return t.off_status_deferred;
+    case 'committed':
+      return t.off_status_committed;
+    case 'declined':
+      return t.off_status_declined;
+    default:
+      return status;
+  }
+}
+
+function getOfferReportCacheKey(studentId: string, offerId: string): string {
+  return `sp_offer_report_${studentId}_${offerId}`;
+}
+
+function getLooseItemText(item: unknown): string {
+  if (typeof item === 'string') return item;
+  if (item && typeof item === 'object') {
+    const record = item as Record<string, unknown>;
+    const candidate = record.title ?? record.label ?? record.factor ?? record.risk ?? record.description;
+    if (typeof candidate === 'string' && candidate.trim()) return candidate;
+    try {
+      return JSON.stringify(record);
+    } catch {
+      return String(record);
+    }
+  }
+  return String(item);
+}
+
+function getConfidenceBounds(report: GoNoGoReport): [number | null, number | null] {
+  const lower = report.ci_lower ?? report.confidence_lower ?? null;
+  const upper = report.ci_upper ?? report.confidence_upper ?? null;
+  return [lower, upper];
+}
+
+function ReportList({
+  items,
+  emptyLabel,
+}: {
+  items: unknown[];
+  emptyLabel: string;
+}) {
+  if (items.length === 0) {
+    return <div className="text-sm text-on-surface-variant/55">{emptyLabel}</div>;
+  }
+
+  return (
+    <div className="space-y-2">
+      {items.map((item, index) => (
+        <div key={`${index}-${getLooseItemText(item)}`} className="rounded-2xl border border-outline-variant/10 bg-surface-container-low/35 px-4 py-3 text-sm leading-relaxed text-on-surface">
+          {getLooseItemText(item)}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ─── Add Offer Form ───
 
 function AddOfferForm({ evaluations, onSubmit, onCancel, t }: {
   evaluations: EvaluationWithSchool[];
   onSubmit: (data: Record<string, unknown>) => void;
   onCancel: () => void;
-  t: Record<string, string>;
+  t: Record<string, any>;
 }) {
   const [schoolId, setSchoolId] = useState('');
   const [status, setStatus] = useState('admitted');
@@ -60,6 +157,20 @@ function AddOfferForm({ evaluations, onSubmit, onCancel, t }: {
     (Number(loanOffered) || 0) +
     (Number(workStudy) || 0);
   const netCost = costTotal - aidTotal;
+  const statusOptions = ['admitted', 'waitlisted', 'denied', 'deferred'] as const;
+  const costFields = [
+    { key: 'tuition', labelKey: 'off_tuition_fees' as const, value: tuition, set: setTuition, placeholder: 'e.g. 36000' },
+    { key: 'room', labelKey: 'off_room_board' as const, value: roomAndBoard, set: setRoomAndBoard, placeholder: 'e.g. 12500' },
+    { key: 'books', labelKey: 'off_books_supplies' as const, value: booksSupplies, set: setBooksSupplies, placeholder: 'e.g. 1200' },
+    { key: 'personal', labelKey: 'off_personal_expenses' as const, value: personalExpenses, set: setPersonalExpenses, placeholder: 'e.g. 2400' },
+    { key: 'transport', labelKey: 'off_transportation' as const, value: transportation, set: setTransportation, placeholder: 'e.g. 1500' },
+  ] as const;
+  const aidFields = [
+    { key: 'merit', labelKey: 'off_merit_scholarship' as const, value: meritScholarship, set: setMeritScholarship },
+    { key: 'need', labelKey: 'off_need_based_grant' as const, value: needBasedGrant, set: setNeedBasedGrant },
+    { key: 'loan', labelKey: 'off_loan_offered' as const, value: loanOffered, set: setLoanOffered },
+    { key: 'work', labelKey: 'off_work_study' as const, value: workStudy, set: setWorkStudy },
+  ] as const;
 
   const handleSubmit = () => {
     if (!schoolId) return;
@@ -82,7 +193,7 @@ function AddOfferForm({ evaluations, onSubmit, onCancel, t }: {
 
   return (
     <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-[100] flex items-center justify-center" onClick={onCancel}>
-      <div className="bg-white rounded-3xl shadow-2xl w-[640px] max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+      <div className="max-h-[85vh] w-[640px] max-w-[calc(100vw-2rem)] overflow-y-auto rounded-3xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="p-6 border-b border-outline-variant/10 flex items-center justify-between">
           <h3 className="font-headline text-lg font-black text-on-surface">{t.off_form_title}</h3>
           <button onClick={onCancel} className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-surface-container-high">
@@ -92,58 +203,65 @@ function AddOfferForm({ evaluations, onSubmit, onCancel, t }: {
         <div className="p-6 space-y-6">
           {/* School select */}
           <div>
-            <label className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-1.5 block">{t.off_school}</label>
-            <select
-              className="w-full bg-surface-container-high/40 border border-outline-variant/20 rounded-xl px-4 py-3 text-sm text-on-surface outline-none focus:border-primary"
-              value={schoolId}
-              onChange={(e) => setSchoolId(e.target.value)}
+            <DashboardFieldLabel>{t.off_school}</DashboardFieldLabel>
+            <DashboardSelect
+              value={schoolId || undefined}
+              onValueChange={(value) => {
+                setSchoolId(value === DASHBOARD_SELECT_EMPTY_VALUE ? '' : value);
+              }}
             >
-              <option value="">{t.off_select_school}</option>
-              {evaluations.map((ev) => (
-                <option key={ev.school_id} value={ev.school_id}>{ev.school?.name ?? ev.school_id}</option>
-              ))}
-            </select>
+              <DashboardSelectTrigger>
+                <DashboardSelectValue placeholder={t.off_select_school} />
+              </DashboardSelectTrigger>
+              <DashboardSelectContent>
+                <DashboardSelectItem value={DASHBOARD_SELECT_EMPTY_VALUE}>
+                  {t.off_select_school}
+                </DashboardSelectItem>
+                {evaluations.map((ev) => (
+                  <DashboardSelectItem key={ev.school_id} value={ev.school_id}>
+                    {ev.school?.name ?? ev.school_id}
+                  </DashboardSelectItem>
+                ))}
+              </DashboardSelectContent>
+            </DashboardSelect>
           </div>
 
           {/* Status */}
           <div>
             <label className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-1.5 block">{t.off_status}</label>
-            <div className="flex gap-2 flex-wrap">
-              {['admitted', 'waitlisted', 'denied', 'deferred'].map((s) => (
-                <button
+            <DashboardSegmentedGroup
+              type="single"
+              value={status}
+              onValueChange={(value) => {
+                if (value) setStatus(value as typeof status);
+              }}
+            >
+              {statusOptions.map((s) => (
+                <DashboardSegmentedItem
                   key={s}
-                  onClick={() => setStatus(s)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold capitalize transition-colors ${
-                    status === s
-                      ? `${STATUS_STYLES[s]?.bg} ${STATUS_STYLES[s]?.text}`
-                      : 'bg-surface-container-high/30 text-on-surface-variant hover:bg-surface-container-high/50'
-                  }`}
+                  value={s}
+                  accent={STATUS_ACCENTS[s]}
+                  className="capitalize"
                 >
-                  {s}
-                </button>
+                  {getOfferStatusLabel(s, t)}
+                </DashboardSegmentedItem>
               ))}
-            </div>
+            </DashboardSegmentedGroup>
           </div>
 
           {/* Cost of Attendance */}
           <div>
             <div className="flex items-center gap-2 mb-3">
               <span className="material-symbols-outlined text-error/70 text-base">payments</span>
-              <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Cost of Attendance</span>
+              <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">{t.off_cost_of_attendance}</span>
             </div>
-            <div className="grid grid-cols-3 gap-3">
-              {[
-                { label: 'Tuition & Fees', value: tuition, set: setTuition, placeholder: 'e.g. 36000' },
-                { label: 'Room & Board', value: roomAndBoard, set: setRoomAndBoard, placeholder: 'e.g. 12500' },
-                { label: 'Books & Supplies', value: booksSupplies, set: setBooksSupplies, placeholder: 'e.g. 1200' },
-                { label: 'Personal Expenses', value: personalExpenses, set: setPersonalExpenses, placeholder: 'e.g. 2400' },
-                { label: 'Transportation', value: transportation, set: setTransportation, placeholder: 'e.g. 1500' },
-              ].map(({ label, value, set, placeholder }) => (
-                <div key={label}>
-                  <label className="text-[9px] font-bold text-on-surface-variant/70 uppercase tracking-widest mb-1 block">{label}</label>
-                  <input
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {costFields.map(({ key, labelKey, value, set, placeholder }) => (
+                <div key={key}>
+                  <DashboardFieldLabel className="text-[9px] text-on-surface-variant/70">{t[labelKey]}</DashboardFieldLabel>
+                  <DashboardInput
                     type="number"
-                    className="w-full bg-surface-container-high/40 border border-outline-variant/20 rounded-xl px-3 py-2 text-sm text-on-surface outline-none focus:border-primary"
+                    className="px-3 py-2"
                     placeholder={placeholder}
                     value={value}
                     onChange={(e) => set(e.target.value)}
@@ -157,20 +275,15 @@ function AddOfferForm({ evaluations, onSubmit, onCancel, t }: {
           <div>
             <div className="flex items-center gap-2 mb-3">
               <span className="material-symbols-outlined text-tertiary text-base">savings</span>
-              <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Financial Aid Package</span>
+              <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">{t.off_financial_aid_package}</span>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              {[
-                { label: 'Merit Scholarship', value: meritScholarship, set: setMeritScholarship },
-                { label: 'Need-Based Grant', value: needBasedGrant, set: setNeedBasedGrant },
-                { label: 'Loan Offered', value: loanOffered, set: setLoanOffered },
-                { label: 'Work-Study', value: workStudy, set: setWorkStudy },
-              ].map(({ label, value, set }) => (
-                <div key={label}>
-                  <label className="text-[9px] font-bold text-on-surface-variant/70 uppercase tracking-widest mb-1 block">{label}</label>
-                  <input
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {aidFields.map(({ key, labelKey, value, set }) => (
+                <div key={key}>
+                  <DashboardFieldLabel className="text-[9px] text-on-surface-variant/70">{t[labelKey]}</DashboardFieldLabel>
+                  <DashboardInput
                     type="number"
-                    className="w-full bg-surface-container-high/40 border border-outline-variant/20 rounded-xl px-3 py-2 text-sm text-on-surface outline-none focus:border-primary"
+                    className="px-3 py-2"
                     placeholder="$0"
                     value={value}
                     onChange={(e) => set(e.target.value)}
@@ -178,15 +291,12 @@ function AddOfferForm({ evaluations, onSubmit, onCancel, t }: {
                 </div>
               ))}
             </div>
-            <div className="flex items-center gap-3 mt-3">
-              <input
-                type="checkbox"
-                id="honors"
+            <div className="mt-3">
+              <DashboardCheckboxField
                 checked={honorsProgram}
-                onChange={(e) => setHonorsProgram(e.target.checked)}
-                className="w-4 h-4 rounded border-outline-variant/30 text-primary focus:ring-primary/20"
+                onCheckedChange={(checked) => setHonorsProgram(Boolean(checked))}
+                label={<span className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">{t.off_honors_program}</span>}
               />
-              <label htmlFor="honors" className="text-xs font-bold text-on-surface-variant uppercase tracking-widest">Honors Program</label>
             </div>
           </div>
 
@@ -194,15 +304,15 @@ function AddOfferForm({ evaluations, onSubmit, onCancel, t }: {
           {costTotal > 0 && (
             <div className="bg-surface-container-lowest rounded-2xl p-4 border border-outline-variant/10">
               <div className="flex justify-between items-center text-sm">
-                <span className="text-on-surface-variant">Total Cost</span>
+                <span className="text-on-surface-variant">{t.off_total_cost}</span>
                 <span className="font-black text-on-surface">{formatCurrency(costTotal)}</span>
               </div>
               <div className="flex justify-between items-center text-sm mt-1">
-                <span className="text-on-surface-variant">Total Aid</span>
+                <span className="text-on-surface-variant">{t.off_total_aid}</span>
                 <span className="font-black text-tertiary">−{formatCurrency(aidTotal)}</span>
               </div>
               <div className="border-t border-outline-variant/10 mt-2 pt-2 flex justify-between items-center">
-                <span className="text-xs font-bold text-on-surface-variant uppercase tracking-widest">Est. Net Cost / Year</span>
+                <span className="text-xs font-bold text-on-surface-variant uppercase tracking-widest">{t.off_est_net_cost_year}</span>
                 <span className={`text-lg font-black ${netCost > 0 ? 'text-on-surface' : 'text-tertiary'}`}>{formatCurrency(netCost)}</span>
               </div>
             </div>
@@ -210,11 +320,11 @@ function AddOfferForm({ evaluations, onSubmit, onCancel, t }: {
 
           {/* Notes */}
           <div>
-            <label className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-1 block">{t.off_notes}</label>
-            <textarea
-              className="w-full bg-surface-container-high/40 border border-outline-variant/20 rounded-xl px-4 py-2.5 text-sm text-on-surface outline-none focus:border-primary resize-none"
+            <DashboardFieldLabel>{t.off_notes}</DashboardFieldLabel>
+            <DashboardTextarea
+              className="resize-none"
               rows={2}
-              placeholder="Program, conditions, deadlines..."
+              placeholder={t.off_program_conditions_deadlines}
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
             />
@@ -235,26 +345,34 @@ function AddOfferForm({ evaluations, onSubmit, onCancel, t }: {
 
 // ─── Offer Card ───
 
-function OfferCard({ offer, onSelect, isSelected, t }: { offer: OfferResponse; onSelect: () => void; isSelected: boolean; t: Record<string, string> }) {
+function OfferCard({
+  offer,
+  t,
+  onOpenReport,
+  reportLabel,
+  reportLoading,
+}: {
+  offer: OfferResponse;
+  t: Record<string, any>;
+  onOpenReport?: () => void;
+  reportLabel?: string;
+  reportLoading?: boolean;
+}) {
   const statusStyle = STATUS_STYLES[offer.status] ?? STATUS_STYLES.admitted;
   const hasDeadline = offer.decision_deadline != null;
+  const isActionable = offer.status === 'admitted' || offer.status === 'committed';
 
   return (
-    <div
-      className={`bg-surface-container-lowest rounded-2xl p-6 border transition-all cursor-pointer ${
-        isSelected ? 'border-primary/30 shadow-md ring-2 ring-primary/10' : 'border-outline-variant/10 hover:shadow-sm'
-      }`}
-      onClick={onSelect}
-    >
-      <div className="flex items-start justify-between mb-4">
+    <div className="dashboard-surface dashboard-hover-lift p-5 sm:p-6">
+      <div className="mb-4 flex items-start justify-between gap-4">
         <div>
-          <h3 className="font-headline text-base font-bold text-on-surface">{offer.school_name ?? 'School'}</h3>
+          <h3 className="font-headline text-base font-bold text-on-surface">{offer.school_name ?? t.common_school}</h3>
           <div className="flex items-center gap-2 mt-1">
             <span className={`inline-block px-2 py-0.5 ${statusStyle.bg} ${statusStyle.text} text-[9px] font-black uppercase tracking-widest rounded-md`}>
-              {offer.status}
+              {getOfferStatusLabel(offer.status, t)}
             </span>
             {offer.honors_program && (
-              <span className="px-2 py-0.5 bg-primary/10 text-primary text-[9px] font-black uppercase tracking-widest rounded-md">Honors</span>
+              <span className="px-2 py-0.5 bg-primary/10 text-primary text-[9px] font-black uppercase tracking-widest rounded-md">{t.off_honors_program}</span>
             )}
           </div>
         </div>
@@ -268,26 +386,26 @@ function OfferCard({ offer, onSelect, isSelected, t }: { offer: OfferResponse; o
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 mb-3">
         {offer.tuition != null && (
           <div className="flex justify-between text-xs">
-            <span className="text-on-surface-variant/60">Tuition</span>
+            <span className="text-on-surface-variant/60">{t.off_tuition_fees}</span>
             <span className="font-bold text-on-surface">{formatK(offer.tuition)}</span>
           </div>
         )}
         {offer.room_and_board != null && (
           <div className="flex justify-between text-xs">
-            <span className="text-on-surface-variant/60">Room & Board</span>
+            <span className="text-on-surface-variant/60">{t.off_room_board}</span>
             <span className="font-bold text-on-surface">{formatK(offer.room_and_board)}</span>
           </div>
         )}
         {offer.total_cost != null && (
           <div className="flex justify-between text-xs col-span-2 border-t border-outline-variant/10 pt-1 mt-1">
-            <span className="text-on-surface-variant/80 font-bold">Total COA</span>
+            <span className="text-on-surface-variant/80 font-bold">{t.off_total_cost}</span>
             <span className="font-black text-on-surface">{formatCurrency(offer.total_cost)}</span>
           </div>
         )}
       </div>
 
       {/* Aid breakdown */}
-      <div className="grid grid-cols-4 gap-2">
+      <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
         <div className="bg-surface-container-low/40 px-2.5 py-2 rounded-xl border border-outline-variant/5">
           <div className="text-[7px] text-on-surface-variant font-bold uppercase tracking-widest">{t.off_scholarships}</div>
           <div className="text-sm font-black text-tertiary">{formatCurrency(offer.merit_scholarship)}</div>
@@ -301,7 +419,7 @@ function OfferCard({ offer, onSelect, isSelected, t }: { offer: OfferResponse; o
           <div className="text-sm font-black text-error/70">{formatCurrency(offer.loan_offered)}</div>
         </div>
         <div className="bg-surface-container-low/40 px-2.5 py-2 rounded-xl border border-outline-variant/5">
-          <div className="text-[7px] text-on-surface-variant font-bold uppercase tracking-widest">Work-Study</div>
+          <div className="text-[7px] text-on-surface-variant font-bold uppercase tracking-widest">{t.off_work_study}</div>
           <div className="text-sm font-black text-primary">{formatCurrency(offer.work_study)}</div>
         </div>
       </div>
@@ -311,14 +429,191 @@ function OfferCard({ offer, onSelect, isSelected, t }: { offer: OfferResponse; o
         {hasDeadline && (
           <span className="text-[10px] font-bold text-on-surface-variant/60 flex items-center gap-1">
             <span className="material-symbols-outlined text-xs">calendar_today</span>
-            Deadline: {new Date(offer.decision_deadline!).toLocaleDateString()}
+            {t.off_deadline}: {new Date(offer.decision_deadline!).toLocaleDateString()}
           </span>
         )}
       </div>
       {offer.notes && (
         <p className="text-xs text-on-surface-variant/60 mt-2 line-clamp-2">{offer.notes}</p>
       )}
+
+      {isActionable && onOpenReport && reportLabel && (
+        <div className="mt-4 border-t border-outline-variant/10 pt-4">
+          <button
+            onClick={onOpenReport}
+            disabled={reportLoading}
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-primary/15 bg-primary/5 px-4 py-2 text-xs font-bold text-primary transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+          >
+            <span className="material-symbols-outlined text-sm">
+              {reportLabel === t.off_report_view ? 'analytics' : 'description'}
+            </span>
+            {reportLoading ? t.off_report_loading : reportLabel}
+          </button>
+        </div>
+      )}
     </div>
+  );
+}
+
+function OfferReportSheet({
+  open,
+  onOpenChange,
+  offer,
+  report,
+  isLoading,
+  error,
+  onGenerate,
+  t,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  offer: OfferResponse | null;
+  report: GoNoGoReport | null;
+  isLoading: boolean;
+  error: Error | null;
+  onGenerate: () => void;
+  t: Record<string, any>;
+}) {
+  const [lower, upper] = report ? getConfidenceBounds(report) : [null, null];
+  const scoreEntries = report ? Object.entries(report.sub_scores ?? {}) : [];
+  const scoreLabelMap: Record<string, string> = {
+    academic: t.common_academic,
+    financial: t.common_financial,
+    career: t.common_career,
+    life: t.common_life,
+  };
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="right" className="w-full overflow-y-auto border-l border-outline-variant/10 bg-background sm:max-w-2xl">
+        <SheetHeader className="border-b border-outline-variant/10 px-6 py-5">
+          <SheetTitle className="font-headline text-lg font-black text-on-surface">
+            {offer ? `${offer.school_name ?? t.common_school} · ${t.off_report_sheet_title}` : t.off_report_sheet_title}
+          </SheetTitle>
+          <SheetDescription className="text-sm leading-relaxed text-on-surface-variant/70">
+            {t.off_report_sheet_desc}
+          </SheetDescription>
+        </SheetHeader>
+
+        <div className="space-y-6 px-6 py-6">
+          {error && (
+            <div className="rounded-2xl border border-error/15 bg-error/5 px-4 py-3 text-sm text-error">
+              {error.message}
+            </div>
+          )}
+
+          {!report && !isLoading && (
+            <div className="rounded-3xl border border-outline-variant/10 bg-surface-container-lowest p-6 text-center">
+              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
+                <span className="material-symbols-outlined text-3xl text-primary">analytics</span>
+              </div>
+              <h3 className="font-headline text-lg font-black text-on-surface">{t.off_report_empty_title}</h3>
+              <p className="mt-2 text-sm leading-relaxed text-on-surface-variant/70">
+                {t.off_report_empty_desc}
+              </p>
+              <button
+                onClick={onGenerate}
+                className="mt-5 inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-bold text-on-primary shadow-md transition-all hover:brightness-110"
+              >
+                <span className="material-symbols-outlined text-sm">play_arrow</span>
+                {t.off_report_generate}
+              </button>
+            </div>
+          )}
+
+          {isLoading && (
+            <div className="space-y-4">
+              {[...Array(3)].map((_, index) => (
+                <div key={index} className="h-28 animate-pulse rounded-2xl bg-surface-container-high/40" />
+              ))}
+            </div>
+          )}
+
+          {report && !isLoading && (
+            <>
+              <div className="rounded-3xl border border-outline-variant/10 bg-surface-container-lowest p-6">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-on-surface-variant/55">
+                      {t.off_report_recommendation}
+                    </div>
+                    <div className="mt-2 text-2xl font-black text-on-surface">
+                      {String(report.recommendation ?? t.common_na)}
+                    </div>
+                    {lower != null && upper != null && (
+                      <div className="mt-2 text-sm text-on-surface-variant/65">
+                        {t.common_confidence}: {Math.round(lower * 100)}% - {Math.round(upper * 100)}%
+                      </div>
+                    )}
+                  </div>
+                  <div className="rounded-2xl border border-primary/15 bg-primary/5 px-4 py-3 text-right">
+                    <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-primary/80">
+                      {t.common_overall}
+                    </div>
+                    <div className="mt-1 text-3xl font-black text-primary">
+                      {Math.round((report.overall_score ?? 0) * 100)}%
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+                {scoreEntries.map(([key, value]) => (
+                  <div key={key} className="rounded-2xl border border-outline-variant/10 bg-surface-container-lowest px-4 py-3">
+                    <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-on-surface-variant/55">
+                      {scoreLabelMap[key] ?? key}
+                    </div>
+                    <div className="mt-2 text-xl font-black text-on-surface">
+                      {Math.round((value ?? 0) * 100)}%
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="rounded-3xl border border-outline-variant/10 bg-surface-container-lowest p-6">
+                <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.14em] text-on-surface-variant/55">
+                  {t.off_report_narrative}
+                </div>
+                <div className="prose prose-sm max-w-none text-sm leading-relaxed text-on-surface prose-headings:text-on-surface prose-strong:text-on-surface prose-p:my-2 prose-ul:my-2 prose-li:my-1">
+                  <ReactMarkdown>{report.narrative}</ReactMarkdown>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+                <div className="rounded-3xl border border-outline-variant/10 bg-surface-container-lowest p-6">
+                  <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.14em] text-on-surface-variant/55">
+                    {t.dec_top_factors}
+                  </div>
+                  <ReportList
+                    items={report.top_factors ?? []}
+                    emptyLabel={t.off_report_empty_factors}
+                  />
+                </div>
+
+                <div className="rounded-3xl border border-outline-variant/10 bg-surface-container-lowest p-6">
+                  <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.14em] text-on-surface-variant/55">
+                    {t.dec_risks}
+                  </div>
+                  <ReportList
+                    items={report.risks ?? []}
+                    emptyLabel={t.off_report_empty_risks}
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-3xl border border-outline-variant/10 bg-surface-container-lowest p-6">
+                <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.14em] text-on-surface-variant/55">
+                  {t.off_report_usage_title}
+                </div>
+                <p className="text-sm leading-relaxed text-on-surface-variant/70">
+                  {t.off_report_footer}
+                </p>
+              </div>
+            </>
+          )}
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }
 
@@ -331,10 +626,20 @@ interface OffersPanelProps {
 export function OffersPanel({ studentId }: OffersPanelProps) {
   const { t } = useApp();
   const { offers, comparison, isLoading, createOffer, compareOffers } = useOffers(studentId);
+  const {
+    report,
+    isLoading: isReportLoading,
+    error: reportError,
+    generateReport,
+    loadReport,
+    clearReport,
+  } = useReports();
   const { tieredList } = useEvaluations(studentId);
   const [showForm, setShowForm] = useState(false);
-  const [selectedOfferIds, setSelectedOfferIds] = useState<Set<string>>(new Set());
   const [comparing, setComparing] = useState(false);
+  const [reportSheetOpen, setReportSheetOpen] = useState(false);
+  const [selectedReportOffer, setSelectedReportOffer] = useState<OfferResponse | null>(null);
+  const [cachedReportIds, setCachedReportIds] = useState<Record<string, string>>({});
 
   const allEvals: EvaluationWithSchool[] = tieredList
     ? [...tieredList.reach, ...tieredList.target, ...tieredList.safety, ...tieredList.likely]
@@ -342,14 +647,38 @@ export function OffersPanel({ studentId }: OffersPanelProps) {
 
   const admittedOffers = offers.filter((o) => o.status === 'admitted' || o.status === 'committed');
 
-  const toggleSelect = (id: string) => {
-    setSelectedOfferIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
+  useEffect(() => {
+    if (!studentId) {
+      setCachedReportIds({});
+      return;
+    }
+
+    const nextCache: Record<string, string> = {};
+    offers.forEach((offer) => {
+      const reportId = window.localStorage.getItem(getOfferReportCacheKey(studentId, offer.id));
+      if (reportId) {
+        nextCache[offer.id] = reportId;
+      }
     });
-  };
+    setCachedReportIds(nextCache);
+  }, [studentId, offers]);
+
+  const updateCachedReport = useMemo(() => ({
+    set(offerId: string, reportId: string) {
+      if (!studentId) return;
+      window.localStorage.setItem(getOfferReportCacheKey(studentId, offerId), reportId);
+      setCachedReportIds((prev) => ({ ...prev, [offerId]: reportId }));
+    },
+    clear(offerId: string) {
+      if (!studentId) return;
+      window.localStorage.removeItem(getOfferReportCacheKey(studentId, offerId));
+      setCachedReportIds((prev) => {
+        const next = { ...prev };
+        delete next[offerId];
+        return next;
+      });
+    },
+  }), [studentId]);
 
   const handleCompare = async () => {
     setComparing(true);
@@ -362,37 +691,52 @@ export function OffersPanel({ studentId }: OffersPanelProps) {
     setShowForm(false);
   };
 
+  const openReportSheet = async (offer: OfferResponse) => {
+    setSelectedReportOffer(offer);
+    setReportSheetOpen(true);
+    clearReport();
+
+    const cachedReportId = cachedReportIds[offer.id];
+    if (!cachedReportId) return;
+
+    const restored = await loadReport(cachedReportId);
+    if (!restored) {
+      updateCachedReport.clear(offer.id);
+      clearReport();
+    }
+  };
+
+  const handleGenerateReport = async () => {
+    if (!studentId || !selectedReportOffer) return;
+    const generated = await generateReport(studentId, selectedReportOffer.id);
+    if (generated) {
+      updateCachedReport.set(selectedReportOffer.id, generated.id);
+    }
+  };
+
+  const handleReportSheetOpenChange = (open: boolean) => {
+    setReportSheetOpen(open);
+    if (!open) {
+      setSelectedReportOffer(null);
+      clearReport();
+    }
+  };
+
   return (
-    <section className="w-full bg-background flex flex-col h-full overflow-hidden font-body">
-      <header className="h-16 px-10 flex items-center justify-between sticky top-0 bg-background/90 backdrop-blur-md z-20 border-b border-outline-variant/10">
-        <div>
-          <h1 className="font-headline text-lg font-black text-on-surface tracking-tight">{t.off_title}</h1>
-          <p className="text-[9px] text-on-surface-variant font-bold tracking-[0.1em] uppercase">
-            {t.off_subtitle} {offers.length > 0 && `\u2022 ${offers.length} Offers`}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {admittedOffers.length >= 2 && (
-            <button
-              onClick={handleCompare}
-              disabled={comparing}
-              className="px-4 py-2 bg-tertiary/10 text-tertiary text-xs font-bold uppercase tracking-widest rounded-xl border border-tertiary/15 hover:bg-tertiary/15 transition-colors flex items-center gap-1.5 disabled:opacity-50"
-            >
-              <span className="material-symbols-outlined text-sm">compare_arrows</span>
-              {comparing ? t.off_comparing : t.off_compare}
-            </button>
-          )}
-          <button
-            onClick={() => setShowForm(true)}
-            className="px-4 py-2 bg-primary text-on-primary text-xs font-bold rounded-xl hover:brightness-110 transition-all shadow-md flex items-center gap-1.5"
-          >
-            <span className="material-symbols-outlined text-sm">add</span>
-            {t.off_record}
-          </button>
-        </div>
+    <AnimatedWorkspacePage className="w-full bg-background font-body">
+      <section className="w-full flex flex-col h-full overflow-hidden">
+      <header className="sticky top-0 z-20 flex min-h-16 items-center border-b border-outline-variant/10 bg-background/90 px-4 py-3 backdrop-blur-md sm:px-6 lg:px-8">
+        <MotionSection role="toolbar">
+          <div>
+            <h1 className="font-headline text-lg font-black text-on-surface tracking-tight">{t.off_title}</h1>
+            <p className="text-[9px] text-on-surface-variant font-bold tracking-[0.1em] uppercase">
+              {t.off_subtitle} {offers.length > 0 && `\u2022 ${t.off_offer_count(offers.length)}`}
+            </p>
+          </div>
+        </MotionSection>
       </header>
 
-      <div className="flex-1 overflow-y-auto px-10 py-8 space-y-8">
+      <div className="flex-1 overflow-y-auto px-4 py-5 space-y-8 sm:px-6 sm:py-6 lg:px-8 lg:py-8">
         {/* Loading */}
         {isLoading && (
           <div className="space-y-4">
@@ -404,7 +748,7 @@ export function OffersPanel({ studentId }: OffersPanelProps) {
 
         {/* Empty State */}
         {!isLoading && offers.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-24 text-center">
+          <MotionSurface className="flex flex-col items-center justify-center py-24 text-center">
             <div className="w-20 h-20 rounded-3xl bg-surface-container-high/40 flex items-center justify-center mb-6">
               <span className="material-symbols-outlined text-4xl text-on-surface-variant/50">local_offer</span>
             </div>
@@ -418,99 +762,117 @@ export function OffersPanel({ studentId }: OffersPanelProps) {
             >
               {t.off_first}
             </button>
-          </div>
+          </MotionSurface>
         )}
 
         {/* Summary stats */}
         {!isLoading && offers.length > 0 && (
-          <div className="grid grid-cols-4 gap-4">
-            <div className="bg-surface-container-lowest rounded-2xl p-5 border border-outline-variant/10 text-center">
-              <div className="text-3xl font-black text-on-surface">{offers.length}</div>
-              <div className="text-[9px] font-bold text-on-surface-variant/50 uppercase tracking-widest mt-1">{t.off_total}</div>
-            </div>
-            <div className="bg-surface-container-lowest rounded-2xl p-5 border border-outline-variant/10 text-center">
-              <div className="text-3xl font-black text-tertiary">{admittedOffers.length}</div>
-              <div className="text-[9px] font-bold text-on-surface-variant/50 uppercase tracking-widest mt-1">{t.off_admitted}</div>
-            </div>
-            <div className="bg-surface-container-lowest rounded-2xl p-5 border border-outline-variant/10 text-center">
-              <div className="text-3xl font-black text-on-surface">
-                {admittedOffers.filter((o) => o.net_cost != null).length > 0
-                  ? formatCurrency(Math.min(...admittedOffers.filter((o) => o.net_cost != null).map((o) => o.net_cost!)))
-                  : '—'}
+          <>
+            <MotionSection role="toolbar" delay={0.04}>
+              <div className="dashboard-toolbar-rail p-4 sm:p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                <div className="max-w-2xl">
+                  <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-on-surface-variant/55">
+                    {t.off_actions_kicker}
+                  </div>
+                  <h2 className="mt-1 font-headline text-base font-black text-on-surface">{t.off_actions_title}</h2>
+                  <p className="mt-2 text-sm leading-relaxed text-on-surface-variant/65">
+                    {t.off_actions_desc}
+                  </p>
+                </div>
+
+                <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                  {admittedOffers.length >= 2 && (
+                    <button
+                      onClick={handleCompare}
+                      disabled={comparing}
+                      className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-tertiary/15 bg-tertiary/10 px-4 py-2 text-xs font-bold uppercase tracking-widest text-tertiary transition-colors hover:bg-tertiary/15 disabled:opacity-50 sm:w-auto"
+                    >
+                      <span className="material-symbols-outlined text-sm">compare_arrows</span>
+                      {comparing ? t.off_comparing : t.off_compare}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setShowForm(true)}
+                    className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-on-primary shadow-md transition-all hover:brightness-110 sm:w-auto"
+                  >
+                    <span className="material-symbols-outlined text-sm">add</span>
+                    {t.off_record}
+                  </button>
+                </div>
               </div>
-              <div className="text-[9px] font-bold text-on-surface-variant/50 uppercase tracking-widest mt-1">{t.off_lowest_cost}</div>
-            </div>
-            <div className="bg-surface-container-lowest rounded-2xl p-5 border border-outline-variant/10 text-center">
-              <div className="text-3xl font-black text-primary">
-                {admittedOffers.length > 0 ? formatCurrency(Math.max(...admittedOffers.map((o) => o.total_aid))) : '—'}
               </div>
-              <div className="text-[9px] font-bold text-on-surface-variant/50 uppercase tracking-widest mt-1">{t.off_best_aid}</div>
-            </div>
-          </div>
+            </MotionSection>
+
+            <MotionStagger className="grid grid-cols-2 gap-4 xl:grid-cols-4" delay={0.06} stagger={0.05} role="metric">
+              <MotionItem role="metric">
+                <div className="dashboard-surface-muted p-5 text-center">
+                  <div className="text-3xl font-black text-on-surface">{offers.length}</div>
+                  <div className="mt-1 text-[9px] font-bold uppercase tracking-widest text-on-surface-variant/50">{t.off_total}</div>
+                </div>
+              </MotionItem>
+              <MotionItem role="metric">
+                <div className="dashboard-surface-muted p-5 text-center">
+                  <div className="text-3xl font-black text-tertiary">{admittedOffers.length}</div>
+                  <div className="mt-1 text-[9px] font-bold uppercase tracking-widest text-on-surface-variant/50">{t.off_admitted}</div>
+                </div>
+              </MotionItem>
+              <MotionItem role="metric">
+                <div className="dashboard-surface-muted p-5 text-center">
+                  <div className="text-3xl font-black text-on-surface">
+                    {admittedOffers.filter((o) => o.net_cost != null).length > 0
+                      ? formatCurrency(Math.min(...admittedOffers.filter((o) => o.net_cost != null).map((o) => o.net_cost!)))
+                      : '—'}
+                  </div>
+                  <div className="mt-1 text-[9px] font-bold uppercase tracking-widest text-on-surface-variant/50">{t.off_lowest_cost}</div>
+                </div>
+              </MotionItem>
+              <MotionItem role="metric">
+                <div className="dashboard-surface-muted p-5 text-center">
+                  <div className="text-3xl font-black text-primary">
+                    {admittedOffers.length > 0 ? formatCurrency(Math.max(...admittedOffers.map((o) => o.total_aid))) : '—'}
+                  </div>
+                  <div className="mt-1 text-[9px] font-bold uppercase tracking-widest text-on-surface-variant/50">{t.off_best_aid}</div>
+                </div>
+              </MotionItem>
+            </MotionStagger>
+          </>
         )}
 
         {/* Offer Cards */}
         {!isLoading && offers.length > 0 && (
-          <div>
-            <h2 className="font-headline text-base font-black text-on-surface mb-4">{t.off_all}</h2>
-            <div className="grid grid-cols-2 gap-4">
-              {offers.map((offer) => (
-                <OfferCard
-                  key={offer.id}
-                  offer={offer}
-                  isSelected={selectedOfferIds.has(offer.id)}
-                  onSelect={() => toggleSelect(offer.id)}
-                  t={t}
-                />
-              ))}
+          <MotionSection className="space-y-4" delay={0.08}>
+            <div className="mb-4">
+              <h2 className="font-headline text-base font-black text-on-surface">{t.off_all}</h2>
+              <p className="mt-1 text-xs leading-relaxed text-on-surface-variant/60">
+                {t.off_all_desc}
+              </p>
             </div>
-          </div>
+            <MotionStagger className="grid grid-cols-1 gap-4 xl:grid-cols-2" delay={0.04} stagger={0.06}>
+              {offers.map((offer) => (
+                <MotionItem key={offer.id} role="surface">
+                  <OfferCard
+                    offer={offer}
+                    t={t}
+                    onOpenReport={
+                      offer.status === 'admitted' || offer.status === 'committed'
+                        ? () => { void openReportSheet(offer); }
+                        : undefined
+                    }
+                    reportLabel={cachedReportIds[offer.id] ? t.off_report_view : t.off_report_generate}
+                    reportLoading={isReportLoading && selectedReportOffer?.id === offer.id}
+                  />
+                </MotionItem>
+              ))}
+            </MotionStagger>
+          </MotionSection>
         )}
 
         {/* Comparison Results */}
         {comparison && (
-          <div className="bg-surface-container-lowest rounded-3xl p-8 border border-outline-variant/10">
-            <div className="flex items-center gap-3 mb-6">
-              <div className="w-10 h-10 rounded-xl bg-tertiary/10 flex items-center justify-center">
-                <span className="material-symbols-outlined text-tertiary text-xl">compare_arrows</span>
-              </div>
-              <h3 className="font-headline text-lg font-black text-on-surface">{t.off_comparison}</h3>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-outline-variant/10">
-                    <th className="text-left py-3 text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">{t.off_school}</th>
-                    <th className="text-right py-3 text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Tuition</th>
-                    <th className="text-right py-3 text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Total COA</th>
-                    <th className="text-right py-3 text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Total Aid</th>
-                    <th className="text-right py-3 text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">{t.off_net_cost}</th>
-                    <th className="text-center py-3 text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Honors</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {comparison.comparison_scores
-                    .sort((a, b) => (a.net_cost ?? 0) - (b.net_cost ?? 0))
-                    .map((score) => (
-                      <tr key={score.offer_id} className="border-b border-outline-variant/5">
-                        <td className="py-3 font-bold">{score.school_name ?? score.offer_id}</td>
-                        <td className="py-3 text-right">{formatCurrency(score.tuition)}</td>
-                        <td className="py-3 text-right">{formatCurrency(score.total_cost)}</td>
-                        <td className="py-3 text-right font-bold text-tertiary">{formatCurrency(score.total_aid)}</td>
-                        <td className="py-3 text-right font-black">{formatCurrency(score.net_cost)}</td>
-                        <td className="py-3 text-center">
-                          {score.honors_program ? (
-                            <span className="px-2 py-0.5 bg-tertiary/10 text-tertiary text-[9px] font-black rounded-md">YES</span>
-                          ) : (
-                            <span className="text-on-surface-variant/30">—</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          <MotionSection delay={0.1}>
+            <OfferCompareCard data={normalizeOfferComparison(comparison)} />
+          </MotionSection>
         )}
 
         <div className="h-12" />
@@ -525,6 +887,18 @@ export function OffersPanel({ studentId }: OffersPanelProps) {
           t={t}
         />
       )}
+
+        <OfferReportSheet
+          open={reportSheetOpen}
+          onOpenChange={handleReportSheetOpenChange}
+          offer={selectedReportOffer}
+          report={report}
+          isLoading={isReportLoading}
+          error={reportError}
+          onGenerate={handleGenerateReport}
+          t={t}
+        />
     </section>
+    </AnimatedWorkspacePage>
   );
 }

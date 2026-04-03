@@ -21,5 +21,25 @@ export function useReports() {
     }
   }, []);
 
-  return { report, isLoading, error, generateReport };
+  const loadReport = useCallback(async (reportId: string) => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const data = await reportsApi.get(reportId);
+      setReport(data);
+      return data;
+    } catch (err) {
+      setError(err instanceof Error ? err : new Error(String(err)));
+      return null;
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  const clearReport = useCallback(() => {
+    setReport(null);
+    setError(null);
+  }, []);
+
+  return { report, isLoading, error, generateReport, loadReport, clearReport };
 }

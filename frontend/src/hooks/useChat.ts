@@ -1,6 +1,16 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { api, wsUrl } from '../lib/api';
-import type { ChatMessage, ChatResponse, QuestionOption, GuidedQuestion, RecommendationData } from '../lib/types';
+import { parseOfferCompareFromText, parseWhatIfFromText } from '../lib/chatRichContent';
+import type {
+  ChatMessage,
+  ChatResponse,
+  GuidedQuestion,
+  OfferCompareViewModel,
+  QuestionOption,
+  RecommendationData,
+  RichMessageBlock,
+  WhatIfViewModel,
+} from '../lib/types';
 
 export type { QuestionOption, GuidedQuestion };
 
@@ -12,11 +22,19 @@ export interface ChatEntry {
   suggested_actions?: string[] | null;
   guided_questions?: GuidedQuestion[] | null;
   recommendation?: RecommendationData | null;
+  offer_compare?: OfferCompareViewModel | null;
+  what_if?: WhatIfViewModel | null;
+  blocks: RichMessageBlock[];
 }
 
 interface HistoryEntry {
   role: string;
   content: string;
+}
+
+interface QueuedOutboundMessage {
+  sessionId: string;
+  message: ChatMessage & { student_id?: string };
 }
 
 /**
@@ -50,12 +68,54 @@ function parseHistoryEntry(h: HistoryEntry): ChatEntry {
   // Strip [INTAKE_COMPLETE] marker
   content = content.replace('[INTAKE_COMPLETE]', '').trim();
 
+  const blocks: RichMessageBlock[] = [];
+  const offer_compare = recommendation ? null : parseOfferCompareFromText(content);
+  const what_if = recommendation || offer_compare ? null : parseWhatIfFromText(content);
+
+  if (recommendation) blocks.push({ type: 'recommendation', data: recommendation });
+  if (offer_compare) blocks.push({ type: 'offerCompare', data: offer_compare });
+  if (what_if) blocks.push({ type: 'whatIf', data: what_if });
+  if (guided_questions && guided_questions.length > 0) {
+    blocks.push({ type: 'guidedQuestions', data: guided_questions });
+  }
+
   return {
     role: h.role as 'user' | 'assistant',
     content,
     timestamp: '',
     recommendation,
     guided_questions,
+    offer_compare,
+    what_if,
+    blocks,
+  };
+}
+
+function normalizeAssistantEntry(
+  data: Pick<ChatResponse, 'content' | 'intent' | 'suggested_actions' | 'guided_questions' | 'recommendation'>,
+): Pick<ChatEntry, 'content' | 'intent' | 'suggested_actions' | 'guided_questions' | 'recommendation' | 'offer_compare' | 'what_if' | 'blocks'> {
+  const recommendation = data.recommendation ?? null;
+  const guided_questions = data.guided_questions ?? null;
+  const offer_compare = recommendation ? null : parseOfferCompareFromText(data.content);
+  const what_if = recommendation || offer_compare ? null : parseWhatIfFromText(data.content);
+
+  const blocks: RichMessageBlock[] = [];
+  if (recommendation) blocks.push({ type: 'recommendation', data: recommendation });
+  if (offer_compare) blocks.push({ type: 'offerCompare', data: offer_compare });
+  if (what_if) blocks.push({ type: 'whatIf', data: what_if });
+  if (guided_questions && guided_questions.length > 0) {
+    blocks.push({ type: 'guidedQuestions', data: guided_questions });
+  }
+
+  return {
+    content: data.content,
+    intent: data.intent,
+    suggested_actions: data.suggested_actions,
+    guided_questions,
+    recommendation,
+    offer_compare,
+    what_if,
+    blocks,
   };
 }
 
@@ -68,24 +128,53 @@ export function useChat(
   const [isConnected, setIsConnected] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
+  const wsSessionRef = useRef<string | null>(null);
   const historyLoadedRef = useRef<string | null>(null);
-  // Track the active sessionId internally so we can lazily create it
   const activeSessionRef = useRef<string | null>(sessionId || null);
+  const pendingOutboundRef = useRef<QueuedOutboundMessage[]>([]);
 
-  // Sync ref when prop changes
+  const clearPendingForSession = useCallback((sid: string) => {
+    pendingOutboundRef.current = pendingOutboundRef.current.filter((item) => item.sessionId !== sid);
+  }, []);
+
+  const enqueueOutbound = useCallback((sid: string, message: ChatMessage & { student_id?: string }) => {
+    pendingOutboundRef.current = [...pendingOutboundRef.current, { sessionId: sid, message }];
+  }, []);
+
+  const flushPendingMessages = useCallback((sid: string) => {
+    if (!wsRef.current || wsSessionRef.current !== sid || wsRef.current.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    const queued = pendingOutboundRef.current.filter((item) => item.sessionId === sid);
+    if (queued.length === 0) return;
+
+    pendingOutboundRef.current = pendingOutboundRef.current.filter((item) => item.sessionId !== sid);
+    queued.forEach(({ message }) => {
+      wsRef.current?.send(JSON.stringify(message));
+    });
+  }, []);
+
   useEffect(() => {
     activeSessionRef.current = sessionId || null;
-    // If sessionId was cleared (new session), reset messages
     if (!sessionId) {
       setMessages([]);
       historyLoadedRef.current = null;
+      setIsTyping(false);
+      setIsConnected(false);
+      pendingOutboundRef.current = [];
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;
-        setIsConnected(false);
       }
+      wsSessionRef.current = null;
+      return;
     }
-  }, [sessionId]);
+
+    if (wsSessionRef.current && wsSessionRef.current !== sessionId) {
+      clearPendingForSession(wsSessionRef.current);
+    }
+  }, [sessionId, clearPendingForSession]);
 
   // Load history from backend on mount / sessionId change
   useEffect(() => {
@@ -104,31 +193,53 @@ export function useChat(
       });
   }, [sessionId]);
 
-  // Connect WebSocket when sessionId is set
   const connectWs = useCallback((sid: string) => {
-    if (wsRef.current) {
+    if (
+      wsRef.current &&
+      wsSessionRef.current === sid &&
+      (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)
+    ) {
+      return wsRef.current;
+    }
+
+    if (wsRef.current && wsSessionRef.current !== sid) {
       wsRef.current.close();
+      wsRef.current = null;
     }
 
     const ws = new WebSocket(wsUrl(`/chat/chat/${sid}`));
     wsRef.current = ws;
+    wsSessionRef.current = sid;
 
-    ws.onopen = () => setIsConnected(true);
-    ws.onclose = () => setIsConnected(false);
-    ws.onerror = () => setIsConnected(false);
+    ws.onopen = () => {
+      if (wsRef.current !== ws || wsSessionRef.current !== sid) return;
+      setIsConnected(true);
+      flushPendingMessages(sid);
+    };
+
+    ws.onclose = () => {
+      if (wsRef.current === ws) {
+        wsRef.current = null;
+        wsSessionRef.current = null;
+      }
+      setIsConnected(false);
+      setIsTyping(false);
+    };
+
+    ws.onerror = () => {
+      setIsConnected(false);
+      setIsTyping(false);
+    };
 
     ws.onmessage = (event) => {
+      if (wsSessionRef.current !== sid) return;
       setIsTyping(false);
       try {
         const data: ChatResponse = JSON.parse(event.data);
         const entry: ChatEntry = {
           role: 'assistant',
-          content: data.content,
           timestamp: new Date().toISOString(),
-          intent: data.intent,
-          suggested_actions: data.suggested_actions,
-          guided_questions: data.guided_questions,
-          recommendation: data.recommendation,
+          ...normalizeAssistantEntry(data),
         };
         setMessages((prev) => [...prev, entry]);
       } catch {
@@ -137,71 +248,65 @@ export function useChat(
     };
 
     return ws;
-  }, []);
+  }, [flushPendingMessages]);
 
-  // Auto-connect when sessionId exists
   useEffect(() => {
     if (!sessionId) return;
     connectWs(sessionId);
     return () => {
-      if (wsRef.current) {
+      clearPendingForSession(sessionId);
+      if (wsRef.current && wsSessionRef.current === sessionId) {
         wsRef.current.close();
         wsRef.current = null;
-        setIsConnected(false);
+        wsSessionRef.current = null;
       }
+      setIsConnected(false);
     };
-  }, [sessionId, connectWs]);
+  }, [sessionId, clearPendingForSession, connectWs]);
 
   const sendMessage = useCallback(
     (content: string) => {
-      // Lazy session creation: if no session yet, generate one now
       let sid = activeSessionRef.current;
-      if (!sid) {
-        sid = crypto.randomUUID?.() ?? `session-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        activeSessionRef.current = sid;
-        onSessionCreated?.(sid);
-        // Connect WebSocket for the new session
-        const ws = connectWs(sid);
-        // Queue the message to send once connected
-        const entry: ChatEntry = {
-          role: 'user',
-          content,
-          timestamp: new Date().toISOString(),
-        };
-        setMessages((prev) => [...prev, entry]);
-        setIsTyping(true);
-        ws.addEventListener('open', () => {
-          const msg: ChatMessage & { student_id?: string } = {
-            role: 'user',
-            content,
-            timestamp: new Date().toISOString(),
-            ...(studentId ? { student_id: studentId } : {}),
-          };
-          ws.send(JSON.stringify(msg));
-        }, { once: true });
-        return;
-      }
-
-      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-
-      const msg: ChatMessage & { student_id?: string } = {
+      const timestamp = new Date().toISOString();
+      const outbound: ChatMessage & { student_id?: string } = {
         role: 'user',
         content,
-        timestamp: new Date().toISOString(),
+        timestamp,
         ...(studentId ? { student_id: studentId } : {}),
       };
-
       const entry: ChatEntry = {
         role: 'user',
         content,
-        timestamp: msg.timestamp,
+        timestamp,
+        blocks: [],
       };
 
+      if (!sid) {
+        sid = crypto.randomUUID?.() ?? `session-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        activeSessionRef.current = sid;
+        enqueueOutbound(sid, outbound);
+        setMessages((prev) => [...prev, entry]);
+        setIsTyping(true);
+        onSessionCreated?.(sid);
+        return;
+      }
+
+      enqueueOutbound(sid, outbound);
       setMessages((prev) => [...prev, entry]);
       setIsTyping(true);
-      wsRef.current.send(JSON.stringify(msg));
+
+      if (
+        wsRef.current &&
+        wsSessionRef.current === sid &&
+        wsRef.current.readyState === WebSocket.OPEN
+      ) {
+        flushPendingMessages(sid);
+        return;
+      }
+
+      connectWs(sid);
     },
-    [studentId, connectWs, onSessionCreated],
+    [studentId, connectWs, enqueueOutbound, flushPendingMessages, onSessionCreated],
   );
 
   return { messages, sendMessage, isConnected, isTyping };

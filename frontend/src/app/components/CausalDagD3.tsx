@@ -12,12 +12,12 @@ const LAYER_ORDER: Record<string, number> = {
   observed: 2,
 };
 
-const LAYER_COLORS: Record<string, { fill: string; stroke: string; label: string }> = {
-  confounder: { fill: '#faf5ff', stroke: '#c084fc', label: 'Confounder' },
-  treatment:  { fill: '#eff6ff', stroke: '#60a5fa', label: 'Treatment' },
-  mediator:   { fill: '#fefce8', stroke: '#facc15', label: 'Mediator' },
-  outcome:    { fill: '#f0fdf4', stroke: '#4ade80', label: 'Outcome' },
-  observed:   { fill: '#f8fafc', stroke: '#94a3b8', label: 'Observed' },
+const LAYER_COLORS: Record<string, { fill: string; stroke: string; labelKey: 'dec_node_confounder' | 'dec_node_treatment' | 'dec_node_mediator' | 'dec_node_outcome' | 'dec_node_observed' }> = {
+  confounder: { fill: '#faf5ff', stroke: '#c084fc', labelKey: 'dec_node_confounder' },
+  treatment:  { fill: '#eff6ff', stroke: '#60a5fa', labelKey: 'dec_node_treatment' },
+  mediator:   { fill: '#fefce8', stroke: '#facc15', labelKey: 'dec_node_mediator' },
+  outcome:    { fill: '#f0fdf4', stroke: '#4ade80', labelKey: 'dec_node_outcome' },
+  observed:   { fill: '#f8fafc', stroke: '#94a3b8', labelKey: 'dec_node_observed' },
 };
 
 interface DagNode {
@@ -78,6 +78,10 @@ function layoutLinks(edges: CyEdge[]): DagLink[] {
     causalType: e.data.causal_type,
     lineStyle: e.data.line_style,
   }));
+}
+
+function getNodeTypeLabel(nodeType: string, t: Record<string, any>): string {
+  return t[`dec_node_${nodeType}`] ?? nodeType;
 }
 
 // ─── D3 Renderer ───
@@ -264,10 +268,10 @@ export function CausalDagD3({ studentId, schoolId, whatIfDeltas, t }: CausalDagD
             .html(`
               <div style="font-weight:800;margin-bottom:4px">${d.label}</div>
               <div style="font-size:11px;color:#64748b">
-                Type: ${d.nodeType}<br/>
-                Belief: ${Math.round(d.belief * 100)}%<br/>
-                Confidence: ${Math.round(d.confidence * 100)}%
-                ${link?.mechanism ? `<br/>Mechanism: ${link.mechanism}` : ''}
+                ${t.dec_dag_type}: ${getNodeTypeLabel(d.nodeType, t)}<br/>
+                ${t.dec_dag_belief}: ${Math.round(d.belief * 100)}%<br/>
+                ${t.dec_dag_confidence}: ${Math.round(d.confidence * 100)}%
+                ${link?.mechanism ? `<br/>${t.dec_dag_mechanism}: ${link.mechanism}` : ''}
               </div>
             `);
         })
@@ -275,19 +279,19 @@ export function CausalDagD3({ studentId, schoolId, whatIfDeltas, t }: CausalDagD
           tooltip.style('opacity', 0);
         });
     }
-  }, [dagData, whatIfDeltas]);
+  }, [dagData, whatIfDeltas, t]);
 
   return (
     <div className="bg-surface-container-lowest rounded-3xl border border-outline-variant/10 p-6 relative">
       {/* Header */}
       <div className="flex items-center gap-3 mb-4">
         <span className="material-symbols-outlined text-primary text-xl">account_tree</span>
-        <h3 className="font-headline text-base font-black text-on-surface">{t.dec_dag_title ?? 'Causal DAG'}</h3>
+        <h3 className="font-headline text-base font-black text-on-surface">{t.dec_dag_title}</h3>
         <div className="flex gap-3 ml-auto">
           {Object.entries(LAYER_COLORS).filter(([k]) => k !== 'observed').map(([key, col]) => (
             <div key={key} className="flex items-center gap-1">
               <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: col.stroke }} />
-              <span className="text-[9px] font-bold text-on-surface-variant/60 uppercase">{col.label}</span>
+              <span className="text-[9px] font-bold text-on-surface-variant/60 uppercase">{t[col.labelKey]}</span>
             </div>
           ))}
         </div>
@@ -304,8 +308,8 @@ export function CausalDagD3({ studentId, schoolId, whatIfDeltas, t }: CausalDagD
       {!loading && error && (
         <div className="flex flex-col items-center justify-center py-16 text-center">
           <span className="material-symbols-outlined text-on-surface-variant/30 text-3xl mb-3">warning</span>
-          <p className="text-xs text-on-surface-variant/50">Failed to load causal graph. Select a school first.</p>
-          <button onClick={fetchDag} className="mt-3 text-xs text-primary font-bold hover:underline">Retry</button>
+          <p className="text-xs text-on-surface-variant/50">{t.dec_dag_error}</p>
+          <button onClick={fetchDag} className="mt-3 text-xs text-primary font-bold hover:underline">{t.common_retry}</button>
         </div>
       )}
 
@@ -313,7 +317,7 @@ export function CausalDagD3({ studentId, schoolId, whatIfDeltas, t }: CausalDagD
       {!loading && !error && !dagData && (
         <div className="flex flex-col items-center justify-center py-16 text-center">
           <span className="material-symbols-outlined text-on-surface-variant/20 text-4xl mb-3">schema</span>
-          <p className="text-sm text-on-surface-variant/40">Select a school to view its causal graph</p>
+          <p className="text-sm text-on-surface-variant/40">{t.dec_dag_empty}</p>
         </div>
       )}
 

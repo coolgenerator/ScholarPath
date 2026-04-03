@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useMemo, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router';
 import { locales, Locale } from '../i18n';
+import { studentsApi } from '../lib/api/students';
 
 // localStorage helpers for Set<string> persistence
 function loadSet(key: string): Set<string> {
@@ -21,6 +22,7 @@ interface AppContextValue {
   setStudentId: (id: string | null) => void;
   sessionId: string;
   setSessionId: (id: string) => void;
+  clearSession: () => void;
   studentName: string | null;
   setStudentName: (name: string | null) => void;
   activeNav: string;
@@ -54,12 +56,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const parts = location.pathname.split('/').filter(Boolean);
     // /s/:sessionId/:nav?
     if (parts[0] === 's' && parts[1]) {
-      return { urlSessionId: parts[1], urlNav: parts[2] || null };
+      const isBlankSession = parts[1] === 'new';
+      return {
+        urlSessionId: isBlankSession ? null : parts[1],
+        isBlankSession,
+        urlNav: parts[2] || null,
+      };
     }
-    return { urlSessionId: null, urlNav: null };
+    return { urlSessionId: null, isBlankSession: false, urlNav: null };
   }
 
-  const { urlSessionId, urlNav } = parseUrl();
+  const { urlSessionId, isBlankSession, urlNav } = parseUrl();
 
   // Persist studentId and sessionId in localStorage so they survive page reloads
   const [studentId, setStudentIdState] = useState<string | null>(() => {
@@ -67,11 +74,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   });
   const [sessionId, setSessionIdState] = useState<string>(() => {
     // Priority: URL > localStorage > new
+    if (isBlankSession) return '';
     return urlSessionId || localStorage.getItem('sp_session_id') || generateSessionId();
   });
   const [studentName, setStudentNameState] = useState<string | null>(() => {
     return localStorage.getItem('sp_student_name') || null;
   });
+  const [studentBootstrapReady, setStudentBootstrapReady] = useState(false);
   const [activeNav, setActiveNavState] = useState<string>(() => {
     return urlNav || 'advisor';
   });
@@ -84,7 +93,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const setSessionId = useCallback((id: string) => {
     setSessionIdState(id);
-    localStorage.setItem('sp_session_id', id);
+    if (id) {
+      localStorage.setItem('sp_session_id', id);
+    } else {
+      localStorage.removeItem('sp_session_id');
+    }
+  }, []);
+
+  const clearSession = useCallback(() => {
+    setSessionIdState('');
+    localStorage.removeItem('sp_session_id');
+  }, []);
+
+  const resetStudentIdentity = useCallback(() => {
+    setStudentIdState(null);
+    setStudentNameState(null);
+    setSessionIdState('');
+    setFavoriteSchoolIds(new Set());
+    setBlacklistedSchoolIds(new Set());
+    localStorage.removeItem('sp_student_id');
+    localStorage.removeItem('sp_student_name');
+    localStorage.removeItem('sp_session_id');
   }, []);
 
   const setStudentName = useCallback((name: string | null) => {
@@ -100,16 +129,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // Push URL on state changes
   useEffect(() => {
-    const target = `/s/${sessionId}/${activeNav}`;
+    const target = sessionId ? `/s/${sessionId}/${activeNav}` : `/s/new/${activeNav}`;
     if (location.pathname !== target) {
       navigate(target, { replace: true });
     }
-  }, [sessionId, activeNav]);
+  }, [sessionId, activeNav, location.pathname, navigate]);
 
   // On initial mount: persist sessionId and redirect to URL
   useEffect(() => {
-    localStorage.setItem('sp_session_id', sessionId);
-  }, []);
+    if (sessionId) {
+      localStorage.setItem('sp_session_id', sessionId);
+    }
+  }, [sessionId]);
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const toggleSidebar = useCallback(() => setSidebarCollapsed((p) => !p), []);
@@ -126,9 +157,47 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem('sp_locale', l);
   }, []);
 
-  // Auto-seed schools + demo student on startup
   useEffect(() => {
-    // Always seed schools (idempotent — skips existing)
+    let cancelled = false;
+
+    async function bootstrapStudent() {
+      if (!studentId) {
+        setStudentBootstrapReady(true);
+        return;
+      }
+
+      try {
+        const student = await studentsApi.get(studentId);
+        if (cancelled) return;
+
+        if (student.name && student.name !== studentName) {
+          setStudentNameState(student.name);
+          localStorage.setItem('sp_student_name', student.name);
+        }
+      } catch {
+        if (cancelled) return;
+        resetStudentIdentity();
+      } finally {
+        if (!cancelled) {
+          setStudentBootstrapReady(true);
+        }
+      }
+    }
+
+    setStudentBootstrapReady(false);
+    void bootstrapStudent();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [studentId, studentName, resetStudentIdentity]);
+
+  // Auto-seed demo data only in local development.
+  useEffect(() => {
+    const isDev = import.meta.env.DEV === true || import.meta.env.MODE === 'development';
+    if (!isDev || !studentBootstrapReady) return;
+
+    // Seed schools (idempotent — skips existing)
     fetch('/api/api/seed/schools', { method: 'POST' }).catch(() => {});
 
     if (studentId) return;
@@ -144,42 +213,51 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
       })
       .catch(() => {});
-  }, []);
+  }, [studentBootstrapReady, studentId, setStudentId, setStudentName]);
 
   // Load favorites/blacklist from localStorage when studentId changes
   useEffect(() => {
-    if (!studentId) return;
+    if (!studentBootstrapReady) return;
+    if (!studentId) {
+      setFavoriteSchoolIds(new Set());
+      setBlacklistedSchoolIds(new Set());
+      return;
+    }
     setFavoriteSchoolIds(loadSet(`sp_favorites_${studentId}`));
     setBlacklistedSchoolIds(loadSet(`sp_blacklist_${studentId}`));
-  }, [studentId]);
+  }, [studentBootstrapReady, studentId]);
+
+  const resolvedStudentId = studentBootstrapReady ? studentId : null;
+  const resolvedStudentName = studentBootstrapReady ? studentName : null;
 
   const toggleFavorite = useCallback((schoolId: string) => {
     setFavoriteSchoolIds((prev) => {
       const next = new Set(prev);
       if (next.has(schoolId)) next.delete(schoolId);
       else next.add(schoolId);
-      if (studentId) saveSet(`sp_favorites_${studentId}`, next);
+      if (resolvedStudentId) saveSet(`sp_favorites_${resolvedStudentId}`, next);
       return next;
     });
-  }, [studentId]);
+  }, [resolvedStudentId]);
 
   const toggleBlacklist = useCallback((schoolId: string) => {
     setBlacklistedSchoolIds((prev) => {
       const next = new Set(prev);
       if (next.has(schoolId)) next.delete(schoolId);
       else next.add(schoolId);
-      if (studentId) saveSet(`sp_blacklist_${studentId}`, next);
+      if (resolvedStudentId) saveSet(`sp_blacklist_${resolvedStudentId}`, next);
       return next;
     });
-  }, [studentId]);
+  }, [resolvedStudentId]);
 
   const value = useMemo(
     () => ({
-      studentId,
+      studentId: resolvedStudentId,
       setStudentId,
       sessionId,
       setSessionId,
-      studentName,
+      clearSession,
+      studentName: resolvedStudentName,
       setStudentName,
       activeNav,
       setActiveNav,
@@ -193,7 +271,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setLocale,
       t,
     }),
-    [studentId, sessionId, studentName, activeNav, favoriteSchoolIds, blacklistedSchoolIds, toggleFavorite, toggleBlacklist, sidebarCollapsed, toggleSidebar, locale, setLocale, t],
+    [resolvedStudentId, sessionId, setStudentId, setSessionId, clearSession, resolvedStudentName, activeNav, favoriteSchoolIds, blacklistedSchoolIds, toggleFavorite, toggleBlacklist, sidebarCollapsed, toggleSidebar, locale, setLocale, t],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
@@ -203,4 +281,8 @@ export function useApp(): AppContextValue {
   const ctx = useContext(AppContext);
   if (!ctx) throw new Error('useApp must be used within AppProvider');
   return ctx;
+}
+
+export function useOptionalApp(): AppContextValue | null {
+  return useContext(AppContext);
 }
