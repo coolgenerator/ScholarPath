@@ -84,15 +84,23 @@ class TestStudentAPI:
         resp = await client.get(f"/api/students/{fake_id}")
         assert resp.status_code == 404
 
-    async def test_update_student(self, client):
+    async def test_patch_student_portfolio(self, client):
+        created = await _create_student(client)
+        resp = await client.patch(
+            f"/api/students/{created['id']}/portfolio",
+            json={"academics": {"gpa": 3.9, "sat_total": 1520}},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["academics"]["gpa"] == 3.9
+        assert resp.json()["academics"]["sat_total"] == 1520
+
+    async def test_put_student_removed(self, client):
         created = await _create_student(client)
         resp = await client.put(
             f"/api/students/{created['id']}",
-            json={"gpa": 3.9, "sat_total": 1520},
+            json={"gpa": 3.9},
         )
-        assert resp.status_code == 200
-        assert resp.json()["gpa"] == 3.9
-        assert resp.json()["sat_total"] == 1520
+        assert resp.status_code == 405
 
     async def test_delete_student(self, client):
         created = await _create_student(client)

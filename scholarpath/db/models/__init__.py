@@ -3,6 +3,20 @@
 from .base import Base, TimestampMixin, UUIDPrimaryKey
 from .career import CareerOutcomeProxy, OutcomeType
 from .causal import CausalContext, CausalGraph
+from .causal_data import (
+    AdmissionEvent,
+    CanonicalFact,
+    CausalDatasetVersion,
+    CausalFeatureSnapshot,
+    CausalModelRegistry,
+    CausalOutcomeEvent,
+    CausalShadowComparison,
+    CausalTrendSignal,
+    EvidenceArtifact,
+    FactLineage,
+    FactQuarantine,
+    SchoolExternalId,
+)
 from .conflict import Conflict, ResolutionStatus, Severity
 from .data_point import DataPoint, SourceType
 from .evaluation import SchoolEvaluation, Tier
@@ -34,6 +48,18 @@ __all__ = [
     "OutcomeType",
     "CausalGraph",
     "CausalContext",
+    "CausalFeatureSnapshot",
+    "CausalOutcomeEvent",
+    "CausalModelRegistry",
+    "CausalShadowComparison",
+    "EvidenceArtifact",
+    "SchoolExternalId",
+    "AdmissionEvent",
+    "CanonicalFact",
+    "FactLineage",
+    "FactQuarantine",
+    "CausalDatasetVersion",
+    "CausalTrendSignal",
     # Student-facing
     "SchoolEvaluation",
     "Tier",

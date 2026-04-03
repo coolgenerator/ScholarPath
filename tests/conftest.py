@@ -98,6 +98,7 @@ async def client(engine):
     from httpx import ASGITransport, AsyncClient
 
     from scholarpath.db.session import get_session
+    import scholarpath.db.session as db_session_module
     from scholarpath.main import app
 
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -126,9 +127,12 @@ async def client(engine):
 
     app.dependency_overrides[get_session] = _override_session
     app.dependency_overrides[get_embeddings] = _override_embeddings
+    # Force all runtime best-effort DB writes (e.g. usage tracker) to reuse test DB.
+    db_session_module.async_session_factory = factory
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
 
     app.dependency_overrides.clear()
+    await db_session_module.engine.dispose()

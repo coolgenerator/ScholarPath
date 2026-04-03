@@ -9,6 +9,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from scholarpath.language import detect_response_language, select_localized_text
 from scholarpath.chat.memory import ChatMemory
 from scholarpath.llm.client import LLMClient
 from scholarpath.services.recommendation_service import generate_recommendations
@@ -20,6 +21,7 @@ async def handle_recommendation(
     llm: LLMClient,
     session: AsyncSession,
     memory: ChatMemory,
+    session_id: str,
     student_id: uuid.UUID,
     message: str,
 ) -> str:
@@ -49,16 +51,25 @@ async def handle_recommendation(
     str
         Formatted recommendation response.
     """
-    session_id = str(student_id)
+    response_lang = detect_response_language(message)
 
     try:
-        results = await generate_recommendations(session, llm, student_id)
+        results = await generate_recommendations(
+            session,
+            llm,
+            student_id,
+            response_language=response_lang,
+        )
     except Exception:
         logger.exception("Recommendation generation failed for student %s", student_id)
-        return (
-            "I'm sorry, I wasn't able to generate recommendations right now. "
-            "Could you make sure your profile is complete and try again? "
-            "抱歉，暂时无法生成推荐。请确认你的资料已填写完整后重试。"
+        return select_localized_text(
+            "抱歉，我现在还没法生成推荐。请先确认你的档案已经填写完整，然后再试一次。",
+            "I'm sorry, I wasn't able to generate recommendations right now. Could you make sure your profile is complete and try again?",
+            response_lang,
+            mixed=(
+                "抱歉，我现在还没法生成推荐。请先确认你的档案已经填写完整，然后再试一次。\n"
+                "I'm sorry, I wasn't able to generate recommendations right now."
+            ),
         )
 
     schools = results.get("schools", [])
@@ -66,10 +77,14 @@ async def handle_recommendation(
     narrative = results.get("narrative", "")
 
     if not schools:
-        return (
-            "I couldn't find matching schools based on your profile. "
-            "Let me know if you'd like to adjust your preferences. "
-            "没有找到匹配的学校，要不要调整一下你的偏好？"
+        return select_localized_text(
+            "我暂时没有找到和你档案匹配的学校。要不要我们一起调整一下偏好？",
+            "I couldn't find matching schools based on your profile. Let me know if you'd like to adjust your preferences.",
+            response_lang,
+            mixed=(
+                "我暂时没有找到和你档案匹配的学校。要不要我们一起调整一下偏好？\n"
+                "I couldn't find matching schools based on your profile."
+            ),
         )
 
     # Save context for follow-up
@@ -127,11 +142,14 @@ async def handle_recommendation(
     }
 
     # Short text summary + structured data marker
-    context = await memory.get_context(session_id)
-    lang = context.get("user_language", "en")
-    if lang == "zh":
-        summary = f"基于你的背景分析，我为你推荐了 {len(schools)} 所学校。"
-    else:
-        summary = f"Based on your profile, I've recommended {len(schools)} schools for you."
+    summary = select_localized_text(
+        f"基于你的背景分析，我为你推荐了 {len(schools)} 所学校。",
+        f"Based on your profile, I've recommended {len(schools)} schools for you.",
+        response_lang,
+        mixed=(
+            f"基于你的背景分析，我为你推荐了 {len(schools)} 所学校。\n"
+            f"Based on your profile, I've recommended {len(schools)} schools for you."
+        ),
+    )
 
     return f"{summary}\n[RECOMMENDATION]{json.dumps(recommendation_data, ensure_ascii=False)}"

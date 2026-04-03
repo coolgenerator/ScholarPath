@@ -30,8 +30,11 @@ from scholarpath.search.field_planner import FieldCoveragePlanner, SourcePlan
 from scholarpath.search.source_value import SourceValueInput, SourceValueScorer
 from scholarpath.search.sources.base import BaseSource, SearchResult
 from scholarpath.search.sources.college_scorecard import CollegeScorecardSource
+from scholarpath.search.sources.cds_parser import CommonDataSetSource
+from scholarpath.search.sources.ipeds_college_navigator import IPEDSCollegeNavigatorSource
 from scholarpath.search.sources.internal_web_search import InternalWebSearchSource
 from scholarpath.search.sources.niche import NicheSource
+from scholarpath.search.sources.school_official_profile import SchoolOfficialProfileSource
 from scholarpath.search.sources.ugc import UGCSource
 from scholarpath.search.sources.web_search import WebSearchSource
 
@@ -84,6 +87,8 @@ class DeepSearchOrchestrator:
         scorecard_api_key: str | None = None,
         search_api_url: str = "",
         search_api_key: str = "",
+        school_profile_search_api_url: str = "",
+        school_profile_search_api_key: str = "",
         on_progress: ProgressCallback | None = None,
         school_concurrency: int = 4,
         source_http_concurrency: int = 8,
@@ -106,6 +111,32 @@ class DeepSearchOrchestrator:
                 "niche": NicheSource(),
                 "ugc": UGCSource(),
             }
+            ipeds_url = ""
+            ipeds_path = ""
+            try:
+                from scholarpath.config import settings
+
+                ipeds_url = (settings.IPEDS_DATASET_URL or "").strip()
+                ipeds_path = (settings.IPEDS_DATASET_PATH or "").strip()
+            except Exception:
+                ipeds_url = ""
+                ipeds_path = ""
+            if ipeds_url or ipeds_path:
+                self._sources["ipeds_college_navigator"] = IPEDSCollegeNavigatorSource(
+                    dataset_url=ipeds_url,
+                    dataset_path=ipeds_path,
+                )
+            profile_url = school_profile_search_api_url or search_api_url
+            profile_key = school_profile_search_api_key or search_api_key
+            if profile_url:
+                self._sources["school_official_profile"] = SchoolOfficialProfileSource(
+                    search_api_url=profile_url,
+                    search_api_key=profile_key,
+                )
+                self._sources["cds_parser"] = CommonDataSetSource(
+                    search_api_url=profile_url,
+                    search_api_key=profile_key,
+                )
             if search_api_url:
                 self._sources["web_search"] = WebSearchSource(
                     search_api_url=search_api_url,

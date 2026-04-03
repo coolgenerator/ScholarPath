@@ -7,6 +7,7 @@ import logging
 import uuid
 from typing import Any
 
+from scholarpath.language import ResponseLanguage, language_instruction
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -20,6 +21,10 @@ from scholarpath.llm.prompts import (
     STRATEGY_ADVICE_PROMPT,
     format_school_evaluation,
     format_strategy_advice,
+)
+from scholarpath.services.portfolio_service import (
+    get_student_canonical_preferences,
+    get_student_sat_equivalent,
 )
 from scholarpath.services.student_service import get_student
 
@@ -200,6 +205,7 @@ async def generate_strategy(
     session: AsyncSession,
     llm: LLMClient,
     student_id: uuid.UUID,
+    response_language: ResponseLanguage = "en",
 ) -> dict[str, Any]:
     """Generate an ED/EA/RD application strategy recommendation.
 
@@ -259,7 +265,13 @@ async def generate_strategy(
     user_prompt = format_strategy_advice(student_profile_data, tiered_schools_data)
 
     messages = [
-        {"role": "system", "content": STRATEGY_ADVICE_PROMPT},
+        {
+            "role": "system",
+            "content": (
+                f"{STRATEGY_ADVICE_PROMPT.strip()}\n\n"
+                f"Additional language rule: {language_instruction(response_language)}"
+            ),
+        },
         {"role": "user", "content": user_prompt},
     ]
 
@@ -344,18 +356,37 @@ def _compute_life_fit(student: Student, school: School) -> float:
     """Score life fit (0-1): location, campus, community preferences."""
     score = 0.5
 
-    prefs = student.preferences or {}
-    # Location preference match
-    if pref_location := prefs.get("location"):
-        if school.state and pref_location.lower() in school.state.lower():
-            score += 0.2
-        elif school.city and pref_location.lower() in school.city.lower():
-            score += 0.2
+    prefs = get_student_canonical_preferences(student)
+    raw_locations = prefs.get("location")
+    locations: list[str]
+    if isinstance(raw_locations, list):
+        locations = [str(v).lower() for v in raw_locations if str(v).strip()]
+    elif isinstance(raw_locations, str):
+        locations = [raw_locations.lower()]
+    else:
+        locations = []
 
-    # Size preference
-    if pref_size := prefs.get("size"):
-        if school.size_category and pref_size.lower() in school.size_category.lower():
+    for location in locations:
+        if school.state and location in school.state.lower():
+            score += 0.2
+            break
+        if school.city and location in school.city.lower():
+            score += 0.2
+            break
+
+    raw_sizes = prefs.get("size")
+    sizes: list[str]
+    if isinstance(raw_sizes, list):
+        sizes = [str(v).lower() for v in raw_sizes if str(v).strip()]
+    elif isinstance(raw_sizes, str):
+        sizes = [raw_sizes.lower()]
+    else:
+        sizes = []
+
+    for size in sizes:
+        if school.size_category and size in school.size_category.lower():
             score += 0.15
+            break
 
     return max(0.0, min(1.0, score))
 
@@ -366,7 +397,7 @@ def _estimate_admission_probability(student: Student, school: School) -> float:
         builder = AdmissionDAGBuilder()
         student_profile = {
             "gpa": student.gpa,
-            "sat": student.sat_total or 1100,
+            "sat": get_student_sat_equivalent(student),
         }
         school_data: dict[str, Any] = {}
         if school.acceptance_rate is not None:

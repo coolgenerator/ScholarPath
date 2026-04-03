@@ -23,6 +23,10 @@ from scholarpath.exceptions import ScholarPathError
 from scholarpath.llm.client import LLMClient
 from scholarpath.llm.prompts import GO_NO_GO_PROMPT, format_go_no_go
 from scholarpath.services.evaluation_service import evaluate_school_fit
+from scholarpath.services.portfolio_service import (
+    get_student_canonical_preferences,
+    get_student_sat_equivalent,
+)
 from scholarpath.services.simulation_service import run_what_if
 from scholarpath.services.student_service import get_student
 
@@ -106,7 +110,7 @@ async def generate_go_no_go(
     # --- Step 5: Go/No-Go score ---
     builder = AdmissionDAGBuilder()
     propagator = NoisyORPropagator()
-    student_profile = {"gpa": student.gpa, "sat": student.sat_total or 1100}
+    student_profile = {"gpa": student.gpa, "sat": get_student_sat_equivalent(student)}
     school_data: dict[str, Any] = {}
     if school.acceptance_rate is not None:
         school_data["acceptance_rate"] = school.acceptance_rate
@@ -144,6 +148,7 @@ async def generate_go_no_go(
         "merit_scholarship": offer.merit_scholarship,
         "honors_program": offer.honors_program,
         "decision_deadline": str(offer.decision_deadline) if offer.decision_deadline else None,
+        "preferences": get_student_canonical_preferences(student),
     }
     fit_scores = {
         "academic_fit": academic_score,

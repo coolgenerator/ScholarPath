@@ -15,6 +15,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from scholarpath.language import (
+    ResponseLanguage,
+    language_instruction,
+    select_localized_text,
+)
 from scholarpath.causal import (
     AdmissionDAGBuilder,
     GoNoGoScorer,
@@ -24,6 +29,10 @@ from scholarpath.causal import (
 from scholarpath.db.models import School, SchoolEvaluation, Tier
 from scholarpath.llm.client import LLMClient
 from scholarpath.llm.embeddings import get_embedding_service
+from scholarpath.services.portfolio_service import (
+    get_student_canonical_preferences,
+    get_student_sat_equivalent,
+)
 from scholarpath.services.student_service import get_student
 
 logger = logging.getLogger(__name__)
@@ -49,6 +58,7 @@ async def generate_recommendations(
     session: AsyncSession,
     llm: LLMClient,
     student_id: uuid.UUID,
+    response_language: ResponseLanguage = "en",
 ) -> dict[str, Any]:
     """Generate personalized school recommendations using causal engine + vector similarity.
 
@@ -70,7 +80,7 @@ async def generate_recommendations(
         - ``narrative``: natural language summary
     """
     student = await get_student(session, student_id)
-    preferences = student.preferences or {}
+    preferences = get_student_canonical_preferences(student)
 
     # ------------------------------------------------------------------
     # Step 1: Vector similarity search for candidate schools
@@ -123,7 +133,7 @@ async def generate_recommendations(
 
     student_profile_for_dag = {
         "gpa": student.gpa or 3.0,
-        "sat": student.sat_total or 1100,
+        "sat": get_student_sat_equivalent(student),
     }
     if student.budget_usd:
         student_profile_for_dag["family_income"] = student.budget_usd * 2  # rough proxy
@@ -193,7 +203,13 @@ async def generate_recommendations(
     # ------------------------------------------------------------------
     # Step 5: Generate LLM narrative summary
     # ------------------------------------------------------------------
-    narrative = await _generate_narrative(llm, student, school_results, strategy)
+    narrative = await _generate_narrative(
+        llm,
+        student,
+        school_results,
+        strategy,
+        response_language=response_language,
+    )
 
     return {
         "schools": school_results,
@@ -322,7 +338,7 @@ def _adjust_weights_for_preferences(preferences: dict[str, Any]) -> dict[str, fl
             weights["career"] = 0.35
             weights["academic"] = 0.20
 
-    if preferences.get("location_preference") or preferences.get("campus_culture"):
+    if preferences.get("location") or preferences.get("culture"):
         weights["life"] = 0.25
         # Rebalance
         total = sum(weights.values())
@@ -356,7 +372,7 @@ def _build_strategy(
     ed_candidates.sort(key=lambda x: x["overall_score"], reverse=True)
 
     # Check if student has an ED preference
-    ed_pref = preferences.get("ed_strategy") or student.ed_preference
+    ed_pref = student.ed_preference
     if ed_pref and isinstance(ed_pref, str) and "no" not in ed_pref.lower():
         if ed_candidates:
             strategy["ed_recommendation"] = {
@@ -393,6 +409,7 @@ async def _generate_narrative(
     student: Any,
     school_results: list[dict[str, Any]],
     strategy: dict[str, Any],
+    response_language: ResponseLanguage = "en",
 ) -> str:
     """Generate a natural language summary of the recommendations."""
     # Build a concise summary for the LLM
@@ -421,9 +438,8 @@ async def _generate_narrative(
                 "brief, encouraging narrative summary (2-3 paragraphs) of the "
                 "student's school recommendations. Mention the tier distribution, "
                 "highlight 2-3 standout matches, and summarize the application "
-                "strategy. Be warm but data-driven. The student may be Chinese -- "
-                "respond in the same language they used previously, or default to "
-                "English with Chinese school names in parentheses if available."
+                "strategy. Be warm but data-driven. "
+                f"{language_instruction(response_language)}"
             ),
         },
         {
@@ -450,8 +466,21 @@ async def _generate_narrative(
         target = sum(1 for s in school_results if s["tier"] == "target")
         safety = sum(1 for s in school_results if s["tier"] == "safety")
         likely = sum(1 for s in school_results if s["tier"] == "likely")
-        return (
-            f"Based on your profile, I've identified {len(school_results)} schools: "
-            f"{reach} reach, {target} target, {safety} safety, and {likely} likely. "
-            f"Your top match is {school_results[0]['school_name'] if school_results else 'N/A'}."
+        top_match = school_results[0]["school_name"] if school_results else "N/A"
+        return select_localized_text(
+            (
+                f"基于你的档案，我筛出了 {len(school_results)} 所学校："
+                f"{reach} 所冲刺、{target} 所主申、{safety} 所保底、{likely} 所较稳。"
+                f"当前最匹配的是 {top_match}。"
+            ),
+            (
+                f"Based on your profile, I've identified {len(school_results)} schools: "
+                f"{reach} reach, {target} target, {safety} safety, and {likely} likely. "
+                f"Your top match is {top_match}."
+            ),
+            response_language,
+            mixed=(
+                f"基于你的档案，我筛出了 {len(school_results)} 所学校，当前最匹配的是 {top_match}。\n"
+                f"Based on your profile, I've identified {len(school_results)} schools. Your top match is {top_match}."
+            ),
         )

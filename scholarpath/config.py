@@ -40,6 +40,17 @@ class Settings(BaseSettings):
     WEB_SEARCH_API_URL: str = ""
     WEB_SEARCH_API_KEY: str = ""
     SCORECARD_API_KEY: str = ""
+    SCHOOL_PROFILE_SEARCH_API_URL: str = ""
+    SCHOOL_PROFILE_SEARCH_API_KEY: str = ""
+    IPEDS_DATASET_URL: str = ""
+    IPEDS_DATASET_PATH: str = ""
+    COMMON_APP_TREND_URL: str = ""
+    COMMON_APP_TREND_PATH: str = ""
+
+    # Causal runtime/training
+    CAUSAL_ENGINE_MODE: str = "shadow"  # legacy | pywhy | shadow
+    CAUSAL_PYWHY_PRIMARY_PERCENT: int = 100
+    CAUSAL_CLEAN_MAX_RPM_TOTAL: int = 180
 
     # Google Gemini Embedding
     GOOGLE_API_KEY: str = ""

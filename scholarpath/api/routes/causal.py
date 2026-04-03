@@ -7,8 +7,11 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy import select
 
 from scholarpath.api.deps import SessionDep
+from scholarpath.api.models.causal_data import CausalDatasetVersionResponse
+from scholarpath.db.models import CausalDatasetVersion
 from scholarpath.db.models.student import Student
 from scholarpath.db.models.school import School
 
@@ -61,3 +64,19 @@ async def get_causal_dag(
     dag = propagator.propagate(dag)
 
     return graph_to_cytoscape(dag)
+
+
+@router.get(
+    "/datasets/{version}",
+    response_model=CausalDatasetVersionResponse,
+)
+async def get_causal_dataset_version(version: str, session: SessionDep) -> CausalDatasetVersion:
+    row = await session.scalar(
+        select(CausalDatasetVersion).where(CausalDatasetVersion.version == version),
+    )
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Dataset version '{version}' not found",
+        )
+    return row

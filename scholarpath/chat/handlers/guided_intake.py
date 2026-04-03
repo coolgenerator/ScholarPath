@@ -14,9 +14,15 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from scholarpath.language import (
+    ResponseLanguage,
+    detect_response_language,
+    select_localized_text,
+)
 from scholarpath.chat.memory import ChatMemory
 from scholarpath.llm.client import LLMClient
-from scholarpath.services.student_service import get_student, update_student
+from scholarpath.services.portfolio_service import apply_portfolio_patch
+from scholarpath.services.student_service import get_student
 
 logger = logging.getLogger(__name__)
 
@@ -285,18 +291,17 @@ IMPORTANT:
 - If a field is not mentioned, set it to null.
 - Respond ONLY with valid JSON -- no markdown fences, no commentary.
 - The user may write in Chinese or English. Preserve values in the original language.
-- Detect the user's language and set "user_language" to "zh" or "en".
-- Numeric fields (gpa, sat_total, toefl_total, budget_usd) must be numbers or null.
+- Numeric fields (gpa, sat_total, act_composite, toefl_total, budget_usd) must be numbers or null.
 - For budget: convert to annual USD integer (e.g. "60k" -> 60000, "5万美金" -> 50000).
 - For need_financial_aid: boolean or null.
 - List fields must be JSON arrays.
 
 Output schema:
 {
-  "user_language": <"zh" | "en">,
   "gpa": <number | null>,
   "gpa_scale": <string | null>,
   "sat_total": <number | null>,
+  "act_composite": <number | null>,
   "toefl_total": <number | null>,
   "curriculum_type": <string | null>,
   "ap_courses": <[string] | null>,
@@ -304,15 +309,15 @@ Output schema:
   "career_goal": <string | null>,
   "extracurriculars": <[string or object] | null>,
   "awards": <[string or object] | null>,
-  "location_preference": <string | null>,
-  "campus_culture": <string | null>,
+  "location": <[string] | string | null>,
+  "culture": <[string] | string | null>,
   "budget_usd": <number | null>,
   "need_financial_aid": <boolean | null>,
-  "school_size_preference": <string | null>,
+  "financial_aid_type": <"need_based" | "merit" | "both" | "no" | null>,
+  "size": <[string] | string | null>,
   "research_vs_teaching": <string | null>,
   "target_schools": <[string] | null>,
   "ed_preference": <string | null>,
-  "ed_strategy": <string | null>,
   "completed_step_ids": <[string]>
 }
 
@@ -341,41 +346,46 @@ def _format_extraction_prompt(
 # Field mapping from LLM output to Student model
 # ---------------------------------------------------------------------------
 
-_DIRECT_FIELD_MAP: dict[str, str] = {
-    "gpa": "gpa",
-    "gpa_scale": "gpa_scale",
-    "sat_total": "sat_total",
-    "toefl_total": "toefl_total",
-    "curriculum_type": "curriculum_type",
-    "ap_courses": "ap_courses",
-    "intended_majors": "intended_majors",
-    "extracurriculars": "extracurriculars",
-    "awards": "awards",
-    "budget_usd": "budget_usd",
-    "need_financial_aid": "need_financial_aid",
-    "ed_preference": "ed_preference",
+_DIRECT_FIELD_MAP: dict[str, tuple[str, str]] = {
+    "gpa": ("academics", "gpa"),
+    "gpa_scale": ("academics", "gpa_scale"),
+    "sat_total": ("academics", "sat_total"),
+    "act_composite": ("academics", "act_composite"),
+    "toefl_total": ("academics", "toefl_total"),
+    "curriculum_type": ("academics", "curriculum_type"),
+    "ap_courses": ("academics", "ap_courses"),
+    "intended_majors": ("academics", "intended_majors"),
+    "extracurriculars": ("activities", "extracurriculars"),
+    "awards": ("activities", "awards"),
+    "budget_usd": ("finance", "budget_usd"),
+    "need_financial_aid": ("finance", "need_financial_aid"),
+    "ed_preference": ("strategy", "ed_preference"),
 }
 
 # Keys stored into Student.preferences JSON dict
 _PREFERENCE_KEYS = [
+    "interests",
+    "risk_preference",
+    "cost_priority",
+    "location",
+    "size",
+    "culture",
     "career_goal",
-    "location_preference",
-    "campus_culture",
-    "school_size_preference",
+    "financial_aid_type",
     "research_vs_teaching",
     "target_schools",
-    "ed_strategy",
+    "ui_preference_tags",
 ]
 
 # Map step IDs to the fields they cover for skip detection
 _STEP_REQUIRED_FIELDS: dict[str, list[str]] = {
-    "academics": ["gpa", "sat_total"],
-    "major_career": ["intended_majors"],
-    "activities": ["extracurriculars"],
-    "location_culture": ["location_preference"],
+    "academics": ["gpa", "sat_total", "act_composite"],
+    "major_career": ["intended_majors", "career_goal"],
+    "activities": ["extracurriculars", "awards"],
+    "location_culture": ["location", "location_preference", "culture", "campus_culture"],
     "financial": ["budget_usd"],
-    "school_preferences": ["school_size_preference"],
-    "strategy": ["ed_preference", "ed_strategy"],
+    "school_preferences": ["size", "school_size_preference", "research_vs_teaching", "target_schools"],
+    "strategy": ["ed_preference"],
 }
 
 
@@ -387,6 +397,7 @@ async def handle_guided_intake(
     llm: LLMClient,
     session: AsyncSession,
     memory: ChatMemory,
+    session_id: str,
     student_id: uuid.UUID,
     message: str,
 ) -> str:
@@ -418,7 +429,7 @@ async def handle_guided_intake(
         Response text. If all steps are done the response starts with
         ``[INTAKE_COMPLETE]`` so the agent can detect completion.
     """
-    session_id = str(student_id)
+    response_lang = detect_response_language(message)
 
     # --- Determine current step ---
     context = await memory.get_context(session_id)
@@ -454,63 +465,65 @@ async def handle_guided_intake(
         )
     except Exception:
         logger.warning("Guided intake extraction failed", exc_info=True)
-        return "I had trouble understanding that. Could you try again?"
+        return select_localized_text(
+            "我刚才没完全理解你的意思，可以换种说法再试一次吗？",
+            "I had trouble understanding that. Could you try again?",
+            response_lang,
+            mixed="我刚才没完全理解你的意思，可以换种说法再试一次吗？\nI had trouble understanding that. Could you try again?",
+        )
 
-    # Detect user language from extraction result
-    user_lang = extracted.get("user_language", "en")
-    if user_lang not in ("zh", "en"):
-        user_lang = "en"
-    await memory.save_context(session_id, "user_language", user_lang)
-
-    # --- Update Student model with extracted direct fields ---
-    update_data: dict[str, Any] = {}
-    for llm_key, model_key in _DIRECT_FIELD_MAP.items():
+    # --- Update student portfolio with grouped patch contract ---
+    portfolio_patch: dict[str, Any] = {}
+    for llm_key, (group_key, field_key) in _DIRECT_FIELD_MAP.items():
         value = extracted.get(llm_key)
         if value is not None:
             # Coerce budget to int
             if llm_key == "budget_usd" and isinstance(value, str):
                 parsed = _parse_budget(value)
                 if parsed is not None:
-                    update_data[model_key] = parsed
+                    portfolio_patch.setdefault(group_key, {})[field_key] = parsed
             else:
-                update_data[model_key] = value
+                portfolio_patch.setdefault(group_key, {})[field_key] = value
 
-    # --- Update preferences dict ---
-    student = await get_student(session, student_id)
-    preferences = dict(student.preferences or {})
-    prefs_changed = False
+    need_aid, financial_aid_type = _normalize_financial_aid(
+        extracted.get("need_financial_aid"),
+        extracted.get("financial_aid_type", extracted.get("financial_aid")),
+    )
+    if need_aid is not None:
+        portfolio_patch.setdefault("finance", {})["need_financial_aid"] = need_aid
+
+    # --- Update canonical preference keys ---
+    preferences_patch: dict[str, Any] = {}
     for pkey in _PREFERENCE_KEYS:
-        value = extracted.get(pkey)
+        value = _extract_preference_value(extracted, pkey)
         if value is not None:
-            preferences[pkey] = value
-            prefs_changed = True
+            if pkey in {"interests", "location", "size", "culture", "target_schools", "ui_preference_tags"}:
+                value = _as_string_list(value)
+            preferences_patch[pkey] = value
 
-    if prefs_changed:
-        update_data["preferences"] = preferences
+    if financial_aid_type is not None:
+        preferences_patch["financial_aid_type"] = financial_aid_type
 
-    if update_data:
-        student = await update_student(session, student_id, update_data)
-        await memory.save_context(session_id, "last_extracted", update_data)
+    if preferences_patch:
+        portfolio_patch["preferences"] = preferences_patch
+
+    if portfolio_patch:
+        await apply_portfolio_patch(session, student_id, portfolio_patch)
+        await memory.save_context(session_id, "last_extracted", portfolio_patch)
+
+    student = await get_student(session, student_id)
 
     # --- Determine which steps to skip ---
     completed_step_ids: list[str] = extracted.get("completed_step_ids", [])
     if not isinstance(completed_step_ids, list):
         completed_step_ids = []
-
-    # Always mark current step as completed
-    if current_step["id"] not in completed_step_ids:
-        completed_step_ids.append(current_step["id"])
+    completed_step_ids = [sid for sid in completed_step_ids if isinstance(sid, str)]
 
     # Also check if extracted data covers other steps
-    for sid, required_fields in _STEP_REQUIRED_FIELDS.items():
+    for sid in _STEP_REQUIRED_FIELDS:
         if sid in completed_step_ids:
             continue
-        has_any = False
-        for rf in required_fields:
-            if extracted.get(rf) is not None:
-                has_any = True
-                break
-        if has_any:
+        if _step_is_satisfied(sid, extracted):
             completed_step_ids.append(sid)
 
     # Track all completed steps persistently
@@ -548,15 +561,14 @@ async def handle_guided_intake(
         except Exception:
             logger.warning("Failed to embed profile on intake completion", exc_info=True)
 
-        if user_lang == "zh":
-            return (
-                "[INTAKE_COMPLETE]"
-                "太好了，信息已经收集完毕！让我为你生成个性化的学校推荐..."
-            )
-        return (
-            "[INTAKE_COMPLETE]"
-            "Great, I have all the information I need! "
-            "Let me generate your personalized school recommendations now..."
+        return "[INTAKE_COMPLETE]" + select_localized_text(
+            "太好了，信息已经收集完毕！让我为你生成个性化的学校推荐...",
+            "Great, I have all the information I need! Let me generate your personalized school recommendations now...",
+            response_lang,
+            mixed=(
+                "太好了，信息已经收集完毕！让我为你生成个性化的学校推荐...\n"
+                "Great, I have all the information I need. Let me generate your personalized school recommendations now..."
+            ),
         )
 
     # Advance to next step
@@ -564,16 +576,15 @@ async def handle_guided_intake(
     next_step = INTAKE_STEPS[next_step_index]
 
     # Build a friendly response acknowledging what was captured
-    ack = _build_acknowledgment(extracted, current_step, user_lang)
+    ack = _build_acknowledgment(extracted, current_step, response_lang)
 
     # Ask the next question in the user's language
-    q_key = "question_zh" if user_lang == "zh" else "question_en"
-    response_text = f"{ack}\n{next_step[q_key]}"
+    response_text = f"{ack}\n{_localize_step_question(next_step, response_lang)}"
 
     # Attach structured options if the next step has them
     step_opts = STEP_OPTIONS.get(next_step["id"])
     if step_opts is not None:
-        localized_questions = _localize_step_options(step_opts, user_lang)
+        localized_questions = _localize_step_options(step_opts, response_lang)
         options_json = json.dumps(localized_questions, ensure_ascii=False)
         response_text += f"\n[GUIDED_OPTIONS]{options_json}"
 
@@ -585,11 +596,99 @@ async def handle_guided_intake(
 # ---------------------------------------------------------------------------
 
 
+def _has_value(value: Any) -> bool:
+    """Return whether a value should count as provided in intake."""
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, dict)):
+        return len(value) > 0
+    return True
+
+
+def _as_string_list(value: Any) -> list[str] | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        stripped = value.strip()
+        return [stripped] if stripped else None
+    if isinstance(value, list):
+        items = [str(v).strip() for v in value if str(v).strip()]
+        return items or None
+    return None
+
+
+def _extract_preference_value(extracted: dict[str, Any], key: str) -> Any:
+    if key in extracted:
+        return extracted.get(key)
+
+    alias_map = {
+        "location": "location_preference",
+        "size": "school_size_preference",
+        "culture": "campus_culture",
+    }
+    alias = alias_map.get(key)
+    if alias:
+        return extracted.get(alias)
+    return None
+
+
+def _step_is_satisfied(step_id: str, extracted: dict[str, Any]) -> bool:
+    """Check if extracted values satisfy a given intake step."""
+    if step_id == "academics":
+        has_gpa = _has_value(extracted.get("gpa"))
+        has_test = _has_value(extracted.get("sat_total")) or _has_value(
+            extracted.get("act_composite")
+        )
+        return has_gpa and has_test
+
+    required_fields = _STEP_REQUIRED_FIELDS.get(step_id, [])
+    if not required_fields:
+        return False
+    return any(_has_value(extracted.get(rf)) for rf in required_fields)
+
+
+def _normalize_financial_aid(
+    raw_need_financial_aid: Any,
+    raw_financial_aid_type: Any,
+) -> tuple[bool | None, str | None]:
+    """Normalize financial-aid signals into bool + canonical type."""
+    canonical_type: str | None = None
+
+    if isinstance(raw_financial_aid_type, str):
+        normalized = raw_financial_aid_type.strip().lower()
+        if normalized in {"need_based", "need-based", "need"}:
+            canonical_type = "need_based"
+        elif normalized in {"merit", "scholarship"}:
+            canonical_type = "merit"
+        elif normalized in {"both", "all"}:
+            canonical_type = "both"
+        elif normalized in {"no", "none", "not_needed", "self_fund"}:
+            canonical_type = "no"
+
+    if canonical_type is None and isinstance(raw_need_financial_aid, bool):
+        canonical_type = "need_based" if raw_need_financial_aid else "no"
+
+    need_financial_aid: bool | None = None
+    if canonical_type in {"need_based", "merit", "both"}:
+        need_financial_aid = True
+    elif canonical_type == "no":
+        need_financial_aid = False
+    elif isinstance(raw_need_financial_aid, bool):
+        need_financial_aid = raw_need_financial_aid
+
+    return need_financial_aid, canonical_type
+
+
 def _find_next_step(
     current_index: int,
     completed_ids: list[str],
 ) -> int | None:
     """Find the next uncompleted step index, or None if all done."""
+    if INTAKE_STEPS[current_index]["id"] not in completed_ids:
+        return current_index
+
     # First, look forward from current position
     for i in range(current_index + 1, len(INTAKE_STEPS)):
         if INTAKE_STEPS[i]["id"] not in completed_ids:
@@ -601,7 +700,11 @@ def _find_next_step(
     return None
 
 
-def _build_acknowledgment(extracted: dict[str, Any], step: dict[str, Any], lang: str = "en") -> str:
+def _build_acknowledgment(
+    extracted: dict[str, Any],
+    step: dict[str, Any],
+    lang: ResponseLanguage = "en",
+) -> str:
     """Build a short acknowledgment of what was captured."""
     parts: list[str] = []
 
@@ -609,38 +712,71 @@ def _build_acknowledgment(extracted: dict[str, Any], step: dict[str, Any], lang:
         parts.append(f"GPA: {extracted['gpa']}")
     if extracted.get("sat_total") is not None:
         parts.append(f"SAT: {extracted['sat_total']}")
+    if extracted.get("act_composite") is not None:
+        parts.append(f"ACT: {extracted['act_composite']}")
     if extracted.get("toefl_total") is not None:
         parts.append(f"TOEFL: {extracted['toefl_total']}")
     if extracted.get("intended_majors"):
         majors = extracted["intended_majors"]
         if isinstance(majors, list):
-            label = "专业" if lang == "zh" else "Majors"
+            label = select_localized_text("专业", "Majors", lang, mixed="专业 / Majors")
             parts.append(f"{label}: {', '.join(str(m) for m in majors)}")
     if extracted.get("budget_usd") is not None:
         budget = extracted["budget_usd"]
-        label = "预算" if lang == "zh" else "Budget"
+        label = select_localized_text("预算", "Budget", lang, mixed="预算 / Budget")
         parts.append(f"{label}: ${budget:,}/yr")
     if extracted.get("career_goal"):
-        label = "职业目标" if lang == "zh" else "Career goal"
+        label = select_localized_text("职业目标", "Career goal", lang, mixed="职业目标 / Career goal")
         parts.append(f"{label}: {extracted['career_goal']}")
 
     if parts:
-        prefix = "收到！已记录: " if lang == "zh" else "Got it! I've noted: "
+        prefix = select_localized_text(
+            "收到！已记录: ",
+            "Got it! I've noted: ",
+            lang,
+            mixed="收到！已记录 / Got it: ",
+        )
         return prefix + "; ".join(parts) + "."
-    return "谢谢分享！" if lang == "zh" else "Thanks for sharing!"
+    return select_localized_text(
+        "谢谢分享！",
+        "Thanks for sharing!",
+        lang,
+        mixed="谢谢分享！ / Thanks for sharing!",
+    )
 
 
-def _localize_step_options(step_opts: dict[str, Any], lang: str) -> dict[str, Any]:
+def _localize_step_question(step: dict[str, Any], lang: ResponseLanguage) -> str:
+    return select_localized_text(
+        step["question_zh"],
+        step["question_en"],
+        lang,
+        mixed=f"{step['question_zh']}\n{step['question_en']}",
+    )
+
+
+def _localize_step_options(step_opts: dict[str, Any], lang: ResponseLanguage) -> dict[str, Any]:
     """Localize step option titles and placeholders for the user's language."""
-    suffix = "_zh" if lang == "zh" else "_en"
     result_questions: list[dict[str, Any]] = []
     for q in step_opts["questions"]:
         localized_q: dict[str, Any] = {
             "id": q["id"],
-            "title": q.get(f"title{suffix}", q.get("title_en", "")),
+            "title": select_localized_text(
+                q.get("title_zh", q.get("title_en", "")),
+                q.get("title_en", ""),
+                lang,
+                mixed=f"{q.get('title_zh', q.get('title_en', ''))} / {q.get('title_en', '')}",
+            ),
             "options": q.get("options", []),
             "allow_custom": q.get("allow_custom", True),
-            "custom_placeholder": q.get(f"custom_placeholder{suffix}", q.get("custom_placeholder_en", "")),
+            "custom_placeholder": select_localized_text(
+                q.get("custom_placeholder_zh", q.get("custom_placeholder_en", "")),
+                q.get("custom_placeholder_en", ""),
+                lang,
+                mixed=(
+                    f"{q.get('custom_placeholder_zh', q.get('custom_placeholder_en', ''))} / "
+                    f"{q.get('custom_placeholder_en', '')}"
+                ),
+            ),
             "multi_select": q.get("multi_select", False),
         }
         result_questions.append(localized_q)

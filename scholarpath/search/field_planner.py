@@ -18,6 +18,15 @@ _OFFICIAL_FIELDS = {
     "intl_student_pct",
     "city",
     "state",
+    "applicants_total",
+    "admitted_total",
+    "enrolled_total",
+    "yield_rate",
+    "act_25",
+    "act_75",
+    "act_mid",
+    "application_deadline",
+    "application_fee",
 }
 
 _GRADE_FIELDS = {
@@ -31,6 +40,50 @@ _GRADE_FIELDS = {
 _UGC_FIELDS = {
     "admission_experience",
     "campus_life_review",
+}
+
+_OFFICIAL_PROFILE_FIELDS = {
+    "applicants_total",
+    "admitted_total",
+    "enrolled_total",
+    "yield_rate",
+    "application_deadline",
+    "application_fee",
+}
+
+_IPEDS_FIELDS = {
+    "applicants_total",
+    "admitted_total",
+    "enrolled_total",
+    "yield_rate",
+    "acceptance_rate",
+    "sat_25",
+    "sat_75",
+    "act_25",
+    "act_75",
+    "tuition_out_of_state",
+    "avg_net_price",
+    "graduation_rate_4yr",
+    "retention_rate",
+    "enrollment",
+    "city",
+    "state",
+    "website_url",
+}
+
+_CDS_FIELDS = {
+    "acceptance_rate",
+    "applicants_total",
+    "admitted_total",
+    "enrolled_total",
+    "yield_rate",
+    "sat_math_25",
+    "sat_math_75",
+    "sat_reading_25",
+    "sat_reading_75",
+    "act_25",
+    "act_75",
+    "act_mid",
 }
 
 
@@ -70,6 +123,39 @@ class FieldCoveragePlanner:
                 )
                 assigned.update(official)
 
+            ipeds_fields = sorted((missing - assigned) & _IPEDS_FIELDS)
+            if ipeds_fields and "ipeds_college_navigator" in available_sources:
+                school_plans.append(
+                    SourcePlan(
+                        school_name=school,
+                        source_name="ipeds_college_navigator",
+                        fields=ipeds_fields,
+                    )
+                )
+                assigned.update(ipeds_fields)
+
+            official_profile = sorted((missing - assigned) & _OFFICIAL_PROFILE_FIELDS)
+            if official_profile and "school_official_profile" in available_sources:
+                school_plans.append(
+                    SourcePlan(
+                        school_name=school,
+                        source_name="school_official_profile",
+                        fields=official_profile,
+                    )
+                )
+                assigned.update(official_profile)
+
+            cds_fields = sorted((missing - assigned) & _CDS_FIELDS)
+            if cds_fields and "cds_parser" in available_sources:
+                school_plans.append(
+                    SourcePlan(
+                        school_name=school,
+                        source_name="cds_parser",
+                        fields=cds_fields,
+                    )
+                )
+                assigned.update(cds_fields)
+
             grades = sorted((missing - assigned) & _GRADE_FIELDS)
             if grades and "niche" in available_sources:
                 school_plans.append(
@@ -92,7 +178,14 @@ class FieldCoveragePlanner:
                     )
                 else:
                     fallback = self._pick_best_source(
-                        candidates=("college_scorecard", "niche", "ugc"),
+                        candidates=(
+                            "ipeds_college_navigator",
+                            "college_scorecard",
+                            "cds_parser",
+                            "school_official_profile",
+                            "niche",
+                            "ugc",
+                        ),
                         available_sources=available_sources,
                         source_priority=source_priority,
                     )

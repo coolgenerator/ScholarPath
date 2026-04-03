@@ -19,6 +19,7 @@ from scholarpath.chat.handlers import (
     handle_what_if,
 )
 from scholarpath.chat.intents import IntentType, classify_intent
+from scholarpath.language import detect_response_language, language_instruction
 from scholarpath.chat.memory import ChatMemory
 from scholarpath.llm.client import LLMClient
 
@@ -137,14 +138,19 @@ class ChatAgent:
 
         if intent == IntentType.PROFILE_INTAKE:
             response = await handle_guided_intake(
-                self._llm, self._session, self._memory, student_id, message  # type: ignore[arg-type]
+                self._llm, self._session, self._memory, session_id, student_id, message  # type: ignore[arg-type]
             )
             # If guided intake completed, automatically trigger recommendations
             if response.startswith("[INTAKE_COMPLETE]"):
                 clean_msg = response.replace("[INTAKE_COMPLETE]", "")
                 try:
                     rec_response = await handle_recommendation(
-                        self._llm, self._session, self._memory, student_id, message  # type: ignore[arg-type]
+                        self._llm,
+                        self._session,
+                        self._memory,
+                        session_id,
+                        student_id,
+                        message,  # type: ignore[arg-type]
                     )
                     return f"{clean_msg}\n\n{rec_response}"
                 except Exception:
@@ -164,7 +170,12 @@ class ChatAgent:
             if student_id is None:
                 return await self._handle_general(message)
             return await handle_recommendation(
-                self._llm, self._session, self._memory, student_id, message  # type: ignore[arg-type]
+                self._llm,
+                self._session,
+                self._memory,
+                session_id,
+                student_id,
+                message,  # type: ignore[arg-type]
             )
 
         if intent == IntentType.SCHOOL_QUERY:
@@ -195,6 +206,7 @@ class ChatAgent:
 
     async def _handle_emotional_support(self, message: str) -> str:
         """Respond empathetically to stress or anxiety about admissions."""
+        response_lang = detect_response_language(message)
         messages = [
             {
                 "role": "system",
@@ -204,7 +216,7 @@ class ChatAgent:
                     "admissions process. Acknowledge their feelings, provide "
                     "encouragement, and gently offer to help with something "
                     "concrete. Keep it concise (2-3 paragraphs). "
-                    "Respond in the same language the student uses."
+                    f"{language_instruction(response_lang)}"
                 ),
             },
             {"role": "user", "content": message},
@@ -213,6 +225,7 @@ class ChatAgent:
 
     async def _handle_general(self, message: str) -> str:
         """Handle greetings, off-topic questions, and meta-queries."""
+        response_lang = detect_response_language(message)
         messages = [
             {
                 "role": "system",
@@ -221,7 +234,8 @@ class ChatAgent:
                     "Respond helpfully to general questions. If the message is "
                     "a greeting, introduce yourself briefly and ask how you can "
                     "help with college admissions. If off-topic, gently redirect "
-                    "to admissions topics. Respond in the user's language."
+                    "to admissions topics. "
+                    f"{language_instruction(response_lang)}"
                 ),
             },
             {"role": "user", "content": message},

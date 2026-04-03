@@ -11,10 +11,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from scholarpath.language import ResponseLanguage, language_instruction
 from scholarpath.causal import AdmissionDAGBuilder, NoisyORPropagator
 from scholarpath.db.models import Offer, OfferStatus, School
 from scholarpath.exceptions import ScholarPathError
 from scholarpath.llm.client import LLMClient
+from scholarpath.services.portfolio_service import (
+    get_student_canonical_preferences,
+    get_student_sat_equivalent,
+)
 from scholarpath.services.student_service import get_student
 
 logger = logging.getLogger(__name__)
@@ -78,6 +83,7 @@ async def compare_offers(
     session: AsyncSession,
     llm: LLMClient,
     student_id: uuid.UUID,
+    response_language: ResponseLanguage = "en",
 ) -> dict[str, Any]:
     """Side-by-side comparison of admitted offers using the causal engine.
 
@@ -111,7 +117,7 @@ async def compare_offers(
         school_name = school.name if school else str(offer.school_id)
 
         # Build a causal DAG for outcome estimation
-        student_profile = {"gpa": student.gpa, "sat": student.sat_total or 1100}
+        student_profile = {"gpa": student.gpa, "sat": get_student_sat_equivalent(student)}
         school_data: dict[str, Any] = {}
         if school and school.acceptance_rate is not None:
             school_data["acceptance_rate"] = school.acceptance_rate
@@ -165,14 +171,16 @@ async def compare_offers(
                 "You are a college admissions advisor. Compare the following "
                 "admission offers and provide a clear recommendation. "
                 "Consider financial fit, career outcomes, academic fit, and "
-                "student preferences. Be concise and actionable."
+                "student preferences. Be concise and actionable. "
+                f"{language_instruction(response_language)}"
             ),
         },
         {
             "role": "user",
             "content": (
                 f"Student: {student.name}, intended majors: {student.intended_majors}, "
-                f"budget: ${student.budget_usd}/yr\n\n"
+                f"budget: ${student.budget_usd}/yr, preferences: "
+                f"{json.dumps(get_student_canonical_preferences(student), ensure_ascii=False)}\n\n"
                 f"Offers:\n{json.dumps(offer_summaries, ensure_ascii=False, indent=2)}"
             ),
         },

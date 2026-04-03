@@ -25,13 +25,37 @@ from .simulation import (
     WhatIfRequest,
     WhatIfResponse,
 )
-from .student import StudentCreate, StudentResponse, StudentUpdate
+from .student import (
+    PortfolioCompletion,
+    PortfolioPreferences,
+    StudentCreate,
+    StudentPortfolioPatch,
+    StudentPortfolioResponse,
+    StudentResponse,
+    StudentUpdate,
+)
+from .causal_data import (
+    AdmissionEvidenceCreate,
+    AdmissionEvidenceResponse,
+    AdmissionEventCreate,
+    AdmissionEventResponse,
+    CausalDatasetVersionResponse,
+)
 
 __all__ = [
     # Student
     "StudentCreate",
     "StudentUpdate",
     "StudentResponse",
+    "StudentPortfolioPatch",
+    "StudentPortfolioResponse",
+    "PortfolioPreferences",
+    "PortfolioCompletion",
+    "AdmissionEvidenceCreate",
+    "AdmissionEvidenceResponse",
+    "AdmissionEventCreate",
+    "AdmissionEventResponse",
+    "CausalDatasetVersionResponse",
     # School
     "SchoolResponse",
     "SchoolListResponse",

@@ -26,6 +26,7 @@ from scholarpath.llm.prompts import (
     SCHOOL_EVALUATION_PROMPT,
     format_school_evaluation,
 )
+from scholarpath.services.portfolio_service import get_student_canonical_preferences
 from scholarpath.services.student_service import get_student
 
 logger = logging.getLogger(__name__)
@@ -196,7 +197,7 @@ async def generate_school_list(
         "intended_majors": student.intended_majors,
         "budget_usd": student.budget_usd,
         "need_financial_aid": student.need_financial_aid,
-        "preferences": student.preferences,
+        "preferences": get_student_canonical_preferences(student),
         "target_year": student.target_year,
     }
 

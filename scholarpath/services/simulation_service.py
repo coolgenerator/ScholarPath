@@ -6,6 +6,7 @@ import logging
 import uuid
 from typing import Any
 
+from scholarpath.language import ResponseLanguage, language_instruction
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -13,6 +14,7 @@ from scholarpath.causal import AdmissionDAGBuilder, NoisyORPropagator
 from scholarpath.db.models import School
 from scholarpath.exceptions import ScholarPathError
 from scholarpath.llm.client import LLMClient
+from scholarpath.services.portfolio_service import get_student_sat_equivalent
 from scholarpath.services.student_service import get_student
 
 logger = logging.getLogger(__name__)
@@ -33,6 +35,7 @@ async def run_what_if(
     student_id: uuid.UUID,
     school_id: uuid.UUID,
     interventions: dict[str, float],
+    response_language: ResponseLanguage = "en",
 ) -> dict[str, Any]:
     """Run a what-if simulation for a student-school pair.
 
@@ -70,7 +73,7 @@ async def run_what_if(
     builder = AdmissionDAGBuilder()
     propagator = NoisyORPropagator()
 
-    student_profile = {"gpa": student.gpa, "sat": student.sat_total or 1100}
+    student_profile = {"gpa": student.gpa, "sat": get_student_sat_equivalent(student)}
     school_data: dict[str, Any] = {}
     if school.acceptance_rate is not None:
         school_data["acceptance_rate"] = school.acceptance_rate
@@ -110,7 +113,8 @@ async def run_what_if(
             "content": (
                 "You are a college admissions causal reasoning expert. "
                 "Explain the results of a what-if simulation in plain language. "
-                "Be specific about which interventions drove which changes and why."
+                "Be specific about which interventions drove which changes and why. "
+                f"{language_instruction(response_language)}"
             ),
         },
         {

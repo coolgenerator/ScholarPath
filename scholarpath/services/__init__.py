@@ -7,6 +7,13 @@ from scholarpath.services.student_service import (
     get_student,
     update_student,
 )
+from scholarpath.services.portfolio_service import (
+    apply_portfolio_patch,
+    canonicalize_preferences,
+    get_portfolio,
+    get_student_canonical_preferences,
+    get_student_sat_equivalent,
+)
 from scholarpath.services.school_service import (
     generate_school_list,
     get_school_detail,
@@ -36,6 +43,11 @@ __all__ = [
     "update_student",
     "delete_student",
     "check_profile_completeness",
+    "get_portfolio",
+    "apply_portfolio_patch",
+    "canonicalize_preferences",
+    "get_student_canonical_preferences",
+    "get_student_sat_equivalent",
     # School
     "search_schools",
     "get_school_detail",

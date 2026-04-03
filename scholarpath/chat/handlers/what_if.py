@@ -9,6 +9,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from scholarpath.language import detect_response_language, select_localized_text
 from scholarpath.chat.memory import ChatMemory
 from scholarpath.llm.client import LLMClient
 from scholarpath.services.simulation_service import run_what_if
@@ -30,6 +31,14 @@ _INTERVENTION_CONCEPTS: dict[str, str] = {
     "career_services": "career_services",
     "peer_network": "peer_network",
     "family_income": "family_ses",
+}
+
+_OUTCOME_LABELS = {
+    "admission_probability": ("录取概率", "Admission probability"),
+    "academic_outcome": ("学术结果", "Academic outcome"),
+    "career_outcome": ("职业结果", "Career outcome"),
+    "life_satisfaction": ("生活满意度", "Life satisfaction"),
+    "phd_probability": ("读博概率", "PhD probability"),
 }
 
 
@@ -54,6 +63,7 @@ async def handle_what_if(
         Simulation results in a conversational format.
     """
     session_id = str(student_id)
+    response_lang = detect_response_language(message)
 
     # Get context for school resolution
     context = await memory.get_context(session_id)
@@ -65,13 +75,27 @@ async def handle_what_if(
     school_name = scenario.get("school_name")
 
     if not interventions:
-        return (
-            "I understand you want to explore a hypothetical scenario, but I couldn't "
-            "determine what changes to simulate. Could you be more specific?\n\n"
-            "For example:\n"
-            "- \"What if my SAT score were 1550?\"\n"
-            "- \"What if I got a full scholarship?\"\n"
-            "- \"What if I changed my major to CS?\""
+        return select_localized_text(
+            (
+                "我知道你想看一个假设情景，但我还没识别出你想改动什么变量。你可以再具体一点。\n\n"
+                "例如：\n"
+                "- “如果我的 SAT 是 1550 呢？”\n"
+                "- “如果我拿到全额奖学金呢？”\n"
+                "- “如果我改成 CS 专业呢？”"
+            ),
+            (
+                "I understand you want to explore a hypothetical scenario, but I couldn't "
+                "determine what changes to simulate. Could you be more specific?\n\n"
+                "For example:\n"
+                "- \"What if my SAT score were 1550?\"\n"
+                "- \"What if I got a full scholarship?\"\n"
+                "- \"What if I changed my major to CS?\""
+            ),
+            response_lang,
+            mixed=(
+                "我知道你想看一个假设情景，但我还没识别出你想改动什么变量。你可以再具体一点。\n"
+                "For example: What if my SAT score were 1550? What if I got a full scholarship?"
+            ),
         )
 
     # Resolve school_id
@@ -83,30 +107,58 @@ async def handle_what_if(
             pass
 
     if school_id is None:
-        return (
-            "I need to know which school to run this simulation for. "
-            "Could you mention the school name, or ask about a school first?"
+        return select_localized_text(
+            "我需要先知道你想模拟的是哪所学校。你可以先提学校名字，或者先问我这所学校本身的信息。",
+            "I need to know which school to run this simulation for. Could you mention the school name, or ask about a school first?",
+            response_lang,
+            mixed=(
+                "我需要先知道你想模拟的是哪所学校。\n"
+                "Could you mention the school name first?"
+            ),
         )
 
     # Run simulation
     try:
         result = await run_what_if(
-            session, llm, student_id, school_id, interventions
+            session,
+            llm,
+            student_id,
+            school_id,
+            interventions,
+            response_language=response_lang,
         )
     except Exception:
         logger.warning("What-if simulation failed", exc_info=True)
-        return (
-            "I ran into an issue running the simulation. "
-            "Could you try rephrasing your scenario?"
+        return select_localized_text(
+            "这次模拟运行出了点问题。你可以换个说法再试一次。",
+            "I ran into an issue running the simulation. Could you try rephrasing your scenario?",
+            response_lang,
+            mixed="这次模拟运行出了点问题。你可以换个说法再试一次。\nI ran into an issue running the simulation.",
         )
 
     # Format results
-    parts: list[str] = ["Here's what the simulation shows:\n"]
+    parts: list[str] = [
+        select_localized_text(
+            "下面是这次模拟的结果：\n",
+            "Here's what the simulation shows:\n",
+            response_lang,
+            mixed="下面是这次模拟的结果：\nHere's what the simulation shows:\n",
+        )
+    ]
 
     deltas = result.get("deltas", {})
     for outcome, delta in deltas.items():
-        direction = "increase" if delta > 0 else "decrease"
-        label = outcome.replace("_", " ").title()
+        direction = select_localized_text(
+            "提升" if delta > 0 else "下降",
+            "increase" if delta > 0 else "decrease",
+            response_lang,
+            mixed="提升 / increase" if delta > 0 else "下降 / decrease",
+        )
+        label_zh, label_en = _OUTCOME_LABELS.get(
+            outcome,
+            (outcome.replace("_", " "), outcome.replace("_", " ").title()),
+        )
+        label = select_localized_text(label_zh, label_en, response_lang, mixed=f"{label_zh} / {label_en}")
         parts.append(f"- **{label}**: {abs(delta):.1%} {direction}")
 
     if explanation := result.get("explanation"):

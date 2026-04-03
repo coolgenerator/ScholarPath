@@ -9,6 +9,11 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from scholarpath.language import (
+    detect_response_language,
+    language_instruction,
+    select_localized_text,
+)
 from scholarpath.chat.memory import ChatMemory
 from scholarpath.db.models import School
 from scholarpath.llm.client import LLMClient
@@ -38,21 +43,29 @@ async def handle_school_query(
         An informative response about the requested school.
     """
     session_id = str(student_id)
+    response_lang = detect_response_language(message)
 
     # Step 1: Identify the school name from the message
     school_name = await _extract_school_name(llm, message)
     if not school_name:
-        return (
-            "I'm not sure which school you're asking about. "
-            "Could you provide the full name of the university?"
+        return select_localized_text(
+            "我还不确定你在问哪所学校。你可以把学校全名发给我吗？",
+            "I'm not sure which school you're asking about. Could you provide the full name of the university?",
+            response_lang,
+            mixed="我还不确定你在问哪所学校。Could you provide the full university name?",
         )
 
     # Step 2: Search the database
     results = await search_schools(session, {"q": school_name, "limit": 3})
     if not results:
-        return (
-            f"I couldn't find \"{school_name}\" in our database. "
-            "Please double-check the name, or I can search with different terms."
+        return select_localized_text(
+            f"我在数据库里没找到 “{school_name}”。你可以再确认一下名字，或者换个关键词让我继续查。",
+            f"I couldn't find \"{school_name}\" in our database. Please double-check the name, or I can search with different terms.",
+            response_lang,
+            mixed=(
+                f"我在数据库里没找到 “{school_name}”。\n"
+                f"I couldn't find \"{school_name}\" in our database."
+            ),
         )
 
     school = results[0]
@@ -75,8 +88,8 @@ async def handle_school_query(
                 "You are a college admissions advisor. Answer the student's "
                 "question about a school using the provided Knowledge Card. "
                 "Be informative, accurate, and conversational. If data has "
-                "conflicts, mention the uncertainty. The student may write "
-                "in Chinese or English -- respond in the same language."
+                "conflicts, mention the uncertainty. "
+                f"{language_instruction(response_lang)}"
             ),
         },
         {

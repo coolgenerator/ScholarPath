@@ -15,6 +15,7 @@ from scholarpath.api.routes.vectors import router as vectors_router
 from scholarpath.api.routes.usage import router as usage_router
 from scholarpath.api.routes.sessions import router as sessions_router
 from scholarpath.api.routes.causal import router as causal_router
+from scholarpath.api.routes.causal_data import router as causal_data_router
 from scholarpath.api.routes.enrich import router as enrich_router
 
 router = APIRouter()
@@ -32,4 +33,5 @@ router.include_router(vectors_router)
 router.include_router(usage_router)
 router.include_router(sessions_router)
 router.include_router(causal_router)
+router.include_router(causal_data_router)
 router.include_router(enrich_router)

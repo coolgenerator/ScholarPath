@@ -17,7 +17,6 @@ _REQUIRED_FIELDS: dict[str, str] = {
     "name": "Full name",
     "gpa": "GPA",
     "gpa_scale": "GPA scale",
-    "sat_total": "SAT total score",
     "curriculum_type": "Curriculum type",
     "intended_majors": "Intended major(s)",
     "budget_usd": "Annual budget (USD)",
@@ -55,6 +54,10 @@ async def create_student(
     student = Student(**data)
     session.add(student)
     await session.flush()
+
+    # Evaluate profile completeness on creation as well.
+    completeness = await check_profile_completeness(student)
+    student.profile_completed = completeness["completed"]
 
     # Generate profile embedding if enough data is present
     await _maybe_embed_profile(student)
@@ -144,7 +147,9 @@ async def check_profile_completeness(student: Student) -> dict[str, Any]:
         ``completion_pct`` -- float in [0, 1] representing overall progress
         (includes both required and recommended fields).
     """
-    total_fields = list(_REQUIRED_FIELDS) + list(_RECOMMENDED_FIELDS)
+    # SAT/ACT is one required slot (either one satisfies the requirement).
+    required_slots = len(_REQUIRED_FIELDS) + 1
+    total_fields = required_slots + len(_RECOMMENDED_FIELDS)
     filled = 0
     missing: list[str] = []
 
@@ -155,12 +160,19 @@ async def check_profile_completeness(student: Student) -> dict[str, Any]:
         else:
             filled += 1
 
+    sat_filled = not _is_empty(getattr(student, "sat_total", None))
+    act_filled = not _is_empty(getattr(student, "act_composite", None))
+    if sat_filled or act_filled:
+        filled += 1
+    else:
+        missing.append("SAT or ACT total score")
+
     for field in _RECOMMENDED_FIELDS:
         value = getattr(student, field, None)
         if not _is_empty(value):
             filled += 1
 
-    completion_pct = filled / len(total_fields) if total_fields else 1.0
+    completion_pct = filled / total_fields if total_fields else 1.0
 
     return {
         "completed": len(missing) == 0,

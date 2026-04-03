@@ -124,6 +124,8 @@ async def _run_deep_search_async(
             scorecard_api_key=resolved_scorecard_key,
             search_api_url=settings.WEB_SEARCH_API_URL,
             search_api_key=settings.WEB_SEARCH_API_KEY,
+            school_profile_search_api_url=settings.SCHOOL_PROFILE_SEARCH_API_URL,
+            school_profile_search_api_key=settings.SCHOOL_PROFILE_SEARCH_API_KEY,
             school_concurrency=settings.DEEPSEARCH_SCHOOL_CONCURRENCY,
             source_http_concurrency=settings.DEEPSEARCH_SOURCE_HTTP_CONCURRENCY,
             self_extract_concurrency=settings.DEEPSEARCH_SELF_EXTRACT_CONCURRENCY,
