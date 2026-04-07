@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import json
 import logging
+import re
 import uuid
-from typing import Any
+from typing import Any, TypedDict
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +17,13 @@ from scholarpath.services.recommendation_service import generate_recommendations
 logger = logging.getLogger(__name__)
 
 
+class RecommendationResponse(TypedDict):
+    """Structured recommendation handler response."""
+
+    content: str
+    recommendation: dict[str, Any] | None
+
+
 async def handle_recommendation(
     llm: LLMClient,
     session: AsyncSession,
@@ -24,7 +31,7 @@ async def handle_recommendation(
     session_id: str,
     student_id: uuid.UUID,
     message: str,
-) -> str:
+) -> RecommendationResponse:
     """Generate and format school recommendations as a chat response.
 
     Steps
@@ -48,44 +55,53 @@ async def handle_recommendation(
 
     Returns
     -------
-    str
-        Formatted recommendation response.
+    RecommendationResponse
+        Structured response including a plain-text summary and optional rich
+        recommendation payload.
     """
     response_lang = detect_response_language(message)
 
     try:
+        budget_cap_override = _extract_budget_cap(message)
         results = await generate_recommendations(
             session,
             llm,
             student_id,
             response_language=response_lang,
+            budget_cap_override=budget_cap_override,
         )
     except Exception:
         logger.exception("Recommendation generation failed for student %s", student_id)
-        return select_localized_text(
-            "抱歉，我现在还没法生成推荐。请先确认你的档案已经填写完整，然后再试一次。",
-            "I'm sorry, I wasn't able to generate recommendations right now. Could you make sure your profile is complete and try again?",
-            response_lang,
-            mixed=(
-                "抱歉，我现在还没法生成推荐。请先确认你的档案已经填写完整，然后再试一次。\n"
-                "I'm sorry, I wasn't able to generate recommendations right now."
+        return {
+            "content": select_localized_text(
+                "抱歉，我现在还没法生成推荐。请先确认你的档案已经填写完整，然后再试一次。",
+                "I'm sorry, I wasn't able to generate recommendations right now. Could you make sure your profile is complete and try again?",
+                response_lang,
+                mixed=(
+                    "抱歉，我现在还没法生成推荐。请先确认你的档案已经填写完整，然后再试一次。\n"
+                    "I'm sorry, I wasn't able to generate recommendations right now."
+                ),
             ),
-        )
+            "recommendation": None,
+        }
 
     schools = results.get("schools", [])
     strategy = results.get("strategy", {})
     narrative = results.get("narrative", "")
 
     if not schools:
-        return select_localized_text(
-            "我暂时没有找到和你档案匹配的学校。要不要我们一起调整一下偏好？",
-            "I couldn't find matching schools based on your profile. Let me know if you'd like to adjust your preferences.",
-            response_lang,
-            mixed=(
-                "我暂时没有找到和你档案匹配的学校。要不要我们一起调整一下偏好？\n"
-                "I couldn't find matching schools based on your profile."
+        return {
+            "content": select_localized_text(
+                "我暂时没有找到和你档案匹配的学校。要不要我们一起调整一下偏好？",
+                "I couldn't find matching schools based on your profile. Let me know if you'd like to adjust your preferences.",
+                response_lang,
+                mixed=(
+                    "我暂时没有找到和你档案匹配的学校。要不要我们一起调整一下偏好？\n"
+                    "I couldn't find matching schools based on your profile."
+                ),
             ),
-        )
+            "recommendation": None,
+        }
 
     # Save context for follow-up
     await memory.save_context(
@@ -119,6 +135,9 @@ async def handle_recommendation(
             "net_price": info.get("avg_net_price"),
             "key_reasons": s.get("key_reasons", []),
             "sub_scores": sub_scores,
+            "prefilter_tag": s.get("prefilter_tag"),
+            "is_stretch": bool(s.get("is_stretch", False)),
+            "rank_delta": s.get("rank_delta"),
         })
 
     ed_rec = strategy.get("ed_recommendation")
@@ -141,15 +160,64 @@ async def handle_recommendation(
         "strategy_summary": strategy_summary,
     }
 
-    # Short text summary + structured data marker
-    summary = select_localized_text(
-        f"基于你的背景分析，我为你推荐了 {len(schools)} 所学校。",
-        f"Based on your profile, I've recommended {len(schools)} schools for you.",
-        response_lang,
-        mixed=(
-            f"基于你的背景分析，我为你推荐了 {len(schools)} 所学校。\n"
-            f"Based on your profile, I've recommended {len(schools)} schools for you."
-        ),
-    )
+    # Short text summary + structured payload.
+    prefilter_meta = results.get("prefilter_meta") or {}
+    eligible_count = int(prefilter_meta.get("eligible_count") or 0)
+    stretch_count = int(prefilter_meta.get("stretch_count") or 0)
+    budget_used = prefilter_meta.get("budget_cap_used")
+    if isinstance(budget_used, (int, float)) and budget_used > 0:
+        summary = select_localized_text(
+            (
+                f"已按预算硬门槛（${int(budget_used):,}）先筛选：预算内 {eligible_count} 所，"
+                f"并保留 {stretch_count} 所冲刺学校。"
+            ),
+            (
+                f"Applied a hard budget gate (${int(budget_used):,}) first: "
+                f"{eligible_count} budget-eligible schools plus {stretch_count} stretch schools."
+            ),
+            response_lang,
+            mixed=(
+                f"已按预算硬门槛（${int(budget_used):,}）筛选：预算内 {eligible_count} 所，保留 {stretch_count} 所冲刺。\n"
+                f"Applied a hard budget gate (${int(budget_used):,}): "
+                f"{eligible_count} budget-eligible + {stretch_count} stretch."
+            ),
+        )
+    else:
+        summary = select_localized_text(
+            f"基于你的背景分析，我为你推荐了 {len(schools)} 所学校。",
+            f"Based on your profile, I've recommended {len(schools)} schools for you.",
+            response_lang,
+            mixed=(
+                f"基于你的背景分析，我为你推荐了 {len(schools)} 所学校。\n"
+                f"Based on your profile, I've recommended {len(schools)} schools for you."
+            ),
+        )
 
-    return f"{summary}\n[RECOMMENDATION]{json.dumps(recommendation_data, ensure_ascii=False)}"
+    return {
+        "content": summary,
+        "recommendation": {
+            **recommendation_data,
+            "prefilter_meta": prefilter_meta,
+            "scenario_pack": results.get("scenario_pack"),
+        },
+    }
+
+
+def _extract_budget_cap(message: str) -> int | None:
+    text = str(message or "").strip().lower().replace(",", "")
+    if not text:
+        return None
+
+    k_match = re.search(r"(\d+(?:\.\d+)?)\s*k\b", text)
+    if k_match:
+        return int(float(k_match.group(1)) * 1000)
+
+    cn_match = re.search(r"(\d+(?:\.\d+)?)\s*万", text)
+    if cn_match:
+        return int(float(cn_match.group(1)) * 10000)
+
+    raw_num = re.search(r"(预算|budget)[^\d]*(\d{4,6})", text)
+    if raw_num:
+        return int(raw_num.group(2))
+
+    return None

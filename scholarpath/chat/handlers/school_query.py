@@ -28,6 +28,8 @@ async def handle_school_query(
     memory: ChatMemory,
     student_id: uuid.UUID,
     message: str,
+    *,
+    max_tokens: int = 640,
 ) -> str:
     """Identify the school being asked about, fetch data, and generate a response.
 
@@ -96,11 +98,16 @@ async def handle_school_query(
             "role": "user",
             "content": (
                 f"Student question: {message}\n\n"
-                f"Knowledge Card:\n{json.dumps(knowledge_card, ensure_ascii=False, indent=2)}"
+                f"Knowledge Card:\n{json.dumps(knowledge_card, ensure_ascii=False)}"
             ),
         },
     ]
-    response = await llm.complete(messages, temperature=0.6, max_tokens=1024, caller="chat.school_query")
+    response = await llm.complete(
+        messages,
+        temperature=0.4,
+        max_tokens=max_tokens,
+        caller="chat.school_query",
+    )
     return response
 
 
@@ -145,8 +152,6 @@ def _build_knowledge_card(
         "avg_net_price": school.avg_net_price,
         "student_faculty_ratio": school.student_faculty_ratio,
         "graduation_rate_4yr": school.graduation_rate_4yr,
-        "intl_student_pct": school.intl_student_pct,
-        "campus_setting": school.campus_setting,
         "programs": [
             {
                 "name": p.name,
@@ -155,7 +160,7 @@ def _build_knowledge_card(
                 "has_research": p.has_research_opps,
                 "has_coop": p.has_coop,
             }
-            for p in programs[:10]
+            for p in programs[:6]
         ],
         "data_conflict_count": len(conflicts),
     }
@@ -169,7 +174,7 @@ def _build_knowledge_card(
                 "source": dp.source_name,
                 "confidence": dp.confidence,
             }
-            for dp in data_points[:5]
+            for dp in data_points[:3]
         ]
 
     if conflicts:
@@ -180,7 +185,7 @@ def _build_knowledge_card(
                 "value_b": c.value_b,
                 "severity": c.severity,
             }
-            for c in conflicts[:3]
+            for c in conflicts[:2]
         ]
 
     return card

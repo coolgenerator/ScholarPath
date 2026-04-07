@@ -7,6 +7,7 @@ import { cn } from "./utils";
 
 type DashboardSegmentedAccent =
   | "primary"
+  | "marketing"
   | "tertiary"
   | "neutral"
   | "status-admitted"

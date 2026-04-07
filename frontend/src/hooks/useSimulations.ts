@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
-import { simulationsApi, ScenarioCompareResponse, WhatIfResponse } from '../lib/api/simulations';
+import { simulationsApi } from '../lib/api/simulations';
+import type { ScenarioCompareRequestItem, ScenarioCompareResponse, WhatIfResponse } from '../lib/types';
 
 export function useSimulations() {
   const [result, setResult] = useState<WhatIfResponse | null>(null);
@@ -25,7 +26,7 @@ export function useSimulations() {
 
   const compareScenarios = useCallback(async (
     studentId: string,
-    scenarios: Array<{ interventions: Record<string, unknown> }>,
+    scenarios: ScenarioCompareRequestItem[],
   ) => {
     setIsLoading(true);
     setError(null);

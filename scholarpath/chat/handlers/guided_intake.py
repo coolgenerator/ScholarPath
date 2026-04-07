@@ -7,10 +7,9 @@ category of information needed for recommendations.
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
-from typing import Any
+from typing import Any, TypedDict
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -389,6 +388,14 @@ _STEP_REQUIRED_FIELDS: dict[str, list[str]] = {
 }
 
 
+class GuidedIntakeResponse(TypedDict):
+    """Structured guided-intake output."""
+
+    content: str
+    guided_questions: list[dict[str, Any]] | None
+    intake_complete: bool
+
+
 # ---------------------------------------------------------------------------
 # Main handler
 # ---------------------------------------------------------------------------
@@ -400,7 +407,7 @@ async def handle_guided_intake(
     session_id: str,
     student_id: uuid.UUID,
     message: str,
-) -> str:
+) -> GuidedIntakeResponse:
     """Handle a message in the guided intake flow.
 
     Tracks which step the user is on, extracts data for the current (and
@@ -425,9 +432,8 @@ async def handle_guided_intake(
 
     Returns
     -------
-    str
-        Response text. If all steps are done the response starts with
-        ``[INTAKE_COMPLETE]`` so the agent can detect completion.
+    GuidedIntakeResponse
+        Structured plain-text response and optional guided question payload.
     """
     response_lang = detect_response_language(message)
 
@@ -465,12 +471,16 @@ async def handle_guided_intake(
         )
     except Exception:
         logger.warning("Guided intake extraction failed", exc_info=True)
-        return select_localized_text(
-            "我刚才没完全理解你的意思，可以换种说法再试一次吗？",
-            "I had trouble understanding that. Could you try again?",
-            response_lang,
-            mixed="我刚才没完全理解你的意思，可以换种说法再试一次吗？\nI had trouble understanding that. Could you try again?",
-        )
+        return {
+            "content": select_localized_text(
+                "我刚才没完全理解你的意思，可以换种说法再试一次吗？",
+                "I had trouble understanding that. Could you try again?",
+                response_lang,
+                mixed="我刚才没完全理解你的意思，可以换种说法再试一次吗？\nI had trouble understanding that. Could you try again?",
+            ),
+            "guided_questions": None,
+            "intake_complete": False,
+        }
 
     # --- Update student portfolio with grouped patch contract ---
     portfolio_patch: dict[str, Any] = {}
@@ -512,6 +522,7 @@ async def handle_guided_intake(
         await memory.save_context(session_id, "last_extracted", portfolio_patch)
 
     student = await get_student(session, student_id)
+    profile_completed_steps = _infer_completed_steps_from_student(student)
 
     # --- Determine which steps to skip ---
     completed_step_ids: list[str] = extracted.get("completed_step_ids", [])
@@ -530,7 +541,7 @@ async def handle_guided_intake(
     previously_completed: list[str] = context.get("completed_steps", [])
     if not isinstance(previously_completed, list):
         previously_completed = []
-    all_completed = list(set(previously_completed + completed_step_ids))
+    all_completed = list(set(previously_completed + completed_step_ids + profile_completed_steps))
     await memory.save_context(session_id, "completed_steps", all_completed)
 
     # --- Find the next unanswered step ---
@@ -561,15 +572,19 @@ async def handle_guided_intake(
         except Exception:
             logger.warning("Failed to embed profile on intake completion", exc_info=True)
 
-        return "[INTAKE_COMPLETE]" + select_localized_text(
-            "太好了，信息已经收集完毕！让我为你生成个性化的学校推荐...",
-            "Great, I have all the information I need! Let me generate your personalized school recommendations now...",
-            response_lang,
-            mixed=(
-                "太好了，信息已经收集完毕！让我为你生成个性化的学校推荐...\n"
-                "Great, I have all the information I need. Let me generate your personalized school recommendations now..."
+        return {
+            "content": select_localized_text(
+                "太好了，信息已经收集完毕！让我为你生成个性化的学校推荐...",
+                "Great, I have all the information I need! Let me generate your personalized school recommendations now...",
+                response_lang,
+                mixed=(
+                    "太好了，信息已经收集完毕！让我为你生成个性化的学校推荐...\n"
+                    "Great, I have all the information I need. Let me generate your personalized school recommendations now..."
+                ),
             ),
-        )
+            "guided_questions": None,
+            "intake_complete": True,
+        }
 
     # Advance to next step
     await memory.save_context(session_id, "intake_step", next_step_index)
@@ -582,13 +597,19 @@ async def handle_guided_intake(
     response_text = f"{ack}\n{_localize_step_question(next_step, response_lang)}"
 
     # Attach structured options if the next step has them
+    guided_questions: list[dict[str, Any]] | None = None
     step_opts = STEP_OPTIONS.get(next_step["id"])
     if step_opts is not None:
         localized_questions = _localize_step_options(step_opts, response_lang)
-        options_json = json.dumps(localized_questions, ensure_ascii=False)
-        response_text += f"\n[GUIDED_OPTIONS]{options_json}"
+        questions = localized_questions.get("questions")
+        if isinstance(questions, list):
+            guided_questions = questions
 
-    return response_text
+    return {
+        "content": response_text,
+        "guided_questions": guided_questions,
+        "intake_complete": False,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -679,6 +700,28 @@ def _normalize_financial_aid(
         need_financial_aid = raw_need_financial_aid
 
     return need_financial_aid, canonical_type
+
+
+def _infer_completed_steps_from_student(student: Any) -> list[str]:
+    """Infer completed intake steps from existing canonical profile fields."""
+    completed: list[str] = []
+    prefs = student.preferences if isinstance(student.preferences, dict) else {}
+
+    if student.gpa is not None and (student.sat_total is not None or student.act_composite is not None):
+        completed.append("academics")
+    if student.intended_majors:
+        completed.append("major_career")
+    if student.extracurriculars or student.awards:
+        completed.append("activities")
+    if prefs.get("location") or prefs.get("culture") or prefs.get("location_preference") or prefs.get("campus_culture"):
+        completed.append("location_culture")
+    if student.budget_usd is not None:
+        completed.append("financial")
+    if prefs.get("size") or prefs.get("school_size_preference") or prefs.get("target_schools"):
+        completed.append("school_preferences")
+    if student.ed_preference:
+        completed.append("strategy")
+    return completed
 
 
 def _find_next_step(

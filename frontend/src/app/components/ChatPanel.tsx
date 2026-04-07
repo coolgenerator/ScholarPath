@@ -1,11 +1,24 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useLayoutEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useChat, ChatEntry } from '../../hooks/useChat';
 import { useStudent } from '../../hooks/useStudent';
 import { useApp } from '../../context/AppContext';
 import { GuidedQuestionCard } from './GuidedQuestionCard';
 import { RecommendationCard } from './RecommendationCard';
-import { OfferCompareCard, WhatIfDeltaCard } from './StructuredMessageCards';
+import {
+  AnswerSynthesisCard,
+  ErrorStateCard,
+  OfferCompareCard,
+  ProfilePatchProposalCard,
+  ProfilePatchResultCard,
+  ProfileSnapshotCard,
+  WhatIfDeltaCard,
+} from './StructuredMessageCards';
+import { ExecutionTracePanel } from './chat/ExecutionTracePanel';
+import { TraceProgressTimeline } from './chat/TraceProgressTimeline';
+import { ChatComposer } from './chat/ChatComposer';
+import { MessageListBoundary } from './chat/MessageListBoundary';
+import { ExecutionDigestCard } from './chat/ExecutionDigestCard';
 
 function formatTime(timestamp: string): string {
   try {
@@ -31,6 +44,8 @@ interface ChatPanelProps {
 }
 
 type ConversationPhase = 'welcome' | 'firstTurnPending' | 'liveConversation';
+const MESSAGE_WINDOW_SIZE = 120;
+const MESSAGE_WINDOW_STEP = 60;
 
 export function ChatPanel({ sessionId, studentId, fullWidth }: ChatPanelProps) {
   const { t, setSessionId } = useApp();
@@ -39,10 +54,27 @@ export function ChatPanel({ sessionId, studentId, fullWidth }: ChatPanelProps) {
     setSessionId(newId);
   }, [setSessionId]);
 
-  const { messages, sendMessage, isConnected, isTyping } = useChat(sessionId || null, studentId, handleSessionCreated);
+  const {
+    messages,
+    sendMessage,
+    isConnected,
+    isTyping,
+    turnState,
+    progressEvents,
+    activeTrace,
+    activeTraceView,
+    activeTraceId,
+    openTrace,
+    isTraceLoading,
+    uiState,
+    reportRenderCost,
+    reportScrollCorrection,
+    setUserScrollLocked,
+    setTracePanelMode,
+  } = useChat(sessionId || null, studentId, handleSessionCreated);
   const { student, fetchStudent } = useStudent();
   const [input, setInput] = useState('');
-  const [dismissedCards, setDismissedCards] = useState<Set<number>>(new Set());
+  const [dismissedCards, setDismissedCards] = useState<Set<string>>(new Set());
   const [animatedMessageKeys, setAnimatedMessageKeys] = useState<string[]>([]);
   const [animatedBlockKeys, setAnimatedBlockKeys] = useState<string[]>([]);
   const [pendingScrollAfterReveal, setPendingScrollAfterReveal] = useState(false);
@@ -50,6 +82,12 @@ export function ChatPanel({ sessionId, studentId, fullWidth }: ChatPanelProps) {
   const previousMessageKeysRef = useRef<string[]>([]);
   const animationTimeoutsRef = useRef<number[]>([]);
   const scrollTimeoutRef = useRef<number | null>(null);
+  const lastAutoScrollAtRef = useRef(0);
+  const [visibleStartIndex, setVisibleStartIndex] = useState(0);
+  const pendingWindowExpandRef = useRef<{ previousHeight: number } | null>(null);
+  const renderMark = typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now();
 
   useEffect(() => {
     if (studentId) fetchStudent(studentId);
@@ -61,7 +99,66 @@ export function ChatPanel({ sessionId, studentId, fullWidth }: ChatPanelProps) {
       top: scrollRef.current.scrollHeight,
       behavior,
     });
+    lastAutoScrollAtRef.current = Date.now();
   }, []);
+
+  const isNearBottom = useCallback((threshold = 120) => {
+    if (!scrollRef.current) return true;
+    const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+    return scrollHeight - (scrollTop + clientHeight) <= threshold;
+  }, []);
+
+  const maybeAutoScroll = useCallback((behavior: ScrollBehavior = 'smooth', force = false) => {
+    const allow = force || !uiState.userScrollLocked || isNearBottom();
+    if (!allow) return;
+    scrollToBottom(behavior);
+    reportScrollCorrection();
+    if (uiState.userScrollLocked) {
+      setUserScrollLocked(false);
+    }
+  }, [isNearBottom, reportScrollCorrection, scrollToBottom, setUserScrollLocked, uiState.userScrollLocked]);
+
+  useEffect(() => {
+    const minStart = Math.max(0, messages.length - MESSAGE_WINDOW_SIZE);
+    setVisibleStartIndex((prev) => {
+      if (messages.length <= MESSAGE_WINDOW_SIZE) return 0;
+      if (prev === 0 && minStart > 0) return minStart;
+      if (prev > minStart) return minStart;
+      return prev;
+    });
+  }, [messages.length]);
+
+  useLayoutEffect(() => {
+    if (!pendingWindowExpandRef.current || !scrollRef.current) return;
+    const { previousHeight } = pendingWindowExpandRef.current;
+    const el = scrollRef.current;
+    const delta = el.scrollHeight - previousHeight;
+    if (delta > 0) {
+      el.scrollTop += delta;
+      reportScrollCorrection();
+    }
+    pendingWindowExpandRef.current = null;
+  }, [visibleStartIndex, reportScrollCorrection]);
+
+  const handleScroll = useCallback(() => {
+    const container = scrollRef.current;
+    if (!container) return;
+    if (Date.now() - lastAutoScrollAtRef.current < 150) {
+      return;
+    }
+    const shouldLock = !isNearBottom();
+    if (shouldLock !== uiState.userScrollLocked) {
+      setUserScrollLocked(shouldLock);
+    }
+    if (
+      container.scrollTop <= 80
+      && visibleStartIndex > 0
+      && !pendingWindowExpandRef.current
+    ) {
+      pendingWindowExpandRef.current = { previousHeight: container.scrollHeight };
+      setVisibleStartIndex((prev) => Math.max(0, prev - MESSAGE_WINDOW_STEP));
+    }
+  }, [isNearBottom, setUserScrollLocked, uiState.userScrollLocked, visibleStartIndex]);
 
   useEffect(() => {
     previousMessageKeysRef.current = [];
@@ -75,7 +172,11 @@ export function ChatPanel({ sessionId, studentId, fullWidth }: ChatPanelProps) {
     setAnimatedBlockKeys([]);
     setDismissedCards(new Set());
     setPendingScrollAfterReveal(false);
-  }, [sessionId]);
+    setVisibleStartIndex(0);
+    pendingWindowExpandRef.current = null;
+    setUserScrollLocked(false);
+    setTracePanelMode('auto_collapse_on_finish', null);
+  }, [sessionId, setUserScrollLocked, setTracePanelMode]);
 
   useEffect(() => (
     () => {
@@ -117,9 +218,6 @@ export function ChatPanel({ sessionId, studentId, fullWidth }: ChatPanelProps) {
         nextAnimatedBlocks.push(getBlockKey(messageKey, 'action', actionIndex));
       });
 
-      if (message.guided_questions && message.guided_questions.length > 0) {
-        nextAnimatedBlocks.push(getBlockKey(messageKey, 'guided', 0));
-      }
     });
 
     if (nextAnimatedMessages.length === 0 && nextAnimatedBlocks.length === 0) return;
@@ -161,21 +259,55 @@ export function ChatPanel({ sessionId, studentId, fullWidth }: ChatPanelProps) {
     { label: t.chat_budget_label, value: student.budget_usd ? `$${(student.budget_usd / 1000).toFixed(0)}K` : '—' },
     { label: t.chat_cycle_label, value: student.target_year },
   ] : [];
-  const statusLabel = isTyping
-    ? t.chat_status_thinking
-    : isConnected
-      ? t.chat_status_live
-      : t.chat_status_offline;
+  const statusLabel = turnState === 'reconnecting'
+    ? `${t.chat_status_reconnecting}${uiState.pendingSendCount > 0 ? ` · ${uiState.pendingSendCount}` : ''}`
+    : isTyping
+      ? t.chat_status_thinking
+      : isConnected
+        ? t.chat_status_live
+        : t.chat_status_offline;
   const headerSubtitle = t.chat_header_subtitle;
   const railStyle = { maxWidth: '960px' } as React.CSSProperties;
   const assistantBubbleStyle = { maxWidth: 'min(44rem, 96%)' } as React.CSSProperties;
   const userBubbleStyle = { maxWidth: 'min(34rem, 92%)' } as React.CSSProperties;
   const structuredStyle = { maxWidth: 'min(48rem, 100%)' } as React.CSSProperties;
 
+  const progressLabel = useCallback((event: string): string => {
+    if (event === 'turn_started') return t.chat_progress_turn_started;
+    if (event === 'planning_done') return t.chat_progress_planning_done;
+    if (event === 'capability_started') return t.chat_progress_capability_started;
+    if (event === 'capability_finished') return t.chat_progress_capability_finished;
+    if (event === 'rollback') return t.chat_progress_rollback;
+    if (event === 'turn_completed') return t.chat_progress_turn_completed;
+    return event;
+  }, [
+    t.chat_progress_capability_finished,
+    t.chat_progress_capability_started,
+    t.chat_progress_planning_done,
+    t.chat_progress_rollback,
+    t.chat_progress_turn_completed,
+    t.chat_progress_turn_started,
+  ]);
+
+  useEffect(() => {
+    const end = typeof performance !== 'undefined' && typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now();
+    reportRenderCost(end - renderMark);
+  }, [
+    activeTrace?.step_count,
+    isTyping,
+    messages.length,
+    progressEvents.length,
+    renderMark,
+    reportRenderCost,
+    visibleStartIndex,
+  ]);
+
   useEffect(() => {
     if (!isTyping) return;
-    scrollToBottom('smooth');
-  }, [isTyping, scrollToBottom]);
+    maybeAutoScroll('smooth');
+  }, [isTyping, maybeAutoScroll]);
 
   useEffect(() => {
     const latestMessage = messages[messages.length - 1];
@@ -188,14 +320,19 @@ export function ChatPanel({ sessionId, studentId, fullWidth }: ChatPanelProps) {
 
     const hasRevealContent =
       latestMessage.blocks.length > 0 ||
-      Boolean(latestMessage.guided_questions?.length) ||
       Boolean(latestMessage.suggested_actions?.length);
 
     if (latestMessage.role === 'assistant' && hasRevealContent) {
       const delay = assistantMessageCount <= 1 ? 520 : 360;
+      const shouldForceScroll = assistantMessageCount <= 1;
+      const canAutoScroll = shouldForceScroll || !uiState.userScrollLocked || isNearBottom();
+      if (!canAutoScroll) {
+        setPendingScrollAfterReveal(false);
+        return;
+      }
       setPendingScrollAfterReveal(true);
       scrollTimeoutRef.current = window.setTimeout(() => {
-        scrollToBottom('smooth');
+        maybeAutoScroll('smooth', shouldForceScroll);
         setPendingScrollAfterReveal(false);
         scrollTimeoutRef.current = null;
       }, delay);
@@ -203,8 +340,8 @@ export function ChatPanel({ sessionId, studentId, fullWidth }: ChatPanelProps) {
     }
 
     setPendingScrollAfterReveal(false);
-    scrollToBottom(latestMessage.timestamp ? 'smooth' : 'auto');
-  }, [assistantMessageCount, messages, scrollToBottom]);
+    maybeAutoScroll(latestMessage.timestamp ? 'smooth' : 'auto');
+  }, [assistantMessageCount, isNearBottom, maybeAutoScroll, messages, uiState.userScrollLocked]);
 
   const handleSend = () => {
     const trimmed = input.trim();
@@ -225,7 +362,7 @@ export function ChatPanel({ sessionId, studentId, fullWidth }: ChatPanelProps) {
   };
 
   const handleGuidedSubmit = useCallback(
-    (msgIndex: number, answers: Record<string, string | string[]>) => {
+    (cardId: string, answers: Record<string, string | string[]>) => {
       const parts: string[] = [];
       for (const [, value] of Object.entries(answers)) {
         if (Array.isArray(value)) {
@@ -238,12 +375,13 @@ export function ChatPanel({ sessionId, studentId, fullWidth }: ChatPanelProps) {
       if (message) {
         sendMessage(message);
       }
-      setDismissedCards((prev) => new Set(prev).add(msgIndex));
+      setDismissedCards((prev) => new Set(prev).add(cardId));
     },
     [sendMessage],
   );
 
   const renderStructuredBlock = (
+    msgIndex: number,
     messageKey: string,
     block: ChatEntry['blocks'][number],
     blockIndex: number,
@@ -265,6 +403,14 @@ export function ChatPanel({ sessionId, studentId, fullWidth }: ChatPanelProps) {
       );
     }
 
+    if (block.type === 'answerSynthesis') {
+      return (
+        <div key={blockKey} {...wrapperProps}>
+          <AnswerSynthesisCard data={block.data} />
+        </div>
+      );
+    }
+
     if (block.type === 'offerCompare') {
       return (
         <div key={blockKey} {...wrapperProps}>
@@ -281,8 +427,60 @@ export function ChatPanel({ sessionId, studentId, fullWidth }: ChatPanelProps) {
       );
     }
 
+    if (block.type === 'guidedQuestions') {
+      const cardId = `${msgIndex}:${blockIndex}`;
+      if (dismissedCards.has(cardId)) return null;
+      return (
+        <div key={blockKey} {...wrapperProps}>
+          <GuidedQuestionCard
+            questions={block.data}
+            onSubmit={(answers) => handleGuidedSubmit(cardId, answers)}
+          />
+        </div>
+      );
+    }
+
+    if (block.type === 'error') {
+      return (
+        <div key={blockKey} {...wrapperProps}>
+          <ErrorStateCard message={block.data.message} />
+        </div>
+      );
+    }
+
+    if (block.type === 'profileSnapshot') {
+      return (
+        <div key={blockKey} {...wrapperProps}>
+          <ProfileSnapshotCard data={block.data} />
+        </div>
+      );
+    }
+
+    if (block.type === 'profilePatchProposal') {
+      return (
+        <div key={blockKey} {...wrapperProps}>
+          <ProfilePatchProposalCard
+            data={block.data}
+            onConfirm={(command) => sendMessage(command)}
+            onReedit={(command) => sendMessage(command)}
+          />
+        </div>
+      );
+    }
+
+    if (block.type === 'profilePatchResult') {
+      return (
+        <div key={blockKey} {...wrapperProps}>
+          <ProfilePatchResultCard data={block.data} />
+        </div>
+      );
+    }
+
     return null;
   };
+
+  const renderedMessages = messages.slice(visibleStartIndex);
+  const hiddenMessageCount = visibleStartIndex;
 
   return (
     <section className={`${fullWidth ? 'w-full' : 'w-[40%] border-r border-outline-variant/10'} relative z-10 flex h-full flex-col bg-[radial-gradient(circle_at_top,rgba(0,64,161,0.08),transparent_34%)] bg-white`}>
@@ -318,7 +516,11 @@ export function ChatPanel({ sessionId, studentId, fullWidth }: ChatPanelProps) {
         </div>
       </header>
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 pb-32 pt-4 font-body sm:px-6 sm:pb-36 sm:pt-6 lg:px-8">
+      <div
+        ref={scrollRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto px-4 pb-32 pt-4 font-body sm:px-6 sm:pb-36 sm:pt-6 lg:px-8"
+      >
         <div className="mx-auto w-full" style={railStyle}>
           <div className={`chat-welcome-shell ${showIntroShell ? 'is-visible mb-5 sm:mb-7' : 'is-hidden mb-0'} ${conversationPhase === 'firstTurnPending' ? 'is-condensed' : ''}`}>
             {isInitialWelcomeState && (
@@ -450,11 +652,22 @@ export function ChatPanel({ sessionId, studentId, fullWidth }: ChatPanelProps) {
             </div>
           )}
 
-          <div
-            className={`flex flex-col ${conversationPhase === 'firstTurnPending' ? 'gap-4 sm:gap-5' : 'gap-6 sm:gap-7'}`}
-            data-scroll-pending={pendingScrollAfterReveal ? 'true' : 'false'}
+          <MessageListBoundary
+            title={t.chat_render_error_title}
+            description={t.chat_render_error_desc}
+            retryLabel={t.chat_render_error_retry}
           >
-            {messages.map((msg: ChatEntry, i: number) => {
+            <div
+              className={`flex flex-col ${conversationPhase === 'firstTurnPending' ? 'gap-4 sm:gap-5' : 'gap-6 sm:gap-7'}`}
+              data-scroll-pending={pendingScrollAfterReveal ? 'true' : 'false'}
+            >
+            {hiddenMessageCount > 0 && (
+              <div className="mx-auto rounded-full border border-outline-variant/20 bg-white/80 px-3 py-1 text-[11px] font-semibold text-on-surface-variant/70">
+                {t.chat_virtualized_hint(hiddenMessageCount)}
+              </div>
+            )}
+            {renderedMessages.map((msg: ChatEntry, localIndex: number) => {
+              const i = visibleStartIndex + localIndex;
               const messageKey = getMessageKey(msg, i);
               const animateMessage = animatedMessageKeys.includes(messageKey);
               const assistantIndex = msg.role === 'assistant'
@@ -462,6 +675,10 @@ export function ChatPanel({ sessionId, studentId, fullWidth }: ChatPanelProps) {
                 : -1;
               const isFirstAssistantMessage = assistantIndex === 0;
               const showInlineTyping = shouldInlinePendingTyping && i === messages.length - 1 && msg.role === 'user';
+              const synthesisBlock = msg.blocks.find((block) => block.type === 'answerSynthesis');
+              const assistantSummary = synthesisBlock
+                ? (msg.content?.trim() || synthesisBlock.data.summary || synthesisBlock.data.conclusion || '')
+                : msg.content;
 
               return (
                 <div key={messageKey} className={`flex w-full ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -499,27 +716,33 @@ export function ChatPanel({ sessionId, studentId, fullWidth }: ChatPanelProps) {
                         className={`chat-markdown-shell prose prose-sm rounded-[1.8rem] rounded-bl-md border border-outline-variant/10 bg-white/96 px-4 py-4 text-sm leading-relaxed text-on-surface shadow-[0_18px_45px_rgba(15,23,42,0.08)] backdrop-blur prose-headings:text-on-surface prose-strong:text-on-surface prose-p:my-1.5 prose-ul:my-1.5 prose-ol:my-1.5 prose-li:my-0.5 sm:px-5 sm:py-4 ${animateMessage ? (isFirstAssistantMessage ? 'chat-animate-bubble-left-soft' : 'chat-animate-bubble-left') : ''}`}
                         style={assistantBubbleStyle}
                       >
-                        <ReactMarkdown>{msg.content}</ReactMarkdown>
-                        {msg.intent && msg.intent !== 'general' && msg.intent !== 'error' && msg.intent !== 'system' && (
-                          <div className="mt-4 rounded-2xl border border-outline-variant/10 bg-surface-container-low/35 p-4 shadow-sm">
-                            <div className="mb-2 flex items-center gap-2">
-                              <span className="material-symbols-outlined text-[18px] text-tertiary" style={{ fontVariationSettings: "'FILL' 1" }}>
-                                analytics
-                              </span>
-                              <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-on-surface-variant/60">
-                                {msg.intent.replace(/_/g, ' ').replace(/\b\w/g, (character) => character.toUpperCase())}
-                              </span>
-                            </div>
-                          </div>
-                        )}
+                        <ReactMarkdown>{assistantSummary}</ReactMarkdown>
                       </div>
                       <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-on-surface-variant/45">
                         {t.chat_tag_ai} {msg.timestamp ? `\u2022 ${formatTime(msg.timestamp)}` : ''}
                       </span>
+                      {msg.trace_id && (
+                        <button
+                          onClick={() => openTrace(msg.trace_id!)}
+                          className={`rounded-full border px-2.5 py-1 text-[10px] font-bold tracking-[0.12em] transition ${
+                            activeTraceId === msg.trace_id
+                              ? 'border-primary/35 bg-primary/10 text-primary'
+                              : 'border-outline-variant/30 bg-white/70 text-on-surface-variant hover:border-primary/25 hover:text-primary'
+                          }`}
+                        >
+                          {t.chat_trace_button}
+                        </button>
+                      )}
+
+                      {msg.execution_digest && typeof msg.execution_digest === 'object' && (
+                        <div className="w-full" style={structuredStyle}>
+                          <ExecutionDigestCard digest={msg.execution_digest} />
+                        </div>
+                      )}
 
                       {msg.blocks.length > 0 && (
                         <div className="flex w-full flex-col gap-3" style={structuredStyle}>
-                          {msg.blocks.map((block, blockIndex) => renderStructuredBlock(messageKey, block, blockIndex, isFirstAssistantMessage))}
+                          {msg.blocks.map((block, blockIndex) => renderStructuredBlock(i, messageKey, block, blockIndex, isFirstAssistantMessage))}
                         </div>
                       )}
 
@@ -542,17 +765,6 @@ export function ChatPanel({ sessionId, studentId, fullWidth }: ChatPanelProps) {
                         </div>
                       )}
 
-                      {msg.guided_questions && msg.guided_questions.length > 0 && !dismissedCards.has(i) && (
-                        <div
-                          className={animatedBlockKeys.includes(getBlockKey(messageKey, 'guided', 0)) ? 'chat-animate-card w-full' : 'w-full'}
-                          style={structuredStyle}
-                        >
-                          <GuidedQuestionCard
-                            questions={msg.guided_questions}
-                            onSubmit={(answers) => handleGuidedSubmit(i, answers)}
-                          />
-                        </div>
-                      )}
                     </div>
                   )}
                 </div>
@@ -575,35 +787,31 @@ export function ChatPanel({ sessionId, studentId, fullWidth }: ChatPanelProps) {
                   <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-on-surface-variant/45">
                     {t.chat_tag_ai} • {statusLabel}
                   </span>
+                  <TraceProgressTimeline events={progressEvents} labelForEvent={progressLabel} />
                 </div>
               </div>
             )}
-          </div>
+
+              <ExecutionTracePanel
+                activeTrace={activeTrace}
+                activeTraceView={activeTraceView}
+                isTraceLoading={isTraceLoading}
+                tracePanelMode={uiState.tracePanelMode}
+                onTracePanelModeChange={setTracePanelMode}
+                onLoadFullTrace={(traceId) => openTrace(traceId, 'full')}
+              />
+            </div>
+          </MessageListBoundary>
         </div>
       </div>
 
-      <div className="sticky bottom-0 z-20 bg-gradient-to-t from-white via-white/96 to-white/0 px-4 pb-4 pt-4 sm:px-6 sm:pb-6 lg:px-8">
-        <div className="mx-auto w-full" style={railStyle}>
-          <div className="relative flex items-center rounded-[1.75rem] border border-outline-variant/15 bg-white/92 px-4 py-3 shadow-[0_22px_52px_rgba(15,23,42,0.12)] backdrop-blur transition-all duration-300 focus-within:-translate-y-0.5 focus-within:border-primary/20 focus-within:shadow-[0_26px_64px_rgba(0,64,161,0.14)] sm:px-5 sm:py-4">
-            <div className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-primary/25 to-transparent"></div>
-            <input
-              className="flex-1 border-none bg-transparent py-1 text-sm text-on-surface placeholder:text-on-surface-variant/55 outline-none focus:ring-0"
-              placeholder={t.chat_placeholder}
-              type="text"
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              onKeyDown={handleKeyDown}
-            />
-            <button
-              onClick={handleSend}
-              disabled={!input.trim()}
-              className="ml-3 flex h-11 w-11 items-center justify-center rounded-2xl bg-primary text-on-primary shadow-[0_16px_34px_rgba(3,2,19,0.22)] transition-all duration-300 hover:-translate-y-0.5 hover:scale-[1.03] disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:scale-100"
-            >
-              <span className="material-symbols-outlined text-sm font-bold">arrow_upward</span>
-            </button>
-          </div>
-        </div>
-      </div>
+      <ChatComposer
+        value={input}
+        placeholder={t.chat_placeholder}
+        onChange={setInput}
+        onSend={handleSend}
+        onKeyDown={handleKeyDown}
+      />
     </section>
   );
 }

@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
-from scholarpath.api.deps import SessionDep
+from scholarpath.api.deps import AppLLMDep, SessionDep
 from scholarpath.api.models.evaluation import TieredSchoolList
 from scholarpath.api.models.school import (
     SchoolListResponse,
@@ -94,6 +94,7 @@ class SchoolListHints(BaseModel):
     """Optional hints to guide school list generation."""
     interests: List[str] = []
     preferences: List[str] = []
+    budget_cap_usd: int | None = None
 
     model_config = {"extra": "allow"}
 
@@ -104,15 +105,11 @@ class SchoolListHints(BaseModel):
 )
 async def generate_school_list_endpoint(
     student_id: uuid.UUID,
+    llm: AppLLMDep,
     session: SessionDep,
     hints: Optional[SchoolListHints] = None,
 ) -> dict:
-    """Generate a school list for a student.
-
-    Accepts optional ``hints`` with interests and preferences to
-    guide the AI recommendation.  Tries Celery first; falls back to
-    synchronous execution.
-    """
+    """Generate a school list for a student."""
     student = await session.get(Student, student_id)
     if student is None:
         raise HTTPException(
@@ -120,26 +117,77 @@ async def generate_school_list_endpoint(
             detail=f"Student {student_id} not found",
         )
 
-    hints_dict: Optional[dict] = None
-    if hints and (hints.interests or hints.preferences):
-        hints_dict = {"interests": hints.interests, "preferences": hints.preferences}
+    preference_hints: list[str] = []
+    budget_cap_override: int | None = None
+    if hints:
+        if hints.preferences:
+            preference_hints = [str(item).strip() for item in hints.preferences if str(item).strip()]
+        if hints.budget_cap_usd and hints.budget_cap_usd > 0:
+            budget_cap_override = int(hints.budget_cap_usd)
 
-    # Try Celery first
-    try:
-        from scholarpath.tasks import generate_school_list_task  # type: ignore[import-untyped]
+    from scholarpath.services.recommendation_service import generate_recommendations
 
-        result = generate_school_list_task.delay(str(student_id), hints_dict)
-        return {"task_id": result.id, "status": "PENDING"}
-    except ImportError:
-        pass
+    payload = await generate_recommendations(
+        session,
+        llm,
+        student_id,
+        budget_cap_override=budget_cap_override,
+        preference_hints=preference_hints,
+        persist_evaluations=True,
+    )
+    schools = payload.get("schools", [])
+    return {
+        "status": "completed",
+        "count": len(schools),
+        "schools": schools,
+        "prefilter_meta": payload.get("prefilter_meta"),
+        "scenario_pack": payload.get("scenario_pack"),
+    }
 
-    # Synchronous fallback
-    from scholarpath.services.school_service import generate_school_list as gen_list
-    from scholarpath.llm.client import get_llm_client
 
-    llm = get_llm_client()
-    schools = await gen_list(session, llm, student_id, hints=hints_dict)
-    return {"status": "completed", "count": len(schools), "schools": schools}
+@router.post(
+    "/students/{student_id}/scenario-pack",
+    status_code=status.HTTP_200_OK,
+)
+async def generate_school_scenario_pack_endpoint(
+    student_id: uuid.UUID,
+    llm: AppLLMDep,
+    session: SessionDep,
+    hints: Optional[SchoolListHints] = None,
+) -> dict:
+    """Generate a deterministic baseline+scenario pack without mutating evaluations."""
+    student = await session.get(Student, student_id)
+    if student is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Student {student_id} not found",
+        )
+
+    preference_hints: list[str] = []
+    budget_cap_override: int | None = None
+    if hints:
+        if hints.preferences:
+            preference_hints = [str(item).strip() for item in hints.preferences if str(item).strip()]
+        if hints.budget_cap_usd and hints.budget_cap_usd > 0:
+            budget_cap_override = int(hints.budget_cap_usd)
+
+    from scholarpath.services.recommendation_service import generate_recommendations
+
+    payload = await generate_recommendations(
+        session,
+        llm,
+        student_id,
+        budget_cap_override=budget_cap_override,
+        preference_hints=preference_hints,
+        persist_evaluations=False,
+    )
+
+    return {
+        "status": "completed",
+        "scenario_pack": payload.get("scenario_pack"),
+        "prefilter_meta": payload.get("prefilter_meta"),
+        "count": len(payload.get("schools", [])),
+    }
 
 
 @router.get(
@@ -188,6 +236,7 @@ class SchoolLookupRequest(BaseModel):
 @router.post("/lookup", response_model=SchoolResponse)
 async def lookup_school(
     request: SchoolLookupRequest,
+    llm: AppLLMDep,
     session: SessionDep,
 ) -> School:
     """Search for a school by name. If not in DB, create it using LLM.
@@ -217,9 +266,6 @@ async def lookup_school(
         return school
 
     # 3. Not found — use LLM to generate school data
-    from scholarpath.llm.client import get_llm_client
-
-    llm = get_llm_client()
     prompt_messages = [
         {
             "role": "system",

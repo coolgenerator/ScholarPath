@@ -26,6 +26,17 @@ from .school import Program, School, SchoolType
 from .student import CurriculumType, Student
 from .token_usage import TokenUsage
 from .chat_session import ChatSession
+from .admission_pipeline import (
+    DocumentChunk,
+    Institution,
+    PolicyFact,
+    PolicyFactAudit,
+    RawDocument,
+    RawSourceSnapshot,
+    RawStructuredRecord,
+    SchoolMetricsYear,
+    SourceEntityMap,
+)
 
 __all__ = [
     "Base",
@@ -70,4 +81,15 @@ __all__ = [
     # Usage tracking
     "TokenUsage",
     "ChatSession",
+    # Phase-1 admissions pipeline
+    "RawSourceSnapshot",
+    "RawStructuredRecord",
+    "Institution",
+    "SourceEntityMap",
+    "SchoolMetricsYear",
+    # Phase-2 official facts pipeline
+    "RawDocument",
+    "DocumentChunk",
+    "PolicyFact",
+    "PolicyFactAudit",
 ]

@@ -1,0 +1,7 @@
+{
+  "name": "scholarpath-tooling",
+  "private": true,
+  "scripts": {
+    "capture:landing-shots": "npm --prefix frontend run capture:landing-shots"
+  }
+}

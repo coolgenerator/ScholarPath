@@ -7,7 +7,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
-from scholarpath.api.deps import SessionDep
+from scholarpath.api.deps import AppLLMDep, SessionDep
 from scholarpath.api.models.evaluation import (
     EvaluationResponse,
     TieredSchoolList,
@@ -15,6 +15,10 @@ from scholarpath.api.models.evaluation import (
 from scholarpath.db.models.evaluation import SchoolEvaluation
 from scholarpath.db.models.school import School
 from scholarpath.db.models.student import Student
+from scholarpath.services.evaluation_service import (
+    evaluate_school_fit as evaluate_school_fit_service,
+    get_tiered_list as get_tiered_list_service,
+)
 
 router = APIRouter(prefix="/evaluations", tags=["evaluations"])
 
@@ -37,6 +41,7 @@ async def _require_student(session, student_id: uuid.UUID) -> Student:
 async def evaluate_school_fit(
     student_id: uuid.UUID,
     school_id: uuid.UUID,
+    llm: AppLLMDep,
     session: SessionDep,
 ) -> SchoolEvaluation:
     """Evaluate how well a school fits a student's profile.
@@ -52,29 +57,13 @@ async def evaluate_school_fit(
             detail=f"School {school_id} not found",
         )
 
-    # Delegate to the evaluation pipeline (stub -- real implementation
-    # will call the causal + LLM pipeline).
-    try:
-        from scholarpath.pipeline import evaluate  # type: ignore[import-untyped]
-
-        evaluation = await evaluate(student, school, session)
-    except ImportError:
-        # Fallback: create a placeholder evaluation so the API contract works.
-        evaluation = SchoolEvaluation(
-            student_id=student_id,
-            school_id=school_id,
-            tier="target",
-            academic_fit=0.0,
-            financial_fit=0.0,
-            career_fit=0.0,
-            life_fit=0.0,
-            overall_score=0.0,
-            reasoning="Evaluation pipeline not yet implemented.",
-        )
-        session.add(evaluation)
-        await session.flush()
-        await session.refresh(evaluation)
-
+    evaluation = await evaluate_school_fit_service(
+        session,
+        llm,
+        student_id,
+        school_id,
+    )
+    await session.refresh(evaluation)
     return evaluation
 
 
@@ -108,22 +97,10 @@ async def get_tiered_list(
 ) -> TieredSchoolList:
     """Get evaluations organised by admission tier."""
     await _require_student(session, student_id)
-
-    stmt = select(SchoolEvaluation).where(
-        SchoolEvaluation.student_id == student_id,
+    tiered = await get_tiered_list_service(session, student_id)
+    return TieredSchoolList(
+        reach=tiered.get("reach", []),
+        target=tiered.get("target", []),
+        safety=tiered.get("safety", []),
+        likely=tiered.get("likely", []),
     )
-    result = await session.execute(stmt)
-    evaluations = result.scalars().all()
-
-    tiered: dict[str, list] = {
-        "reach": [],
-        "target": [],
-        "safety": [],
-        "likely": [],
-    }
-    for ev in evaluations:
-        tier_key = ev.tier.lower() if ev.tier else "target"
-        if tier_key in tiered:
-            tiered[tier_key].append(ev)
-
-    return TieredSchoolList(**tiered)

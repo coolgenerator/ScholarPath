@@ -100,7 +100,7 @@ async def test_get_causal_dataset_version_alias_route(client, session):
 
 
 @pytest.mark.asyncio
-async def test_causal_data_write_routes_are_deprecated(client, session):
+async def test_causal_data_write_routes_removed(client, session):
     student = await _create_student(client)
     school = await _create_school(session)
     await session.commit()
@@ -116,9 +116,7 @@ async def test_causal_data_write_routes_are_deprecated(client, session):
             "content_text": "legacy write should be rejected",
         },
     )
-    assert evidence_resp.status_code == 410, evidence_resp.text
-    assert "Deprecated write endpoint" in evidence_resp.json()["detail"]
-    assert evidence_resp.headers.get("deprecation") == "true"
+    assert evidence_resp.status_code == 404, evidence_resp.text
 
     event_resp = await client.post(
         f"/api/causal-data/students/{student['id']}/admission-events",
@@ -129,9 +127,7 @@ async def test_causal_data_write_routes_are_deprecated(client, session):
             "source_name": "compat_write",
         },
     )
-    assert event_resp.status_code == 410, event_resp.text
-    assert "Deprecated write endpoint" in event_resp.json()["detail"]
-    assert event_resp.headers.get("deprecation") == "true"
+    assert event_resp.status_code == 404, event_resp.text
 
     evidence_rows = int(
         (await session.scalar(select(func.count()).select_from(EvidenceArtifact))) or 0

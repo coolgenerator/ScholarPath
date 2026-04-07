@@ -5,13 +5,13 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, HTTPException, status
-from sqlalchemy import select
 
-from scholarpath.api.deps import SessionDep
+from scholarpath.api.deps import AppLLMDep, SessionDep
 from scholarpath.api.models.report import GoNoGoResponse
 from scholarpath.db.models.offer import Offer
 from scholarpath.db.models.report import GoNoGoReport
 from scholarpath.db.models.student import Student
+from scholarpath.services.report_service import generate_go_no_go as generate_go_no_go_service
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -24,6 +24,7 @@ router = APIRouter(prefix="/reports", tags=["reports"])
 async def generate_go_no_go(
     student_id: uuid.UUID,
     offer_id: uuid.UUID,
+    llm: AppLLMDep,
     session: SessionDep,
 ) -> GoNoGoReport:
     """Generate a Go/No-Go recommendation report for a specific offer."""
@@ -41,32 +42,13 @@ async def generate_go_no_go(
             detail=f"Offer {offer_id} not found for student {student_id}",
         )
 
-    # Delegate to the report generation pipeline
-    try:
-        from scholarpath.pipeline import generate_report  # type: ignore[import-untyped]
-
-        report = await generate_report(student, offer, session)
-    except ImportError:
-        # Stub report until pipeline is implemented
-        report = GoNoGoReport(
-            student_id=student_id,
-            offer_id=offer_id,
-            overall_score=0.0,
-            confidence_lower=0.0,
-            confidence_upper=0.0,
-            academic_score=0.0,
-            financial_score=0.0,
-            career_score=0.0,
-            life_score=0.0,
-            recommendation="neutral",
-            top_factors=[],
-            risks=[],
-            narrative="Report generation pipeline not yet implemented.",
-        )
-        session.add(report)
-        await session.flush()
-        await session.refresh(report)
-
+    report = await generate_go_no_go_service(
+        session,
+        llm,
+        student_id,
+        offer_id,
+    )
+    await session.refresh(report)
     return report
 
 

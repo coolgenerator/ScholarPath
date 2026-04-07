@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite'
 import path from 'path'
+import fs from 'fs'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 
@@ -46,12 +47,70 @@ function isMarkdownPackage(packageName: string) {
   return MARKDOWN_VENDOR_PACKAGES.has(packageName) || MARKDOWN_VENDOR_PREFIXES.some((prefix) => packageName.startsWith(prefix))
 }
 
+function copyUiShotsPlugin() {
+  return {
+    name: 'copy-ui-shots',
+    closeBundle() {
+      const sourceDir = path.resolve(__dirname, 'output/ui-shots')
+      const targetDir = path.resolve(__dirname, 'dist/output/ui-shots')
+
+      if (!fs.existsSync(sourceDir)) {
+        return
+      }
+
+      fs.mkdirSync(targetDir, { recursive: true })
+      fs.cpSync(sourceDir, targetDir, { recursive: true, force: true })
+    },
+  }
+}
+
+function getMimeType(filePath: string) {
+  const extension = path.extname(filePath)
+
+  if (extension === '.png') return 'image/png'
+  if (extension === '.jpg' || extension === '.jpeg') return 'image/jpeg'
+  if (extension === '.webp') return 'image/webp'
+  if (extension === '.svg') return 'image/svg+xml'
+
+  return 'application/octet-stream'
+}
+
+function serveUiShotsPlugin() {
+  const sourceDir = path.resolve(__dirname, 'output/ui-shots')
+
+  return {
+    name: 'serve-ui-shots',
+    configureServer(server: import('vite').ViteDevServer) {
+      server.middlewares.use('/output/ui-shots', (req, res, next) => {
+        const requestPath = decodeURIComponent((req.url ?? '/').split('?')[0]).replace(/^\/+/, '')
+        const filePath = path.resolve(sourceDir, requestPath)
+
+        if (!filePath.startsWith(sourceDir)) {
+          res.statusCode = 403
+          res.end('Forbidden')
+          return
+        }
+
+        if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+          next()
+          return
+        }
+
+        res.setHeader('Content-Type', getMimeType(filePath))
+        fs.createReadStream(filePath).pipe(res)
+      })
+    },
+  }
+}
+
 export default defineConfig({
   plugins: [
     // The React and Tailwind plugins are both required for Make, even if
     // Tailwind is not being actively used – do not remove them
     react(),
     tailwindcss(),
+    serveUiShotsPlugin(),
+    copyUiShotsPlugin(),
   ],
   resolve: {
     alias: {

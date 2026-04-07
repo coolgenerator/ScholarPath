@@ -140,9 +140,9 @@ docker compose exec redis redis-cli -n 0 DEL deep_search conflict
 #   localhost:56379        — Redis
 
 # Seed school data + demo student
-curl -X POST http://localhost:8000/api/api/seed/schools
-curl -X POST http://localhost:8000/api/api/seed/demo-student
-curl -X POST http://localhost:8000/api/api/seed/demo-evaluations
+curl -X POST http://localhost:8000/api/seed/schools
+curl -X POST http://localhost:8000/api/seed/demo-student
+curl -X POST http://localhost:8000/api/seed/demo-evaluations
 
 # Enrich with real data via LLM
 curl -X POST http://localhost:8000/api/enrich/schools
@@ -177,9 +177,13 @@ WEB_SEARCH_API_URL=
 WEB_SEARCH_API_KEY=
 GOOGLE_API_KEY=your-gemini-api-key
 SCORECARD_API_KEY=your-data-gov-college-scorecard-api-key
+SCORECARD_BULK_URL=https://ed-public-download.scorecard.network/downloads/Most-Recent-Cohorts-Institution_05192025.zip
+SCORECARD_BULK_PATH=
 # Optional: IPEDS/CN official bulk dataset (CSV/JSON)
 IPEDS_DATASET_URL=
 IPEDS_DATASET_PATH=
+IPEDS_COMPLETIONS_DATASET_URL=
+IPEDS_COMPLETIONS_DATASET_PATH=
 # Optional: Common App trend-only dataset (CSV/JSON)
 COMMON_APP_TREND_URL=
 COMMON_APP_TREND_PATH=
@@ -208,6 +212,45 @@ python -m scholarpath.scripts.causal_real_admission_pipeline \
 
 The script enforces `Gate0 (docker+alembic+tables) -> mini gate -> full stage4 K=3` and does **not** auto-promote the full-run champion. Common App signals are trend-only and are not used as causal truth labels.
 
+### Phase4 Training Prep (strict true-only multi-outcome)
+
+```bash
+python -m scholarpath.scripts.admission_data_phase4_training_prep \
+  --lookback-days 540 \
+  --target-eligible-snapshots 3500 \
+  --target-rpm-total 180 \
+  --rpm-band-low 170 \
+  --rpm-band-high 185 \
+  --output-dir .benchmarks/official_phase4
+```
+
+This prep materializes non-admission `true` labels from official school-year facts only:
+- `academic_outcome <- graduation_rate_4yr`
+- `career_outcome <- percentile_rank(median_earnings_10yr, by metric_year)`
+- `life_satisfaction <- retention_rate`
+- `phd_probability <- doctoral_completions_share`
+
+Artifacts are written to `stage_readiness.json` and `stage_readiness.md`.
+
+### Admission Phase1 (Bronze/Silver + closure gate)
+
+```bash
+python -m scholarpath.scripts.admission_data_phase1_pipeline \
+  --scope existing_65 \
+  --output-dir .benchmarks/official_phase1
+```
+
+Default gate is strict and exits non-zero on failure:
+- `mapped_school_rate == 1.0`
+- `admit_rate_school_coverage >= 0.95`
+- `avg_net_price_school_coverage >= 0.95`
+- `college_scorecard_bulk.rows_read > 0`
+- `admission_events` and `causal_outcome_events` must remain unchanged
+
+Troubleshooting:
+- Check `phase1_report.json` `gate.reasons` and `truth_counts`.
+- Use `--no-gate` only for diagnostics; do not use it for normal batch closure.
+
 ## API Endpoints
 
 | Endpoint | Description |
@@ -215,6 +258,7 @@ The script enforces `Gate0 (docker+alembic+tables) -> mini gate -> full stage4 K
 | `WS /api/chat/chat/{sessionId}` | Real-time chat via WebSocket |
 | `GET /api/chat/history/{sessionId}` | Load chat history |
 | `GET /api/schools/` | Search & list schools |
+| `POST /api/schools/students/{id}/school-list` | Generate school list (synchronous) |
 | `GET /api/evaluations/students/{id}/tiers` | Tiered school list |
 | `POST /api/offers/students/{id}/offers` | Record admission offers |
 | `POST /api/simulations/students/{id}/schools/{id}/what-if` | Causal what-if simulation |
@@ -225,8 +269,12 @@ The script enforces `Gate0 (docker+alembic+tables) -> mini gate -> full stage4 K
 | `POST /api/students/{id}/admission-evidence` | Write evidence artifact (authoritative) |
 | `POST /api/students/{id}/admission-events` | Write admission event (authoritative) |
 | `GET /api/causal/datasets/{version}` | Read causal dataset version |
+| `GET /api/tasks/{task_id}` | Poll task status |
+| `GET /api/tasks/{task_id}/result` | Read completed task result |
 
-`/api/causal-data/*` write routes are deprecated compatibility endpoints and return `410 Gone`.
+`/api/causal-data/*` write routes were removed. Use `/api/students/{id}/admission-evidence` and `/api/students/{id}/admission-events`.
+
+`/api/simulations/students/{id}/compare-scenarios` now requires each scenario item to include `school_id`.
 
 ## Project Structure
 

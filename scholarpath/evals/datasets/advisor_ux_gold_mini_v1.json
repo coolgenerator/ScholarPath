@@ -1,0 +1,17 @@
+{
+  "dataset_id": "advisor_ux_gold_mini_v1",
+  "version": "1",
+  "rubric_dimensions": [
+    "task_completion",
+    "personalization_fit",
+    "clarity_actionability",
+    "interaction_fluency",
+    "execution_chain_transparency",
+    "robustness_consistency",
+    "tone_experience"
+  ],
+  "generator": {
+    "case_count": 30,
+    "seed": "advisor-ux-gold-v1"
+  }
+}

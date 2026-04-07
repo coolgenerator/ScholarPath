@@ -10,7 +10,7 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel
 from sqlalchemy import func, select
 
-from scholarpath.api.deps import SessionDep
+from scholarpath.api.deps import AppLLMDep, SessionDep
 from scholarpath.db.models.token_usage import TokenUsage
 
 router = APIRouter(prefix="/usage", tags=["usage"])
@@ -143,6 +143,7 @@ async def get_usage_summary(
 
 @router.get("/llm-endpoints", response_model=LLMEndpointHealth)
 async def get_llm_endpoint_health(
+    llm: AppLLMDep,
     window_seconds: int = Query(
         default=60,
         ge=1,
@@ -151,9 +152,6 @@ async def get_llm_endpoint_health(
     ),
 ) -> dict[str, Any]:
     """Get per-key LLM endpoint health and recent-window counters."""
-    from scholarpath.llm.client import get_llm_client
-
-    llm = get_llm_client()
     return await llm.endpoint_health(window_seconds=window_seconds)
 
 

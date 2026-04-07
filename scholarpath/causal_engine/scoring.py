@@ -104,8 +104,21 @@ def compute_pywhy_raw_scores(view: CausalFeatureView) -> dict[str, float]:
     )
     academic = _clip01(0.60 * academic_match + 0.25 * grad_rate + 0.15 * support)
     career = _clip01(0.40 * academic + 0.35 * endowment + 0.25 * location)
-    life = _clip01(0.45 * support + 0.30 * location + 0.25 * (1.0 - affordability_gap))
-    phd = _clip01(0.5 * academic + 0.3 * career + 0.2 * endowment)
+    # Raw scoring v2 keeps admission/academic/career stable and only refreshes
+    # life/phd formulas to better align with school-year supervision.
+    life = _clip01(
+        0.40 * support
+        + 0.25 * location
+        + 0.20 * (1.0 - affordability_gap)
+        + 0.15 * (1.0 - selectivity)
+    )
+    phd = _clip01(
+        0.35 * academic
+        + 0.25 * selectivity
+        + 0.20 * grad_rate
+        + 0.20 * endowment
+        - 0.20
+    )
 
     return {
         "admission_probability": admission,
@@ -114,4 +127,3 @@ def compute_pywhy_raw_scores(view: CausalFeatureView) -> dict[str, float]:
         "life_satisfaction": life,
         "phd_probability": phd,
     }
-

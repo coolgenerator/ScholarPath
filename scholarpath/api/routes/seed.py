@@ -13,7 +13,7 @@ from scholarpath.db.models import Offer, School, SchoolEvaluation, Student
 from scholarpath.db.session import get_session
 from scholarpath.llm.embeddings import get_embedding_service
 
-router = APIRouter(prefix="/api/seed", tags=["seed"])
+router = APIRouter(prefix="/seed", tags=["seed"])
 
 # ---------------------------------------------------------------------------
 # Sample school data
@@ -433,12 +433,12 @@ async def seed_demo_evaluations(session: AsyncSession = Depends(get_session)):
     for school in schools:
         # Skip if evaluation already exists
         existing = await session.execute(
-            select(SchoolEvaluation).where(
+            select(SchoolEvaluation.id).where(
                 SchoolEvaluation.student_id == student.id,
                 SchoolEvaluation.school_id == school.id,
-            )
+            ).limit(1)
         )
-        if existing.scalar_one_or_none() is not None:
+        if existing.scalar() is not None:
             continue
 
         tier = _SCHOOL_TIERS.get(school.name, "target")
@@ -602,12 +602,12 @@ async def seed_demo_offers(session: AsyncSession = Depends(get_session)):
 
         # Skip if offer already exists for this student+school
         existing = await session.execute(
-            select(Offer).where(
+            select(Offer.id).where(
                 Offer.student_id == student.id,
                 Offer.school_id == school.id,
-            )
+            ).limit(1)
         )
-        if existing.scalar_one_or_none() is not None:
+        if existing.scalar() is not None:
             continue
 
         total_aid = (

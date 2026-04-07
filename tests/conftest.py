@@ -52,6 +52,60 @@ pgvector.sqlalchemy.Vector = _FakeVector  # type: ignore[attr-defined]
 from scholarpath.db.models.base import Base  # noqa: E402
 
 
+class _FakeLLMClient:
+    async def complete(self, _messages, **_kwargs):
+        return "mock-llm-response"
+
+    async def complete_json(self, _messages, **_kwargs):
+        return {
+            "schools": [
+                {
+                    "school_name": "Mock University",
+                    "reasoning": "mock reasoning",
+                    "academic_fit": 0.8,
+                    "financial_fit": 0.7,
+                    "career_fit": 0.75,
+                    "life_fit": 0.72,
+                    "overall_score": 0.76,
+                    "admission_probability": 0.58,
+                }
+            ],
+            "name": "Mock University",
+            "city": "Mock City",
+            "state": "CA",
+            "school_type": "university",
+            "size_category": "medium",
+            "ed_recommendation": {"school": "Mock University", "rationale": "mock"},
+            "ea_recommendations": [],
+            "rd_recommendations": [],
+            "risk_analysis": "mock",
+            "timeline": "mock",
+        }
+
+    async def endpoint_health(self, *, window_seconds: int = 60) -> dict:
+        return {
+            "window_seconds": window_seconds,
+            "observer_enabled": True,
+            "observer_error": None,
+            "endpoints": [
+                {
+                    "index": 0,
+                    "key_id": "abc123",
+                    "requests_total": 42,
+                    "errors_total": 2,
+                    "rate_limit_total": 1,
+                    "timeout_total": 0,
+                    "requests_window": 10.0,
+                    "errors_window": 1.0,
+                    "rate_limit_window": 1.0,
+                    "timeout_window": 0.0,
+                    "latency_ms_avg": 820.5,
+                    "cooldown_active": False,
+                },
+            ],
+        }
+
+
 # ---------------------------------------------------------------------------
 # Async SQLite engine + session fixtures
 # ---------------------------------------------------------------------------
@@ -121,12 +175,17 @@ async def client(engine):
     mock_embedding_svc.embed_text.return_value = [0.0] * 10
 
     from scholarpath.api.deps import get_embeddings
+    from scholarpath.api.deps import get_app_llm
 
     async def _override_embeddings():
         yield mock_embedding_svc
 
+    async def _override_app_llm():
+        yield _FakeLLMClient()
+
     app.dependency_overrides[get_session] = _override_session
     app.dependency_overrides[get_embeddings] = _override_embeddings
+    app.dependency_overrides[get_app_llm] = _override_app_llm
     # Force all runtime best-effort DB writes (e.g. usage tracker) to reuse test DB.
     db_session_module.async_session_factory = factory
 

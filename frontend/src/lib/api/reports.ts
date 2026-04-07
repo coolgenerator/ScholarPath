@@ -1,5 +1,5 @@
 import { api } from './index';
-import type { GoNoGoReport, TaskStatusResponse } from '../types';
+import type { GoNoGoReport } from '../types';
 
 export const reportsApi = {
   generateGoNoGo(studentId: string, offerId: string) {
@@ -7,9 +7,6 @@ export const reportsApi = {
   },
   get(reportId: string) {
     return api.get<GoNoGoReport>(`/reports/reports/${reportId}`);
-  },
-  getTask(taskId: string) {
-    return api.get<TaskStatusResponse>(`/tasks/tasks/${taskId}`);
   },
 };
 

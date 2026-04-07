@@ -22,6 +22,9 @@ async def handle_strategy(
     memory: ChatMemory,
     student_id: uuid.UUID,
     message: str,
+    *,
+    max_tokens: int = 640,
+    per_tier_limit: int = 6,
 ) -> str:
     """Generate application strategy advice using the evaluation service.
 
@@ -58,6 +61,8 @@ async def handle_strategy(
             llm,
             student_id,
             response_language=response_lang,
+            max_tokens=max_tokens,
+            per_tier_limit=per_tier_limit,
         )
     except Exception:
         logger.warning("Strategy generation failed", exc_info=True)

@@ -552,8 +552,43 @@
     @apply min-h-9 rounded-lg px-3 py-1.5 text-xs;
   }
 
+  .dashboard-segmented-item[data-accent='marketing'] {
+    border-color: rgba(23, 48, 75, 0.08);
+    background:
+      linear-gradient(180deg, rgba(255, 251, 245, 0.98), rgba(244, 235, 221, 0.94));
+    color: rgba(23, 48, 75, 0.86);
+    box-shadow:
+      0 0 0 1px rgba(23, 48, 75, 0.02),
+      0 12px 28px rgba(15, 23, 42, 0.05);
+  }
+
+  .dashboard-segmented-item[data-accent='marketing']:hover {
+    border-color: rgba(23, 48, 75, 0.16);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(246, 239, 229, 0.98));
+    color: rgba(16, 37, 61, 0.96);
+    box-shadow:
+      0 0 0 1px rgba(23, 48, 75, 0.04),
+      0 16px 30px rgba(15, 23, 42, 0.08);
+  }
+
+  .dashboard-segmented-item[data-accent='marketing']:focus-visible {
+    border-color: rgba(23, 48, 75, 0.42);
+    box-shadow:
+      0 0 0 3px rgba(23, 48, 75, 0.14),
+      0 18px 42px rgba(15, 23, 42, 0.1);
+  }
+
   .dashboard-segmented-item[data-state='on'] {
     @apply border-transparent text-on-primary;
+  }
+
+  .dashboard-segmented-item[data-state='on'][data-accent='marketing'] {
+    background: linear-gradient(135deg, #17304b, #0f2237);
+    color: #fff6e9;
+    box-shadow:
+      0 0 0 1px rgba(208, 155, 82, 0.16),
+      0 20px 38px rgba(12, 27, 45, 0.2);
   }
 
   .dashboard-segmented-item[data-state='on'][data-accent='primary'],

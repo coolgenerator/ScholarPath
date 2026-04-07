@@ -1,0 +1,320 @@
+{
+  "dataset_id": "recommendation_gold_v1",
+  "version": "v1",
+  "notes": "Deterministic gold set for recommendation prefilter + scenario ranking.",
+  "cases": [
+    {
+      "case_id": "budget_hard_gate_001",
+      "description": "Budget hard gate keeps eligible schools and top-3 stretch only.",
+      "student_budget_usd": 50000,
+      "budget_cap_override": 10000,
+      "student_majors": ["Computer Science"],
+      "preferences": {"location": ["urban"]},
+      "schools": [
+        {
+          "school_id": "A",
+          "school_name": "Budget Urban CS",
+          "overall_score": 0.81,
+          "admission_probability": 0.62,
+          "sub_scores": {"academic": 0.72, "financial": 0.66, "career": 0.64, "life": 0.71},
+          "school_info": {"avg_net_price": 9000, "acceptance_rate": 0.31, "state": "CA", "city": "San Jose", "campus_setting": "urban"},
+          "program_names": ["Computer Science", "Data Science"]
+        },
+        {
+          "school_id": "B",
+          "school_name": "Budget Safe",
+          "overall_score": 0.76,
+          "admission_probability": 0.71,
+          "sub_scores": {"academic": 0.68, "financial": 0.72, "career": 0.58, "life": 0.64},
+          "school_info": {"avg_net_price": 8000, "acceptance_rate": 0.44, "state": "CA", "city": "Davis", "campus_setting": "suburban"},
+          "program_names": ["Economics"]
+        },
+        {
+          "school_id": "C",
+          "school_name": "Stretch ROI",
+          "overall_score": 0.95,
+          "admission_probability": 0.49,
+          "sub_scores": {"academic": 0.77, "financial": 0.55, "career": 0.89, "life": 0.66},
+          "school_info": {"avg_net_price": 12000, "acceptance_rate": 0.17, "state": "MA", "city": "Boston", "campus_setting": "urban"},
+          "program_names": ["Computer Science", "Engineering"]
+        },
+        {
+          "school_id": "D",
+          "school_name": "Stretch Premium",
+          "overall_score": 0.88,
+          "admission_probability": 0.54,
+          "sub_scores": {"academic": 0.75, "financial": 0.52, "career": 0.79, "life": 0.69},
+          "school_info": {"avg_net_price": 14000, "acceptance_rate": 0.25, "state": "CA", "city": "Los Angeles", "campus_setting": "urban"},
+          "program_names": ["Business", "Economics"]
+        },
+        {
+          "school_id": "E",
+          "school_name": "Stretch High Prestige",
+          "overall_score": 0.83,
+          "admission_probability": 0.43,
+          "sub_scores": {"academic": 0.82, "financial": 0.48, "career": 0.83, "life": 0.63},
+          "school_info": {"avg_net_price": 16000, "acceptance_rate": 0.13, "state": "NY", "city": "New York", "campus_setting": "urban"},
+          "program_names": ["Physics"]
+        },
+        {
+          "school_id": "F",
+          "school_name": "Over Budget Excluded",
+          "overall_score": 0.74,
+          "admission_probability": 0.61,
+          "sub_scores": {"academic": 0.66, "financial": 0.50, "career": 0.57, "life": 0.60},
+          "school_info": {"avg_net_price": 22000, "acceptance_rate": 0.52, "state": "AZ", "city": "Tempe", "campus_setting": "urban"},
+          "program_names": ["Mathematics"]
+        },
+        {
+          "school_id": "G",
+          "school_name": "Missing Net Price",
+          "overall_score": 0.99,
+          "admission_probability": 0.36,
+          "sub_scores": {"academic": 0.88, "financial": 0.50, "career": 0.90, "life": 0.71},
+          "school_info": {"avg_net_price": null, "acceptance_rate": 0.09, "state": "CA", "city": "Pasadena", "campus_setting": "urban"},
+          "program_names": ["Computer Science"]
+        }
+      ],
+      "expectations": {
+        "max_stretch": 3,
+        "top1_by_scenario": {"budget_first": "B"},
+        "topk_contains_by_scenario": {"roi_first": ["C"]},
+        "topk": 3,
+        "baseline_forbidden_ids": ["F", "G"],
+        "min_eligible_count": 2,
+        "excluded_reason_at_least": {"over_budget": 1, "missing_net_price": 1}
+      }
+    },
+    {
+      "case_id": "major_priority_001",
+      "description": "major_first should push major-aligned school to top.",
+      "student_budget_usd": null,
+      "budget_cap_override": null,
+      "student_majors": ["Computer Science"],
+      "preferences": {},
+      "schools": [
+        {
+          "school_id": "CS1",
+          "school_name": "CS Match University",
+          "overall_score": 0.71,
+          "admission_probability": 0.61,
+          "sub_scores": {"academic": 0.77, "financial": 0.62, "career": 0.68, "life": 0.63},
+          "school_info": {"avg_net_price": 19000, "acceptance_rate": 0.36, "state": "WA", "city": "Seattle", "campus_setting": "urban"},
+          "program_names": ["Computer Science", "Data Science"]
+        },
+        {
+          "school_id": "ECO1",
+          "school_name": "Economics Flagship",
+          "overall_score": 0.87,
+          "admission_probability": 0.74,
+          "sub_scores": {"academic": 0.79, "financial": 0.66, "career": 0.81, "life": 0.72},
+          "school_info": {"avg_net_price": 21000, "acceptance_rate": 0.29, "state": "IL", "city": "Chicago", "campus_setting": "urban"},
+          "program_names": ["Economics", "Finance"]
+        },
+        {
+          "school_id": "BIO1",
+          "school_name": "Bio College",
+          "overall_score": 0.83,
+          "admission_probability": 0.67,
+          "sub_scores": {"academic": 0.73, "financial": 0.65, "career": 0.70, "life": 0.68},
+          "school_info": {"avg_net_price": 17000, "acceptance_rate": 0.41, "state": "NC", "city": "Raleigh", "campus_setting": "suburban"},
+          "program_names": ["Biology", "Chemistry"]
+        }
+      ],
+      "expectations": {
+        "top1_by_scenario": {"major_first": "CS1"}
+      }
+    },
+    {
+      "case_id": "geo_priority_001",
+      "description": "geo_first prioritizes state + campus preference.",
+      "student_budget_usd": 45000,
+      "budget_cap_override": null,
+      "student_majors": [],
+      "preferences": {"location": ["CA", "urban"]},
+      "schools": [
+        {
+          "school_id": "CAU",
+          "school_name": "Urban California",
+          "overall_score": 0.73,
+          "admission_probability": 0.68,
+          "sub_scores": {"academic": 0.74, "financial": 0.62, "career": 0.69, "life": 0.82},
+          "school_info": {"avg_net_price": 18000, "acceptance_rate": 0.38, "state": "CA", "city": "San Diego", "campus_setting": "urban"},
+          "program_names": ["Economics"]
+        },
+        {
+          "school_id": "CAS",
+          "school_name": "Suburban California",
+          "overall_score": 0.82,
+          "admission_probability": 0.70,
+          "sub_scores": {"academic": 0.77, "financial": 0.65, "career": 0.75, "life": 0.57},
+          "school_info": {"avg_net_price": 17000, "acceptance_rate": 0.34, "state": "CA", "city": "Irvine", "campus_setting": "suburban"},
+          "program_names": ["Business"]
+        },
+        {
+          "school_id": "TXU",
+          "school_name": "Urban Texas",
+          "overall_score": 0.85,
+          "admission_probability": 0.73,
+          "sub_scores": {"academic": 0.79, "financial": 0.66, "career": 0.78, "life": 0.70},
+          "school_info": {"avg_net_price": 16000, "acceptance_rate": 0.40, "state": "TX", "city": "Austin", "campus_setting": "urban"},
+          "program_names": ["Computer Science"]
+        }
+      ],
+      "expectations": {
+        "top1_by_scenario": {"geo_first": "CAU"}
+      }
+    },
+    {
+      "case_id": "risk_priority_001",
+      "description": "risk_first promotes highest admission/acceptance stability.",
+      "student_budget_usd": null,
+      "budget_cap_override": null,
+      "student_majors": [],
+      "preferences": {},
+      "schools": [
+        {
+          "school_id": "SAFE",
+          "school_name": "Safe Choice",
+          "overall_score": 0.77,
+          "admission_probability": 0.86,
+          "sub_scores": {"academic": 0.68, "financial": 0.69, "career": 0.62, "life": 0.65},
+          "school_info": {"avg_net_price": 18000, "acceptance_rate": 0.70, "state": "OH", "city": "Columbus", "campus_setting": "urban"},
+          "program_names": ["Psychology"]
+        },
+        {
+          "school_id": "MID",
+          "school_name": "Mid Selective",
+          "overall_score": 0.82,
+          "admission_probability": 0.71,
+          "sub_scores": {"academic": 0.74, "financial": 0.64, "career": 0.71, "life": 0.67},
+          "school_info": {"avg_net_price": 21000, "acceptance_rate": 0.42, "state": "PA", "city": "Pittsburgh", "campus_setting": "urban"},
+          "program_names": ["Business"]
+        },
+        {
+          "school_id": "REACH",
+          "school_name": "Reach Prestige",
+          "overall_score": 0.91,
+          "admission_probability": 0.46,
+          "sub_scores": {"academic": 0.88, "financial": 0.50, "career": 0.88, "life": 0.63},
+          "school_info": {"avg_net_price": 26000, "acceptance_rate": 0.12, "state": "MA", "city": "Cambridge", "campus_setting": "urban"},
+          "program_names": ["Engineering"]
+        }
+      ],
+      "expectations": {
+        "top1_by_scenario": {"risk_first": "SAFE"}
+      }
+    },
+    {
+      "case_id": "roi_priority_001",
+      "description": "roi_first prioritizes career return with budget awareness.",
+      "student_budget_usd": 45000,
+      "budget_cap_override": 12000,
+      "student_majors": ["Economics"],
+      "preferences": {},
+      "schools": [
+        {
+          "school_id": "ROI",
+          "school_name": "ROI Star",
+          "overall_score": 0.81,
+          "admission_probability": 0.60,
+          "sub_scores": {"academic": 0.85, "financial": 0.70, "career": 0.90, "life": 0.68},
+          "school_info": {"avg_net_price": 11000, "acceptance_rate": 0.30, "state": "CA", "city": "San Jose", "campus_setting": "urban"},
+          "program_names": ["Economics"]
+        },
+        {
+          "school_id": "CHEAP",
+          "school_name": "Low Cost Low ROI",
+          "overall_score": 0.78,
+          "admission_probability": 0.82,
+          "sub_scores": {"academic": 0.60, "financial": 0.85, "career": 0.55, "life": 0.72},
+          "school_info": {"avg_net_price": 8000, "acceptance_rate": 0.66, "state": "TX", "city": "Dallas", "campus_setting": "urban"},
+          "program_names": ["Sociology"]
+        },
+        {
+          "school_id": "EXP",
+          "school_name": "Expensive Elite",
+          "overall_score": 0.89,
+          "admission_probability": 0.55,
+          "sub_scores": {"academic": 0.87, "financial": 0.45, "career": 0.95, "life": 0.65},
+          "school_info": {"avg_net_price": 18000, "acceptance_rate": 0.16, "state": "NY", "city": "New York", "campus_setting": "urban"},
+          "program_names": ["Economics", "Finance"]
+        }
+      ],
+      "expectations": {
+        "top1_by_scenario": {"roi_first": "ROI"},
+        "max_stretch": 3,
+        "min_eligible_count": 2
+      }
+    },
+    {
+      "case_id": "stretch_quota_001",
+      "description": "Only top-3 over-budget schools survive as stretch.",
+      "student_budget_usd": 35000,
+      "budget_cap_override": 10000,
+      "student_majors": [],
+      "preferences": {"location": ["suburban"]},
+      "schools": [
+        {
+          "school_id": "E1",
+          "school_name": "Eligible One",
+          "overall_score": 0.72,
+          "admission_probability": 0.70,
+          "sub_scores": {"academic": 0.64, "financial": 0.80, "career": 0.58, "life": 0.62},
+          "school_info": {"avg_net_price": 9000, "acceptance_rate": 0.55, "state": "FL", "city": "Gainesville", "campus_setting": "suburban"},
+          "program_names": ["Business"]
+        },
+        {
+          "school_id": "S1",
+          "school_name": "Stretch 1",
+          "overall_score": 0.94,
+          "admission_probability": 0.52,
+          "sub_scores": {"academic": 0.86, "financial": 0.52, "career": 0.90, "life": 0.66},
+          "school_info": {"avg_net_price": 13000, "acceptance_rate": 0.21, "state": "CA", "city": "Berkeley", "campus_setting": "urban"},
+          "program_names": ["Engineering"]
+        },
+        {
+          "school_id": "S2",
+          "school_name": "Stretch 2",
+          "overall_score": 0.90,
+          "admission_probability": 0.58,
+          "sub_scores": {"academic": 0.79, "financial": 0.55, "career": 0.83, "life": 0.64},
+          "school_info": {"avg_net_price": 14000, "acceptance_rate": 0.27, "state": "CA", "city": "Irvine", "campus_setting": "suburban"},
+          "program_names": ["Computer Science"]
+        },
+        {
+          "school_id": "S3",
+          "school_name": "Stretch 3",
+          "overall_score": 0.86,
+          "admission_probability": 0.61,
+          "sub_scores": {"academic": 0.75, "financial": 0.56, "career": 0.76, "life": 0.67},
+          "school_info": {"avg_net_price": 15000, "acceptance_rate": 0.32, "state": "NC", "city": "Durham", "campus_setting": "suburban"},
+          "program_names": ["Biology"]
+        },
+        {
+          "school_id": "S4",
+          "school_name": "Over Budget Excluded 1",
+          "overall_score": 0.78,
+          "admission_probability": 0.66,
+          "sub_scores": {"academic": 0.69, "financial": 0.60, "career": 0.66, "life": 0.63},
+          "school_info": {"avg_net_price": 18000, "acceptance_rate": 0.47, "state": "OH", "city": "Cleveland", "campus_setting": "urban"},
+          "program_names": ["History"]
+        },
+        {
+          "school_id": "S5",
+          "school_name": "Over Budget Excluded 2",
+          "overall_score": 0.74,
+          "admission_probability": 0.68,
+          "sub_scores": {"academic": 0.66, "financial": 0.61, "career": 0.63, "life": 0.62},
+          "school_info": {"avg_net_price": 20000, "acceptance_rate": 0.53, "state": "TX", "city": "Houston", "campus_setting": "urban"},
+          "program_names": ["Education"]
+        }
+      ],
+      "expectations": {
+        "max_stretch": 3,
+        "min_eligible_count": 1,
+        "excluded_reason_at_least": {"over_budget": 2}
+      }
+    }
+  ]
+}

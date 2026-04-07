@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -30,10 +31,18 @@ class WhatIfResponse(BaseModel):
     explanation: str
 
 
+class ScenarioCompareItem(BaseModel):
+    """Single scenario item for side-by-side comparison."""
+
+    school_id: uuid.UUID
+    interventions: dict[str, float | str] = Field(..., min_length=1)
+    label: str | None = None
+
+
 class ScenarioCompareRequest(BaseModel):
     """Request body for comparing multiple what-if scenarios."""
 
-    scenarios: list[WhatIfRequest] = Field(..., min_length=2)
+    scenarios: list[ScenarioCompareItem] = Field(..., min_length=2)
 
 
 class ScenarioCompareResponse(BaseModel):

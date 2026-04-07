@@ -41,6 +41,7 @@ _RATE_FIELDS = {
     "graduation_rate",
     "graduation_rate_4yr",
     "retention_rate",
+    "doctoral_completions_share",
     "intl_student_pct",
 }
 
@@ -78,6 +79,8 @@ _FIELD_ALIAS_MAP: dict[str, str] = {
     "state": "state",
     "campus_setting": "campus_setting",
     "median_earnings_10yr": "median_earnings_10yr",
+    "doctoral_completions_share": "doctoral_completions_share",
+    "phd_share": "doctoral_completions_share",
     "graduation_rate": "graduation_rate",
     "graduation_rate_4yr": "graduation_rate_4yr",
     "act_25": "act_25",

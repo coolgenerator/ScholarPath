@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useMemo, useEffect, useCall
 import { useNavigate, useLocation } from 'react-router';
 import { locales, Locale } from '../i18n';
 import { studentsApi } from '../lib/api/students';
+import { createSessionId } from '../lib/workspaceSession';
 
 // localStorage helpers for Set<string> persistence
 function loadSet(key: string): Set<string> {
@@ -43,10 +44,6 @@ interface AppContextValue {
 
 const AppContext = createContext<AppContextValue | null>(null);
 
-function generateSessionId(): string {
-  return crypto.randomUUID?.() ?? `session-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -75,7 +72,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [sessionId, setSessionIdState] = useState<string>(() => {
     // Priority: URL > localStorage > new
     if (isBlankSession) return '';
-    return urlSessionId || localStorage.getItem('sp_session_id') || generateSessionId();
+    return urlSessionId || localStorage.getItem('sp_session_id') || createSessionId();
   });
   const [studentName, setStudentNameState] = useState<string | null>(() => {
     return localStorage.getItem('sp_student_name') || null;
@@ -149,7 +146,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [blacklistedSchoolIds, setBlacklistedSchoolIds] = useState<Set<string>>(new Set());
 
   const [locale, setLocaleState] = useState<Locale>(() => {
-    return (localStorage.getItem('sp_locale') as Locale) || 'en';
+    const storedLocale = localStorage.getItem('sp_locale');
+    return storedLocale === 'en' || storedLocale === 'zh' ? storedLocale : 'zh';
   });
   const t = locales[locale];
   const setLocale = useCallback((l: Locale) => {
@@ -198,18 +196,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!isDev || !studentBootstrapReady) return;
 
     // Seed schools (idempotent — skips existing)
-    fetch('/api/api/seed/schools', { method: 'POST' }).catch(() => {});
+    fetch('/api/seed/schools', { method: 'POST' }).catch(() => {});
 
     if (studentId) return;
-    fetch('/api/api/seed/demo-student', { method: 'POST' })
+    fetch('/api/seed/demo-student', { method: 'POST' })
       .then((r) => r.json())
       .then((data) => {
         if (data.student_id) {
           setStudentId(data.student_id);
           setStudentName('Demo Student');
           // Also seed demo evaluations + offers (idempotent)
-          fetch('/api/api/seed/demo-evaluations', { method: 'POST' }).catch(() => {});
-          fetch('/api/api/seed/demo-offers', { method: 'POST' }).catch(() => {});
+          fetch('/api/seed/demo-evaluations', { method: 'POST' }).catch(() => {});
+          fetch('/api/seed/demo-offers', { method: 'POST' }).catch(() => {});
         }
       })
       .catch(() => {});

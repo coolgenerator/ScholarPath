@@ -206,6 +206,9 @@ async def generate_strategy(
     llm: LLMClient,
     student_id: uuid.UUID,
     response_language: ResponseLanguage = "en",
+    *,
+    max_tokens: int = 640,
+    per_tier_limit: int = 6,
 ) -> dict[str, Any]:
     """Generate an ED/EA/RD application strategy recommendation.
 
@@ -224,21 +227,6 @@ async def generate_strategy(
     student = await get_student(session, student_id)
     tiered = await get_tiered_list(session, student_id)
 
-    # Flatten into a summary for the LLM
-    schools_summary: list[dict[str, Any]] = []
-    for tier_name, evals in tiered.items():
-        for ev in evals:
-            schools_summary.append(
-                {
-                    "school": ev.school.name if ev.school else str(ev.school_id),
-                    "tier": tier_name,
-                    "overall_score": ev.overall_score,
-                    "admission_probability": ev.admission_probability,
-                    "academic_fit": ev.academic_fit,
-                    "financial_fit": ev.financial_fit,
-                }
-            )
-
     profile_summary = json.dumps(
         {
             "name": student.name,
@@ -254,13 +242,14 @@ async def generate_strategy(
     student_profile_data = json.loads(profile_summary)
     tiered_schools_data: dict[str, list[dict[str, Any]]] = {}
     for tier_name, evals in tiered.items():
+        limited = evals[: max(1, per_tier_limit)]
         tiered_schools_data[tier_name] = [
             {
                 "name": ev.school.name if ev.school else str(ev.school_id),
                 "composite_score": ev.overall_score,
                 "admission_probability": ev.admission_probability,
             }
-            for ev in evals
+            for ev in limited
         ]
     user_prompt = format_strategy_advice(student_profile_data, tiered_schools_data)
 
@@ -292,6 +281,8 @@ async def generate_strategy(
             "timeline": "string",
         },
         temperature=0.4,
+        max_tokens=max_tokens,
+        caller="chat.strategy_json",
     )
 
     logger.info("Generated strategy for student %s", student_id)

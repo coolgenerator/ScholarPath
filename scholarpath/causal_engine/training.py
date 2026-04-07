@@ -28,6 +28,12 @@ _OUTCOMES = [
     "life_satisfaction",
     "phd_probability",
 ]
+_NON_ADMISSION_OUTCOMES = {
+    "academic_outcome",
+    "career_outcome",
+    "life_satisfaction",
+    "phd_probability",
+}
 
 
 async def train_full_graph_model(
@@ -38,6 +44,8 @@ async def train_full_graph_model(
     min_rows_per_outcome: int = 200,
     calibration_enabled: bool = True,
     active_outcomes: list[str] | None = None,
+    calibration_profile: str = "robust",
+    calibration_disabled_outcomes: list[str] | None = None,
 ) -> dict[str, Any]:
     """Build a new pywhy model registry row from current training assets."""
     now = datetime.now(timezone.utc)
@@ -120,12 +128,22 @@ async def train_full_graph_model(
 
         metrics: dict[str, Any] = {
             "profile": profile,
+            "raw_formula_version": "v2",
             "dataset_version": dataset_version,
             "active_outcomes": active,
             "snapshot_count": snapshot_count,
             "outcome_counts": {k: len(by_outcome[k]) for k in active},
             "true_counts_by_outcome": {k: len(by_outcome_true[k]) for k in active},
             "label_type_counts": dict(label_type_counts),
+            "calibration_enabled": bool(calibration_enabled),
+            "calibration_profile": str(calibration_profile or "robust"),
+            "calibration_disabled_outcomes": sorted(
+                {
+                    str(item).strip()
+                    for item in (calibration_disabled_outcomes or [])
+                    if str(item).strip() in active
+                }
+            ),
             "mean_outcome_values": {
                 k: round(float(statistics.fmean(by_outcome[k])), 6)
                 for k in active
@@ -134,10 +152,13 @@ async def train_full_graph_model(
         }
 
         if calibration_enabled:
+            robust_guard = str(calibration_profile or "robust").strip().lower() != "legacy"
             calibration, diagnostics = _fit_calibration_from_alignment(
                 snapshot_rows=snapshot_rows,
                 outcome_rows=outcome_rows,
                 active_outcomes=active,
+                calibration_disabled_outcomes=metrics["calibration_disabled_outcomes"],
+                robust_non_admission_guard=robust_guard,
             )
             metrics["calibration"] = calibration
             metrics["calibration_diagnostics"] = diagnostics
@@ -215,6 +236,8 @@ def _fit_calibration_from_alignment(
     snapshot_rows: list[tuple[Any, Any, datetime, dict[str, Any]]],
     outcome_rows: list[tuple[Any, Any, str, str, float, datetime]],
     active_outcomes: list[str] | None = None,
+    calibration_disabled_outcomes: list[str] | None = None,
+    robust_non_admission_guard: bool = True,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
     by_pair: dict[tuple[str, str], list[tuple[float, dict[str, Any]]]] = defaultdict(list)
     for student_id, school_id, observed_at, feature_payload in snapshot_rows:
@@ -231,6 +254,11 @@ def _fit_calibration_from_alignment(
     active = [outcome for outcome in (active_outcomes or _OUTCOMES) if outcome in _OUTCOMES]
     if not active:
         active = ["admission_probability"]
+    forced_disabled = {
+        str(item).strip()
+        for item in (calibration_disabled_outcomes or [])
+        if str(item).strip() in active
+    }
 
     for student_id, school_id, outcome_name, _, value, observed_at in outcome_rows:
         name = str(outcome_name or "").strip()
@@ -265,14 +293,41 @@ def _fit_calibration_from_alignment(
                 "spearman_calibrated": 0.0,
                 "direction_guard_applied": False,
                 "fallback_reason": "insufficient_alignment_rows",
+                "slope": 0.0,
+                "std_raw": 0.0,
+                "std_calibrated": 0.0,
+                "std_ratio": 0.0,
+                "mean_shift": 0.0,
+                "guard_triggered": False,
+                "guard_reasons": [],
+            }
+            continue
+
+        mae_raw = _mae(preds, truths)
+        sp_raw = _spearman_rank(preds, truths)
+        if outcome in forced_disabled:
+            calibration[outcome] = {"method": "none"}
+            diagnostics[outcome] = {
+                "sample_count": len(preds),
+                "mae_raw": round(mae_raw, 6),
+                "mae_calibrated": round(mae_raw, 6),
+                "spearman_raw": round(sp_raw, 6),
+                "spearman_calibrated": round(sp_raw, 6),
+                "direction_guard_applied": False,
+                "fallback_reason": "calibration_forced_disabled",
+                "slope": 1.0,
+                "std_raw": round(_stddev(preds), 6),
+                "std_calibrated": round(_stddev(preds), 6),
+                "std_ratio": 1.0,
+                "mean_shift": 0.0,
+                "guard_triggered": False,
+                "guard_reasons": [],
             }
             continue
 
         cfg = fit_linear_calibration(y_pred=preds, y_true=truths)
         calibrated = [_clip01(apply_calibration(v, cfg)) for v in preds]
-        mae_raw = _mae(preds, truths)
         mae_cali = _mae(calibrated, truths)
-        sp_raw = _spearman_rank(preds, truths)
         sp_cali = _spearman_rank(calibrated, truths)
 
         fallback_reason = ""
@@ -320,6 +375,35 @@ def _fit_calibration_from_alignment(
                     else f"phd_mae_guard:{best_name}"
                 )
 
+        slope = float(cfg.get("a", 1.0)) if str(cfg.get("method") or "").lower() == "linear" else 1.0
+        std_raw = _stddev(preds)
+        std_cal = _stddev(calibrated)
+        std_ratio = std_cal / max(std_raw, 1e-12)
+        mean_shift = _mean(calibrated) - _mean(preds)
+        guard_reasons: list[str] = []
+        if robust_non_admission_guard and outcome in _NON_ADMISSION_OUTCOMES:
+            if sp_raw < 0.15:
+                guard_reasons.append("spearman_raw<0.15")
+            if abs(slope) < 0.25 or abs(slope) > 1.75:
+                guard_reasons.append("|slope|_outside_[0.25,1.75]")
+            if std_ratio < 0.45:
+                guard_reasons.append("std_ratio<0.45")
+        guard_triggered = bool(guard_reasons)
+        if guard_triggered:
+            cfg = {"method": "none"}
+            calibrated = [_clip01(v) for v in preds]
+            mae_cali = _mae(calibrated, truths)
+            sp_cali = _spearman_rank(calibrated, truths)
+            slope = 1.0
+            std_cal = _stddev(calibrated)
+            std_ratio = std_cal / max(std_raw, 1e-12)
+            mean_shift = _mean(calibrated) - _mean(preds)
+            fallback_reason = (
+                f"{fallback_reason};non_admission_guard"
+                if fallback_reason
+                else "non_admission_guard"
+            )
+
         calibration[outcome] = cfg
         diagnostics[outcome] = {
             "sample_count": len(preds),
@@ -329,6 +413,13 @@ def _fit_calibration_from_alignment(
             "spearman_calibrated": round(sp_cali, 6),
             "direction_guard_applied": direction_guard,
             "fallback_reason": fallback_reason or None,
+            "slope": round(slope, 6),
+            "std_raw": round(std_raw, 6),
+            "std_calibrated": round(std_cal, 6),
+            "std_ratio": round(std_ratio, 6),
+            "mean_shift": round(mean_shift, 6),
+            "guard_triggered": guard_triggered,
+            "guard_reasons": guard_reasons,
         }
 
     return calibration, diagnostics
@@ -405,3 +496,16 @@ def _rank(values: list[float]) -> list[float]:
 
 def _clip01(value: float) -> float:
     return max(0.0, min(1.0, float(value)))
+
+
+def _mean(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    return sum(values) / len(values)
+
+
+def _stddev(values: list[float]) -> float:
+    if len(values) < 2:
+        return 0.0
+    mean_val = _mean(values)
+    return (sum((value - mean_val) ** 2 for value in values) / len(values)) ** 0.5

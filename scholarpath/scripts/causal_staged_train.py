@@ -79,6 +79,15 @@ class CandidateResult:
         return asdict(self)
 
 
+@dataclass(slots=True)
+class CandidateTrainProfile:
+    candidate_id: str
+    profile: str = "high_quality"
+    calibration_enabled: bool = True
+    calibration_profile: str = "robust"
+    calibration_disabled_outcomes: list[str] = field(default_factory=list)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run staged causal training with strict stage gates.",
@@ -124,6 +133,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "--output-dir",
         default=".benchmarks/causal_staged",
         help="Output root for staged artifacts.",
+    )
+    parser.add_argument(
+        "--stage4-min-admission-rows",
+        type=int,
+        default=None,
+        help=(
+            "One-off Stage4 override for admission_probability row gate. "
+            "Only applies when Stage4 is executed."
+        ),
     )
     return parser
 
@@ -183,15 +201,102 @@ async def _get_active_model_version() -> str | None:
     return str(row.model_version) if row else None
 
 
-def _check_stage_data_gate(stage: int, coverage: dict[str, Any]) -> tuple[bool, list[str]]:
-    cfg = _STAGE_DATA_THRESHOLDS[stage]
+async def _clear_active_model() -> dict[str, Any]:
+    async with async_session_factory() as session:
+        rows = (
+            await session.execute(
+                select(CausalModelRegistry).where(CausalModelRegistry.is_active.is_(True))
+            )
+        ).scalars().all()
+        cleared = 0
+        for row in rows:
+            row.is_active = False
+            if str(row.status or "").lower() == "active":
+                row.status = "trained"
+            cleared += 1
+        await session.commit()
+    return {"status": "ok", "cleared": cleared}
+
+
+def _candidate_train_profiles(stage: int, candidates: int) -> list[CandidateTrainProfile]:
+    requested = max(1, candidates)
+    if stage != 1:
+        return [
+            CandidateTrainProfile(candidate_id=f"s{stage}c{idx}")
+            for idx in range(1, requested + 1)
+        ]
+
+    profiles = [
+        CandidateTrainProfile(
+            candidate_id="s1c1",
+            profile="s1c1_raw_v2_robust_all",
+            calibration_enabled=True,
+            calibration_profile="robust",
+            calibration_disabled_outcomes=[],
+        ),
+        CandidateTrainProfile(
+            candidate_id="s1c2",
+            profile="s1c2_raw_v2_robust_no_life_phd",
+            calibration_enabled=True,
+            calibration_profile="robust",
+            calibration_disabled_outcomes=["life_satisfaction", "phd_probability"],
+        ),
+        CandidateTrainProfile(
+            candidate_id="s1c3",
+            profile="s1c3_raw_v2_calibration_disabled",
+            calibration_enabled=False,
+            calibration_profile="disabled",
+            calibration_disabled_outcomes=[],
+        ),
+    ]
+    if requested <= len(profiles):
+        return profiles[:requested]
+    for idx in range(len(profiles) + 1, requested + 1):
+        profiles.append(
+            CandidateTrainProfile(
+                candidate_id=f"s1c{idx}",
+                profile=f"s1c{idx}_raw_v2_robust_all",
+                calibration_enabled=True,
+                calibration_profile="robust",
+                calibration_disabled_outcomes=[],
+            )
+        )
+    return profiles
+
+
+def _resolve_stage_data_thresholds(
+    *,
+    stage4_min_admission_rows: int | None = None,
+) -> tuple[dict[int, dict[str, int]], dict[str, Any]]:
+    thresholds: dict[int, dict[str, int]] = {
+        int(stage): {k: int(v) for k, v in cfg.items()}
+        for stage, cfg in _STAGE_DATA_THRESHOLDS.items()
+    }
+    overrides_applied: dict[str, Any] = {}
+    if stage4_min_admission_rows is not None:
+        stage4_cfg = dict(thresholds.get(4, {}))
+        stage4_cfg["admission_rows"] = int(stage4_min_admission_rows)
+        thresholds[4] = stage4_cfg
+        overrides_applied["stage4_min_admission_rows"] = int(stage4_min_admission_rows)
+    return thresholds, overrides_applied
+
+
+def _check_stage_data_gate(
+    stage: int,
+    coverage: dict[str, Any],
+    stage_data_thresholds: dict[int, dict[str, int]] | None = None,
+) -> tuple[bool, list[str]]:
+    cfg = (stage_data_thresholds or _STAGE_DATA_THRESHOLDS)[stage]
     reasons: list[str] = []
     if int(coverage["snapshots"]) < cfg["snapshots"]:
         reasons.append(f"snapshots<{cfg['snapshots']}")
     for outcome in _OUTCOMES:
         count = int(coverage["counts"].get(outcome, 0))
-        if count < cfg["per_outcome"]:
-            reasons.append(f"{outcome}_rows<{cfg['per_outcome']}")
+        min_rows = int(cfg.get("per_outcome", 0))
+        if outcome == "admission_probability":
+            min_rows = int(cfg.get("admission_rows", min_rows))
+        if count < min_rows:
+            reasons.append(f"{outcome}_rows<{min_rows}")
     if int(coverage["true_counts"].get("admission_probability", 0)) < cfg["admission_true"]:
         reasons.append(f"admission_true<{cfg['admission_true']}")
     for outcome in _OUTCOMES:
@@ -247,6 +352,15 @@ def _candidate_score(report: dict[str, Any]) -> float:
     return round(score, 6)
 
 
+def _is_strict_stage4_threshold(cfg: dict[str, Any] | None) -> bool:
+    if not isinstance(cfg, dict):
+        return False
+    default_stage4 = _STAGE_DATA_THRESHOLDS.get(4, {})
+    strict_rows = int(default_stage4.get("per_outcome", 0))
+    admission_rows = int(cfg.get("admission_rows", cfg.get("per_outcome", 0)) or 0)
+    return admission_rows >= strict_rows
+
+
 async def _run_stage(
     *,
     stage: int,
@@ -254,12 +368,19 @@ async def _run_stage(
     candidates: int,
     max_rpm_total: int,
     judge_concurrency: int,
+    stage_data_thresholds: dict[int, dict[str, int]] | None = None,
 ) -> dict[str, Any]:
     coverage = await _collect_coverage()
-    data_gate_ok, data_gate_reasons = _check_stage_data_gate(stage, coverage)
+    data_gate_ok, data_gate_reasons = _check_stage_data_gate(
+        stage,
+        coverage,
+        stage_data_thresholds=stage_data_thresholds,
+    )
+    effective_cfg = dict((stage_data_thresholds or _STAGE_DATA_THRESHOLDS)[stage])
     stage_result: dict[str, Any] = {
         "stage": stage,
         "coverage": coverage,
+        "effective_data_thresholds": effective_cfg,
         "data_gate_passed": data_gate_ok,
         "data_gate_reasons": data_gate_reasons,
         "candidates": [],
@@ -270,14 +391,16 @@ async def _run_stage(
         return stage_result
 
     all_candidates: list[CandidateResult] = []
-    for idx in range(1, max(1, candidates) + 1):
-        candidate_id = f"s{stage}c{idx}"
+    for candidate_profile in _candidate_train_profiles(stage, candidates):
+        candidate_id = candidate_profile.candidate_id
         train_payload = await train_full_graph_model(
             dataset_version=None,
-            profile="high_quality",
+            profile=candidate_profile.profile,
             lookback_days=540,
             min_rows_per_outcome=_STAGE_MIN_ROWS_PER_OUTCOME[stage],
-            calibration_enabled=True,
+            calibration_enabled=candidate_profile.calibration_enabled,
+            calibration_profile=candidate_profile.calibration_profile,
+            calibration_disabled_outcomes=candidate_profile.calibration_disabled_outcomes,
         )
         model_version = str(train_payload.get("model_version") or "") or None
         if train_payload.get("status") != "ok" or not model_version:
@@ -289,7 +412,15 @@ async def _run_stage(
                     eval_status="skipped",
                     gate_passed=False,
                     score=0.0,
-                    metrics={"train_result": train_payload},
+                    metrics={
+                        "train_profile": {
+                            "profile": candidate_profile.profile,
+                            "calibration_enabled": candidate_profile.calibration_enabled,
+                            "calibration_profile": candidate_profile.calibration_profile,
+                            "calibration_disabled_outcomes": candidate_profile.calibration_disabled_outcomes,
+                        },
+                        "train_result": train_payload,
+                    },
                     reasons=["train_failed"],
                 )
             )
@@ -327,6 +458,12 @@ async def _run_stage(
                     "fallback_rate_pywhy": report["pywhy_pass"].get("fallback_rate"),
                     "rate_limit_error_count": report["metrics"].get("rate_limit_error_count"),
                     "eval_run_id": report_obj.run_id,
+                    "train_profile": {
+                        "profile": candidate_profile.profile,
+                        "calibration_enabled": candidate_profile.calibration_enabled,
+                        "calibration_profile": candidate_profile.calibration_profile,
+                        "calibration_disabled_outcomes": candidate_profile.calibration_disabled_outcomes,
+                    },
                 },
                 reasons=reasons,
             )
@@ -340,26 +477,66 @@ async def _run_stage(
     return stage_result
 
 
-def _has_previous_stage4_pass(history_csv: Path) -> bool:
+def _parse_boolish(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return None
+    normalized = str(value).strip().lower()
+    if normalized in {"true", "1", "yes"}:
+        return True
+    if normalized in {"false", "0", "no"}:
+        return False
+    return None
+
+
+def _has_previous_stage4_pass(history_csv: Path, *, require_strict: bool = True) -> bool:
     if not history_csv.exists():
         return False
     rows = list(csv.DictReader(history_csv.read_text(encoding="utf-8").splitlines()))
     if not rows:
         return False
-    for row in reversed(rows):
-        if row.get("stage") == "4":
-            return str(row.get("passed", "")).lower() == "true"
-    return False
+
+    stage4_rows = [row for row in rows if str(row.get("stage")) == "4"]
+    if len(stage4_rows) < 2:
+        return False
+    previous_row = stage4_rows[-2]
+    previous_pass = _parse_boolish(previous_row.get("passed")) is True
+    if not previous_pass:
+        return False
+    if not require_strict:
+        return True
+    return _parse_boolish(previous_row.get("strict_stage4_gate")) is True
 
 
-def _append_history(history_csv: Path, *, stage: int, passed: bool, champion_model_version: str | None) -> None:
+def _append_history(
+    history_csv: Path,
+    *,
+    run_id: str,
+    stage: int,
+    passed: bool,
+    champion_model_version: str | None,
+    strict_stage4_gate: bool | None = None,
+    stage4_min_admission_rows: int | None = None,
+) -> None:
     history_csv.parent.mkdir(parents=True, exist_ok=True)
     exists = history_csv.exists()
     row = {
+        "run_id": run_id,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "stage": stage,
         "passed": bool(passed),
         "champion_model_version": champion_model_version or "",
+        "strict_stage4_gate": (
+            ""
+            if stage != 4 or strict_stage4_gate is None
+            else bool(strict_stage4_gate)
+        ),
+        "stage4_min_admission_rows": (
+            ""
+            if stage != 4 or stage4_min_admission_rows is None
+            else int(stage4_min_admission_rows)
+        ),
     }
     with history_csv.open("a", encoding="utf-8", newline="") as fp:
         writer = csv.DictWriter(fp, fieldnames=list(row.keys()))
@@ -372,6 +549,10 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
     if args.max_rpm_total > 200:
         raise ValueError("max-rpm-total must be <= 200")
 
+    stage4_min_admission_rows = getattr(args, "stage4_min_admission_rows", None)
+    if stage4_min_admission_rows is not None and int(stage4_min_admission_rows) <= 0:
+        raise ValueError("stage4-min-admission-rows must be > 0")
+
     run_id = f"causal-staged-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}-{uuid4().hex[:6]}"
     output_root = Path(args.output_dir)
     run_dir = output_root / run_id
@@ -379,6 +560,13 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
     active_model_before = await _get_active_model_version()
 
     stages = [1, 2, 3, 4] if args.stage == "all" else [int(args.stage)]
+    effective_stage_data_thresholds, overrides_applied = _resolve_stage_data_thresholds(
+        stage4_min_admission_rows=(
+            int(stage4_min_admission_rows)
+            if stage4_min_admission_rows is not None and 4 in stages
+            else None
+        ),
+    )
     summary: dict[str, Any] = {}
     gate_results: dict[str, Any] = {}
 
@@ -389,18 +577,32 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
             candidates=args.train_candidates_per_stage,
             max_rpm_total=args.max_rpm_total,
             judge_concurrency=args.judge_concurrency,
+            stage_data_thresholds=effective_stage_data_thresholds,
         )
         summary[f"stage_{stage}"] = result
         gate_results[f"stage_{stage}"] = {
             "passed": bool(result.get("passed")),
             "champion_model_version": (result.get("champion") or {}).get("model_version"),
             "data_gate_passed": bool(result.get("data_gate_passed")),
+            "effective_data_thresholds": result.get("effective_data_thresholds"),
         }
+        strict_stage4_gate_for_row = None
+        if stage == 4:
+            strict_stage4_gate_for_row = _is_strict_stage4_threshold(
+                result.get("effective_data_thresholds")
+            )
         _append_history(
             output_root / "history.csv",
+            run_id=run_id,
             stage=stage,
             passed=bool(result.get("passed")),
             champion_model_version=(result.get("champion") or {}).get("model_version"),
+            strict_stage4_gate=strict_stage4_gate_for_row,
+            stage4_min_admission_rows=(
+                int(stage4_min_admission_rows)
+                if stage == 4 and stage4_min_admission_rows is not None
+                else None
+            ),
         )
         if not result.get("passed"):
             break
@@ -415,9 +617,13 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
     if stages[-1] == 4 and summary.get("stage_4", {}).get("passed") and args.promote_on_final_pass:
         current_champion = summary["stage_4"]["champion"]
         model_version = current_champion.get("model_version") if isinstance(current_champion, dict) else None
-        previous_ok = _has_previous_stage4_pass(output_root / "history.csv")
-        if not previous_ok:
-            promotion["reasons"].append("stage4_needs_two_consecutive_passes")
+        current_stage4_cfg = summary.get("stage_4", {}).get("effective_data_thresholds")
+        current_stage4_strict = _is_strict_stage4_threshold(current_stage4_cfg)
+        previous_ok = _has_previous_stage4_pass(output_root / "history.csv", require_strict=True)
+        if not current_stage4_strict:
+            promotion["reasons"].append("stage4_current_pass_not_strict")
+        elif not previous_ok:
+            promotion["reasons"].append("stage4_needs_two_consecutive_strict_passes")
         elif model_version:
             promote_result = await promote_model(model_version=str(model_version))
             promotion["attempted"] = True
@@ -431,12 +637,43 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
 
     active_model_after = await _get_active_model_version()
     restored_active_model = None
-    if not args.promote_on_final_pass and active_model_before and active_model_after != active_model_before:
+    active_restore_attempted = False
+    active_restore_status = "not_requested"
+    active_restored_to = None
+    active_restore_result: dict[str, Any] | None = None
+    if stages == [1]:
+        active_restore_attempted = True
+        if active_model_before:
+            restore_result = await promote_model(model_version=active_model_before)
+            active_restore_result = restore_result
+            if restore_result.get("status") == "ok":
+                restored_active_model = active_model_before
+                active_restored_to = active_model_before
+                active_restore_status = "ok"
+            else:
+                active_restore_status = "failed"
+                promotion["reasons"].append("stage1_restore_active_failed")
+        else:
+            clear_result = await _clear_active_model()
+            active_restore_result = clear_result
+            if clear_result.get("status") == "ok":
+                active_restore_status = "ok"
+                active_restored_to = None
+            else:
+                active_restore_status = "failed"
+                promotion["reasons"].append("stage1_clear_active_failed")
+        active_model_after = await _get_active_model_version()
+    elif not args.promote_on_final_pass and active_model_before and active_model_after != active_model_before:
+        active_restore_attempted = True
         restore_result = await promote_model(model_version=active_model_before)
+        active_restore_result = restore_result
         if restore_result.get("status") == "ok":
             restored_active_model = active_model_before
+            active_restored_to = active_model_before
+            active_restore_status = "ok"
             active_model_after = await _get_active_model_version()
         else:
+            active_restore_status = "failed"
             promotion["reasons"].append("restore_active_failed")
             promotion["restore_result"] = restore_result
 
@@ -449,13 +686,22 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
             "max_rpm_total": args.max_rpm_total,
             "judge_concurrency": args.judge_concurrency,
             "promote_on_final_pass": args.promote_on_final_pass,
+            "stage4_min_admission_rows": stage4_min_admission_rows,
         },
         "stage_summary": summary,
         "gate_results": gate_results,
+        "effective_stage_data_thresholds": {
+            str(stage): cfg for stage, cfg in sorted(effective_stage_data_thresholds.items())
+        },
+        "overrides_applied": overrides_applied,
         "promotion_decision": promotion,
         "active_model_before": active_model_before,
         "active_model_after": active_model_after,
         "restored_active_model": restored_active_model,
+        "active_restore_attempted": active_restore_attempted,
+        "active_restore_status": active_restore_status,
+        "active_restored_to": active_restored_to,
+        "active_restore_result": active_restore_result,
     }
 
     (run_dir / "stage_summary.json").write_text(

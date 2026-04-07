@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import type { RecommendationData, RecommendedSchool } from '../../lib/types';
 import { ExpandableMarkdown } from './ExpandableMarkdown';
@@ -80,6 +80,21 @@ function SchoolEditorialRow({
             </span>
             {isCn ? tier.label.zh : tier.label.en}
           </span>
+          {school.prefilter_tag === 'eligible' ? (
+            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+              {isCn ? '预算内' : 'In Budget'}
+            </span>
+          ) : null}
+          {school.prefilter_tag === 'stretch' ? (
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">
+              {isCn ? '冲刺位' : 'Stretch'}
+            </span>
+          ) : null}
+          {typeof school.rank_delta === 'number' && school.rank_delta !== 0 ? (
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${school.rank_delta > 0 ? 'bg-sky-100 text-sky-700' : 'bg-rose-100 text-rose-700'}`}>
+              {school.rank_delta > 0 ? (isCn ? `↑${school.rank_delta}` : `+${school.rank_delta}`) : (isCn ? `${school.rank_delta}` : `${school.rank_delta}`)}
+            </span>
+          ) : null}
           {school.rank != null ? (
             <span className="structured-school-row-rank">#{school.rank}</span>
           ) : null}
@@ -188,10 +203,30 @@ export function RecommendationCard({ data }: Props) {
   const { locale } = useApp();
   const isCn = locale === 'zh';
   const tierOrder: (keyof typeof TIER_CONFIG)[] = ['reach', 'target', 'safety', 'likely'];
+  const scenarioTabs = useMemo(() => {
+    const tabs: Array<{ id: string; label: string; schools: RecommendedSchool[] }> = [
+      {
+        id: 'baseline',
+        label: isCn ? '基线' : 'Baseline',
+        schools: data.scenario_pack?.baseline?.length ? data.scenario_pack.baseline : data.schools,
+      },
+    ];
+    for (const item of data.scenario_pack?.scenarios ?? []) {
+      tabs.push({
+        id: item.id,
+        label: item.label || item.id,
+        schools: item.schools,
+      });
+    }
+    return tabs;
+  }, [data.scenario_pack, data.schools, isCn]);
+  const [activeScenarioId, setActiveScenarioId] = useState<string>('baseline');
+  const activeTab = scenarioTabs.find((item) => item.id === activeScenarioId) ?? scenarioTabs[0];
+  const activeSchools = activeTab?.schools ?? data.schools;
 
   const schoolsByTier = tierOrder.reduce(
     (acc, tier) => {
-      acc[tier] = data.schools.filter((school) => school.tier === tier);
+      acc[tier] = activeSchools.filter((school) => school.tier === tier);
       return acc;
     },
     {} as Record<keyof typeof TIER_CONFIG, RecommendedSchool[]>,
@@ -210,6 +245,35 @@ export function RecommendationCard({ data }: Props) {
         description={isCn ? '把推荐结论、学校分层和申请动作收进一张更易扫读的建议卡。' : 'A tighter editorial view of the recommendation narrative, school tiers, and application moves.'}
         badge={`${data.schools.length} ${isCn ? '所学校' : 'schools'}`}
       />
+
+      {data.prefilter_meta?.budget_cap_used ? (
+        <StructuredCardSection className="pt-0" title={isCn ? '预算门槛' : 'Budget Gate'}>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-on-surface-variant/75">
+            <span className="rounded-full bg-primary/8 px-2.5 py-1 font-semibold text-primary">
+              {isCn ? `预算上限 $${Number(data.prefilter_meta.budget_cap_used).toLocaleString()}` : `Budget cap $${Number(data.prefilter_meta.budget_cap_used).toLocaleString()}`}
+            </span>
+            <span>{isCn ? `预算内 ${data.prefilter_meta.eligible_count ?? 0}` : `Eligible ${data.prefilter_meta.eligible_count ?? 0}`}</span>
+            <span>{isCn ? `冲刺 ${data.prefilter_meta.stretch_count ?? 0}` : `Stretch ${data.prefilter_meta.stretch_count ?? 0}`}</span>
+            <span>{isCn ? `剔除 ${data.prefilter_meta.excluded_count ?? 0}` : `Excluded ${data.prefilter_meta.excluded_count ?? 0}`}</span>
+          </div>
+        </StructuredCardSection>
+      ) : null}
+
+      {scenarioTabs.length > 1 ? (
+        <StructuredCardSection className="pt-0" title={isCn ? '多场景视图' : 'Scenario Views'}>
+          <div className="flex flex-wrap gap-2">
+            {scenarioTabs.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveScenarioId(tab.id)}
+                className={`rounded-full px-3 py-1 text-xs font-bold transition-colors ${tab.id === activeTab.id ? 'bg-primary text-on-primary' : 'bg-surface-container-high/50 text-on-surface-variant hover:bg-surface-container-high'}`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </StructuredCardSection>
+      ) : null}
 
       <StructuredCardSection
         className="structured-summary-section"

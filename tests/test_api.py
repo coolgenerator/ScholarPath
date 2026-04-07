@@ -191,6 +191,62 @@ class TestSchoolAPI:
         assert len(data["items"]) == 2
         assert data["total"] == 5
 
+    async def test_generate_school_list_with_budget_prefilter(self, client, session):
+        student = await _create_student(client, budget_usd=50_000)
+        await _create_school(client, session, name="Budget Safe", avg_net_price=9_000, us_news_rank=20)
+        await _create_school(client, session, name="Stretch 1", avg_net_price=14_000, us_news_rank=18)
+        await _create_school(client, session, name="Stretch 2", avg_net_price=16_000, us_news_rank=22)
+        await _create_school(client, session, name="Stretch 3", avg_net_price=18_000, us_news_rank=24)
+        await _create_school(client, session, name="Stretch 4", avg_net_price=19_000, us_news_rank=26)
+        await _create_school(client, session, name="No Net Price", avg_net_price=None, us_news_rank=28)
+        await session.commit()
+
+        resp = await client.post(
+            f"/api/schools/students/{student['id']}/school-list",
+            json={"budget_cap_usd": 10_000},
+        )
+        assert resp.status_code == 200, resp.text
+        payload = resp.json()
+        assert payload["status"] == "completed"
+        assert "prefilter_meta" in payload
+        assert payload["prefilter_meta"]["budget_cap_used"] == 10_000
+        assert payload["prefilter_meta"]["stretch_count"] <= 3
+
+        for school in payload.get("schools", []):
+            tag = school.get("prefilter_tag")
+            net_price = (school.get("school_info") or {}).get("avg_net_price")
+            if tag == "eligible":
+                assert isinstance(net_price, int)
+                assert net_price <= 10_000
+            if tag == "stretch":
+                assert isinstance(net_price, int)
+                assert net_price > 10_000
+
+    async def test_generate_school_scenario_pack_endpoint(self, client, session):
+        student = await _create_student(client, budget_usd=45_000, intended_majors=["Computer Science"])
+        await _create_school(client, session, name="CS Urban", avg_net_price=9_500, us_news_rank=15, campus_setting="urban")
+        await _create_school(client, session, name="CS Suburban", avg_net_price=12_000, us_news_rank=18, campus_setting="suburban")
+        await _create_school(client, session, name="Bio Rural", avg_net_price=11_500, us_news_rank=22, campus_setting="rural")
+        await session.commit()
+
+        resp = await client.post(
+            f"/api/schools/students/{student['id']}/scenario-pack",
+            json={"budget_cap_usd": 10_000, "preferences": ["location:urban"]},
+        )
+        assert resp.status_code == 200, resp.text
+        payload = resp.json()
+        assert payload["status"] == "completed"
+        scenario_pack = payload.get("scenario_pack") or {}
+        assert "baseline" in scenario_pack
+        scenarios = scenario_pack.get("scenarios") or []
+        assert {item["id"] for item in scenarios} == {
+            "budget_first",
+            "risk_first",
+            "major_first",
+            "geo_first",
+            "roi_first",
+        }
+
 
 # =========================================================================
 # 3. Evaluation API
@@ -210,6 +266,7 @@ class TestEvaluationAPI:
         assert data["student_id"] == student["id"]
         assert data["school_id"] == school["id"]
         assert "tier" in data
+        assert data["reasoning"] != "Evaluation pipeline not yet implemented."
 
     async def test_list_evaluations(self, client, session):
         student = await _create_student(client)
@@ -390,6 +447,48 @@ class TestSimulationAPI:
         assert "original_scores" in data
         assert "modified_scores" in data
         assert "deltas" in data
+        assert data["explanation"] != "Simulation engine not yet implemented."
+
+    async def test_compare_scenarios_requires_school_id(self, client):
+        student = await _create_student(client)
+
+        resp = await client.post(
+            f"/api/simulations/students/{student['id']}/compare-scenarios",
+            json={
+                "scenarios": [
+                    {"interventions": {"financial_aid": 0.8}},
+                    {"interventions": {"student_ability": 0.9}},
+                ]
+            },
+        )
+        assert resp.status_code == 422
+
+    async def test_compare_scenarios_with_school_id(self, client, session):
+        student = await _create_student(client)
+        school = await _create_school(client, session)
+        await session.commit()
+
+        resp = await client.post(
+            f"/api/simulations/students/{student['id']}/compare-scenarios",
+            json={
+                "scenarios": [
+                    {
+                        "school_id": school["id"],
+                        "interventions": {"financial_aid": 0.8},
+                        "label": "Scenario A",
+                    },
+                    {
+                        "school_id": school["id"],
+                        "interventions": {"student_ability": 0.9},
+                        "label": "Scenario B",
+                    },
+                ]
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        payload = resp.json()
+        assert len(payload["results"]) == 2
+        assert "summary" in payload
 
     async def test_what_if_nonexistent_student(self, client, session):
         school = await _create_school(client, session)
@@ -435,6 +534,7 @@ class TestReportAPI:
         data = resp.json()
         assert "overall_score" in data
         assert "recommendation" in data
+        assert data["narrative"] != "Report generation pipeline not yet implemented."
 
     async def test_get_report(self, client, session):
         student = await _create_student(client)

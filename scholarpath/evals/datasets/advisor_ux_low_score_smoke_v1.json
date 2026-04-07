@@ -1,0 +1,163 @@
+{
+  "dataset_id": "advisor_ux_low_score_smoke_v1",
+  "version": "1",
+  "rubric_dimensions": [
+    "task_completion",
+    "personalization_fit",
+    "clarity_actionability",
+    "interaction_fluency",
+    "execution_chain_transparency",
+    "robustness_consistency",
+    "tone_experience"
+  ],
+  "cases": [
+    {
+      "case_id": "ux_low_001",
+      "bucket": "what_if",
+      "tags": ["low_score", "what_if", "transparency"],
+      "student_seed": null,
+      "turns": [
+        {"content": "如果我把SAT从1420提到1520，录取概率和策略会如何变化？"},
+        {"content": "请给我最值得先做的两步动作，并说明为什么。"}
+      ],
+      "hard_checks": [
+        {"id": "status_ok", "kind": "status_equals", "value": "ok"}
+      ],
+      "soft_checks": [
+        {"id": "has_action", "kind": "content_keywords_any", "keywords": ["下一步", "动作", "建议"]}
+      ]
+    },
+    {
+      "case_id": "ux_low_002",
+      "bucket": "what_if",
+      "tags": ["low_score", "what_if", "personalization"],
+      "student_seed": null,
+      "turns": [
+        {"content": "如果预算上限从8万降到6万，选校分层会怎么变？"},
+        {"content": "请标注风险最高的那一层并给替代方案。"}
+      ],
+      "hard_checks": [{"id": "status_ok", "kind": "status_equals", "value": "ok"}],
+      "soft_checks": [{"id": "has_risk", "kind": "content_keywords_any", "keywords": ["风险", "替代", "层"]}]
+    },
+    {
+      "case_id": "ux_low_003",
+      "bucket": "profile_update",
+      "tags": ["low_score", "profile_update", "repair"],
+      "student_seed": null,
+      "turns": [
+        {"content": "把我档案更新一下，策略按我之前说的那种来。"},
+        {"content": "如果字段不完整，先给我可确认提案。"}
+      ],
+      "hard_checks": [{"id": "status_ok", "kind": "status_equals", "value": "ok"}],
+      "soft_checks": [{"id": "has_proposal", "kind": "content_keywords_any", "keywords": ["proposal", "提案", "确认"]}]
+    },
+    {
+      "case_id": "ux_low_004",
+      "bucket": "profile_update",
+      "tags": ["low_score", "profile_update", "partial_patch"],
+      "student_seed": null,
+      "turns": [
+        {"content": "GPA改3.88，预算改70000，专业加Data Science。"},
+        {"content": "先不要直接写库，等我确认。"}
+      ],
+      "hard_checks": [{"id": "status_ok", "kind": "status_equals", "value": "ok"}],
+      "soft_checks": [{"id": "has_confirm", "kind": "content_keywords_any", "keywords": ["confirm_profile_patch", "确认提交"]}]
+    },
+    {
+      "case_id": "ux_low_005",
+      "bucket": "guided_intake",
+      "tags": ["low_score", "guided_intake", "skip_known_fields"],
+      "student_seed": null,
+      "turns": [
+        {"content": "我已有GPA 3.9、SAT 1500、预算7万，你继续问我还缺什么。"},
+        {"content": "别重复问已经有的数据。"}
+      ],
+      "hard_checks": [{"id": "status_ok", "kind": "status_equals", "value": "ok"}],
+      "soft_checks": [{"id": "no_repeat_hint", "kind": "content_keywords_any", "keywords": ["缺失", "下一步", "继续"]}]
+    },
+    {
+      "case_id": "ux_low_006",
+      "bucket": "guided_intake",
+      "tags": ["low_score", "guided_intake", "flow"],
+      "student_seed": null,
+      "turns": [
+        {"content": "请按引导流程继续，我目标CS+AI，地点偏大城市。"},
+        {"content": "请直接进入我还没回答过的部分。"}
+      ],
+      "hard_checks": [{"id": "status_ok", "kind": "status_equals", "value": "ok"}],
+      "soft_checks": [{"id": "has_question", "kind": "content_keywords_any", "keywords": ["问题", "下一步", "补充"]}]
+    },
+    {
+      "case_id": "ux_low_007",
+      "bucket": "robustness",
+      "tags": ["low_score", "robustness", "error_recovery"],
+      "student_seed": null,
+      "turns": [
+        {"content": "如果你这轮执行失败了，请告诉我具体失败点和下一步输入模板。"},
+        {"content": "并且告诉我之前上下文是否还保留。"}
+      ],
+      "hard_checks": [{"id": "status_ok", "kind": "status_equals", "value": "ok"}],
+      "soft_checks": [{"id": "has_recovery", "kind": "content_keywords_any", "keywords": ["失败", "下一步", "保留"]}]
+    },
+    {
+      "case_id": "ux_low_008",
+      "bucket": "robustness",
+      "tags": ["low_score", "robustness", "transparency"],
+      "student_seed": null,
+      "turns": [
+        {"content": "同一轮并发执行时，请在结果里告诉我做了什么、为什么下一步这么做。"},
+        {"content": "如果需要我补信息，请列出字段。"}
+      ],
+      "hard_checks": [{"id": "status_ok", "kind": "status_equals", "value": "ok"}],
+      "soft_checks": [{"id": "has_fields", "kind": "content_keywords_any", "keywords": ["结论", "依据", "下一步", "缺失"]}]
+    },
+    {
+      "case_id": "ux_low_009",
+      "bucket": "memory_followup",
+      "tags": ["low_score", "memory_followup", "personalization"],
+      "student_seed": null,
+      "turns": [
+        {"content": "记住我预算上限65000，偏好大城市，目标CS。"},
+        {"content": "基于刚才信息，直接给三档学校和行动建议。"}
+      ],
+      "hard_checks": [{"id": "status_ok", "kind": "status_equals", "value": "ok"}],
+      "soft_checks": [{"id": "memory_hit", "kind": "content_keywords_any", "keywords": ["预算", "城市", "CS", "建议"]}]
+    },
+    {
+      "case_id": "ux_low_010",
+      "bucket": "memory_followup",
+      "tags": ["low_score", "memory_followup", "consistency"],
+      "student_seed": null,
+      "turns": [
+        {"content": "我前面说过预算7万，不要推荐超过预算太多的学校。"},
+        {"content": "如果你给了超预算选项，请解释理由。"}
+      ],
+      "hard_checks": [{"id": "status_ok", "kind": "status_equals", "value": "ok"}],
+      "soft_checks": [{"id": "has_budget_reason", "kind": "content_keywords_any", "keywords": ["预算", "理由", "风险"]}]
+    },
+    {
+      "case_id": "ux_low_011",
+      "bucket": "what_if",
+      "tags": ["low_score", "what_if", "digest"],
+      "student_seed": null,
+      "turns": [
+        {"content": "如果我改成REA而不是EA，对策略和风险有什么变化？"},
+        {"content": "请给执行摘要，不要只给一句话。"}
+      ],
+      "hard_checks": [{"id": "status_ok", "kind": "status_equals", "value": "ok"}],
+      "soft_checks": [{"id": "has_digest", "kind": "content_keywords_any", "keywords": ["执行摘要", "结论", "下一步"]}]
+    },
+    {
+      "case_id": "ux_low_012",
+      "bucket": "guided_intake",
+      "tags": ["low_score", "guided_intake", "completion"],
+      "student_seed": null,
+      "turns": [
+        {"content": "我把活动和奖项都补齐了，继续问还缺哪些。"},
+        {"content": "收集完后直接进入推荐。"}
+      ],
+      "hard_checks": [{"id": "status_ok", "kind": "status_equals", "value": "ok"}],
+      "soft_checks": [{"id": "has_transition", "kind": "content_keywords_any", "keywords": ["完成", "推荐", "下一步"]}]
+    }
+  ]
+}

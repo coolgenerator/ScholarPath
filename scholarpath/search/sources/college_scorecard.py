@@ -46,6 +46,20 @@ _PERCENT_FIELDS = {"acceptance_rate", "retention_rate", "graduation_rate", "pct_
 _NON_WORD_RE = re.compile(r"[^a-z0-9]+")
 
 
+def _school_name_candidates(name: str) -> list[str]:
+    raw = str(name or "").strip()
+    if not raw:
+        return []
+    candidates = [raw]
+    no_comma = re.sub(r"\s*,\s*", " ", raw).strip()
+    if no_comma and no_comma not in candidates:
+        candidates.append(no_comma)
+    normalized = re.sub(r"\s+", " ", no_comma or raw).strip()
+    if normalized and normalized not in candidates:
+        candidates.append(normalized)
+    return candidates
+
+
 class CollegeScorecardSource(BaseSource):
     """Official U.S. Department of Education College Scorecard data."""
 
@@ -101,28 +115,40 @@ class CollegeScorecardSource(BaseSource):
         # Always include the school name for identification.
         api_fields_csv = ",".join(["school.name", "id"] + sorted(api_fields))
 
-        params: dict[str, Any] = {
-            "school.name": school_name,
-            "fields": api_fields_csv,
-            "api_key": self._api_key,
-            "per_page": 5,
-        }
-
         results: list[SearchResult] = []
+        records: list[dict[str, Any]] = []
+        chosen_query = school_name
+        candidates = _school_name_candidates(school_name)
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.get(_API_BASE, params=params)
-                resp.raise_for_status()
-                data = resp.json()
+                for candidate in candidates:
+                    params: dict[str, Any] = {
+                        "school.name": candidate,
+                        "fields": api_fields_csv,
+                        "api_key": self._api_key,
+                        "per_page": 5,
+                    }
+                    try:
+                        resp = await client.get(_API_BASE, params=params)
+                        resp.raise_for_status()
+                    except httpx.HTTPError as exc:
+                        logger.warning("College Scorecard request failed: %s", exc)
+                        continue
+                    data = resp.json()
+                    records = _select_best_records(
+                        data.get("results", []),
+                        school_name=candidate,
+                        api_fields=api_fields,
+                    )
+                    if records:
+                        chosen_query = candidate
+                        break
         except httpx.HTTPError as exc:
             logger.warning("College Scorecard request failed: %s", exc)
             return results
+        if not records:
+            return results
 
-        records = _select_best_records(
-            data.get("results", []),
-            school_name=school_name,
-            api_fields=api_fields,
-        )
         for record in records:
             school_id = record.get("id", "")
             source_url = f"https://collegescorecard.ed.gov/school/?{school_id}"
@@ -149,7 +175,11 @@ class CollegeScorecardSource(BaseSource):
                         confidence=0.90,
                         sample_size=None,
                         temporal_range="latest",
-                        raw_data={"api_field": api_field, "record_id": school_id},
+                        raw_data={
+                            "api_field": api_field,
+                            "record_id": school_id,
+                            "queried_school_name": chosen_query,
+                        },
                     )
                 )
 

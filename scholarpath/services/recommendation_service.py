@@ -33,6 +33,7 @@ from scholarpath.services.portfolio_service import (
     get_student_canonical_preferences,
     get_student_sat_equivalent,
 )
+from scholarpath.services.recommendation_scenarios import build_scenario_pack
 from scholarpath.services.student_service import get_student
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,12 @@ async def generate_recommendations(
     llm: LLMClient,
     student_id: uuid.UUID,
     response_language: ResponseLanguage = "en",
+    *,
+    budget_cap_override: int | None = None,
+    preference_hints: list[str] | None = None,
+    candidate_pool_size: int = 60,
+    stretch_quota: int = 3,
+    persist_evaluations: bool = True,
 ) -> dict[str, Any]:
     """Generate personalized school recommendations using causal engine + vector similarity.
 
@@ -81,6 +88,7 @@ async def generate_recommendations(
     """
     student = await get_student(session, student_id)
     preferences = get_student_canonical_preferences(student)
+    preferences = _apply_preference_hints(preferences, preference_hints)
 
     # ------------------------------------------------------------------
     # Step 1: Vector similarity search for candidate schools
@@ -96,9 +104,10 @@ async def generate_recommendations(
             vec_param = sa_cast(literal_column(f"'{vec_str}'"), PgVector(len(student.profile_embedding)))
             vector_stmt = (
                 select(School)
+                .options(selectinload(School.programs))
                 .where(School.embedding.isnot(None))
                 .order_by(School.embedding.cosine_distance(vec_param))
-                .limit(15)
+                .limit(candidate_pool_size)
             )
             result = await session.execute(vector_stmt)
             candidate_schools = list(result.scalars().all())
@@ -117,8 +126,9 @@ async def generate_recommendations(
     if not candidate_schools:
         fallback_stmt = (
             select(School)
+            .options(selectinload(School.programs))
             .order_by(School.us_news_rank.asc().nullslast())
-            .limit(15)
+            .limit(candidate_pool_size)
         )
         result = await session.execute(fallback_stmt)
         candidate_schools = list(result.scalars().all())
@@ -164,36 +174,46 @@ async def generate_recommendations(
     # Sort by overall_score descending
     school_results.sort(key=lambda x: x["overall_score"], reverse=True)
 
+    baseline_schools, scenario_pack, excluded_schools = build_scenario_pack(
+        school_results,
+        student_budget_usd=student.budget_usd,
+        budget_cap_override=budget_cap_override,
+        stretch_quota=stretch_quota,
+        student_majors=student.intended_majors,
+        preferences=preferences,
+    )
+    school_results = baseline_schools
+
     # ------------------------------------------------------------------
     # Step 3: Persist SchoolEvaluation records
     # ------------------------------------------------------------------
-    for sr in school_results:
-        try:
-            evaluation = SchoolEvaluation(
-                student_id=student_id,
-                school_id=sr["school_id"],
-                tier=sr["tier"],
-                academic_fit=round(sr["sub_scores"].get("academic", 0.5), 4),
-                financial_fit=round(sr["sub_scores"].get("financial", 0.5), 4),
-                career_fit=round(sr["sub_scores"].get("career", 0.5), 4),
-                life_fit=round(sr["sub_scores"].get("life", 0.5), 4),
-                overall_score=round(sr["overall_score"], 4),
-                admission_probability=round(sr.get("admission_probability", 0.3), 4),
-                reasoning="; ".join(sr.get("key_reasons", [])[:3]),
-                fit_details={
-                    "causal_pathways": sr.get("causal_pathways", []),
-                    "go_no_go_tier": sr.get("go_no_go_tier", "neutral"),
-                },
-            )
-            session.add(evaluation)
-        except Exception:
-            logger.warning(
-                "Failed to persist evaluation for school %s",
-                sr.get("school_name"),
-                exc_info=True,
-            )
-
-    await session.flush()
+    if persist_evaluations:
+        for sr in school_results:
+            try:
+                evaluation = SchoolEvaluation(
+                    student_id=student_id,
+                    school_id=sr["school_id"],
+                    tier=sr["tier"],
+                    academic_fit=round(sr["sub_scores"].get("academic", 0.5), 4),
+                    financial_fit=round(sr["sub_scores"].get("financial", 0.5), 4),
+                    career_fit=round(sr["sub_scores"].get("career", 0.5), 4),
+                    life_fit=round(sr["sub_scores"].get("life", 0.5), 4),
+                    overall_score=round(sr["overall_score"], 4),
+                    admission_probability=round(sr.get("admission_probability", 0.3), 4),
+                    reasoning="; ".join(sr.get("key_reasons", [])[:3]),
+                    fit_details={
+                        "causal_pathways": sr.get("causal_pathways", []),
+                        "go_no_go_tier": sr.get("go_no_go_tier", "neutral"),
+                    },
+                )
+                session.add(evaluation)
+            except Exception:
+                logger.warning(
+                    "Failed to persist evaluation for school %s",
+                    sr.get("school_name"),
+                    exc_info=True,
+                )
+        await session.flush()
 
     # ------------------------------------------------------------------
     # Step 4: Generate strategy recommendation
@@ -215,6 +235,9 @@ async def generate_recommendations(
         "schools": school_results,
         "strategy": strategy,
         "narrative": narrative,
+        "prefilter_meta": scenario_pack.get("meta", {}),
+        "scenario_pack": scenario_pack,
+        "excluded_schools": excluded_schools,
     }
 
 
@@ -313,10 +336,76 @@ def _evaluate_school_with_causal(
             "rank": school.us_news_rank,
             "acceptance_rate": school.acceptance_rate,
             "location": f"{school.city}, {school.state}",
+            "city": school.city,
+            "state": school.state,
+            "campus_setting": school.campus_setting,
             "type": school.school_type,
             "avg_net_price": school.avg_net_price,
         },
+        "program_names": [program.name for program in getattr(school, "programs", [])],
     }
+
+
+def _apply_preference_hints(
+    preferences: dict[str, Any],
+    preference_hints: list[str] | None,
+) -> dict[str, Any]:
+    if not preference_hints:
+        return preferences
+
+    merged: dict[str, Any] = dict(preferences)
+    for hint in preference_hints:
+        text = str(hint or "").strip().lower()
+        if not text:
+            continue
+        if text.startswith("risk:"):
+            value = text.split(":", 1)[1].strip()
+            if value:
+                merged["risk_preference"] = value
+            continue
+        if text.startswith("cost:"):
+            value = text.split(":", 1)[1].strip()
+            if value:
+                merged["cost_priority"] = value
+            continue
+        if text.startswith("location:"):
+            value = text.split(":", 1)[1].strip()
+            if value:
+                locations = merged.get("location")
+                if isinstance(locations, list):
+                    if value not in locations:
+                        merged["location"] = [*locations, value]
+                else:
+                    merged["location"] = [value]
+            continue
+        if text.startswith("culture:"):
+            value = text.split(":", 1)[1].strip()
+            if value:
+                cultures = merged.get("culture")
+                if isinstance(cultures, list):
+                    if value not in cultures:
+                        merged["culture"] = [*cultures, value]
+                else:
+                    merged["culture"] = [value]
+            continue
+        if text.startswith("size:"):
+            value = text.split(":", 1)[1].strip()
+            if value:
+                sizes = merged.get("size")
+                if isinstance(sizes, list):
+                    if value not in sizes:
+                        merged["size"] = [*sizes, value]
+                else:
+                    merged["size"] = [value]
+            continue
+        if text:
+            tags = merged.get("ui_preference_tags")
+            if isinstance(tags, list):
+                if text not in tags:
+                    merged["ui_preference_tags"] = [*tags, text]
+            else:
+                merged["ui_preference_tags"] = [text]
+    return merged
 
 
 def _adjust_weights_for_preferences(preferences: dict[str, Any]) -> dict[str, float]:

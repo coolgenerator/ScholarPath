@@ -20,7 +20,7 @@ def _get_celery_app():
         )
 
 
-@router.get("/tasks/{task_id}")
+@router.get("/{task_id}")
 async def get_task_status(task_id: str) -> dict:
     """Poll the status of a Celery task.
 
@@ -42,7 +42,7 @@ async def get_task_status(task_id: str) -> dict:
     return response
 
 
-@router.get("/tasks/{task_id}/result")
+@router.get("/{task_id}/result")
 async def get_task_result(task_id: str) -> dict:
     """Get the result of a completed Celery task."""
     app = _get_celery_app()

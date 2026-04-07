@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from typing import Any
 
@@ -54,6 +55,14 @@ _NON_NULLABLE_GROUP_FIELDS = {
 }
 
 _FINANCIAL_AID_TYPES = {"need_based", "merit", "both", "no"}
+_ED_PREFERENCE_CANONICAL = {"ed", "ea", "rea", "rd"}
+_ED_PREFERENCE_ALIAS_MAP = {
+    "earlydecision": "ed",
+    "earlyaction": "ea",
+    "restrictiveearlyaction": "rea",
+    "regulardecision": "rd",
+    "rdonly": "rd",
+}
 
 
 def _to_string_list(value: Any) -> list[str] | None:
@@ -88,6 +97,30 @@ def _normalize_preference_value(key: str, value: Any) -> Any:
         return stripped or None
 
     return value
+
+
+def normalize_ed_preference(value: Any) -> str | None:
+    """Normalize ED preference to canonical values or None."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return None
+    raw = value.strip().lower()
+    if not raw:
+        return None
+    if raw in _ED_PREFERENCE_CANONICAL:
+        return raw
+    # Only normalize short, ASCII alias forms. Free-form sentences should not be coerced.
+    if re.search(r"[^\x00-\x7F]", raw):
+        return None
+    if len(raw) > 32 or re.fullmatch(r"[a-z\s\-_]+", raw) is None:
+        return None
+    squashed = re.sub(r"[^a-z]+", "", raw)
+    if not squashed:
+        return None
+    if squashed in _ED_PREFERENCE_CANONICAL:
+        return squashed
+    return _ED_PREFERENCE_ALIAS_MAP.get(squashed)
 
 
 def canonicalize_preferences(preferences: dict[str, Any] | None) -> dict[str, Any]:
@@ -258,6 +291,9 @@ async def apply_portfolio_patch(
     ):
         for key, value in fields.items():
             _assert_clearable(group_name, key, value)
+            if group_name == "strategy" and key == "ed_preference":
+                update_data[key] = normalize_ed_preference(value)
+                continue
             update_data[key] = value
 
     prefs_patch = data.get("preferences")

@@ -5,9 +5,13 @@ import { useSchools } from '../../hooks/useSchools';
 import { useApp } from '../../context/AppContext';
 import { evaluationsApi } from '../../lib/api/evaluations';
 import { schoolsApi } from '../../lib/api/schools';
-import { reportsApi } from '../../lib/api/reports';
 import { portfolioApi } from '../../lib/api/portfolio';
-import type { EvaluationWithSchool, SchoolResponse } from '../../lib/types';
+import type {
+  EvaluationWithSchool,
+  GenerateSchoolListResponse,
+  RecommendationScenarioPack,
+  SchoolResponse,
+} from '../../lib/types';
 import {
   DASHBOARD_SELECT_EMPTY_VALUE,
   DashboardSelect,
@@ -475,20 +479,14 @@ function buildCanonicalPreferenceHints(preferences: Record<string, unknown>): st
 
 function AIPreferencesPanel({ studentId, onGenerated, t }: {
   studentId: string;
-  onGenerated: () => void;
+  onGenerated: (payload: GenerateSchoolListResponse) => void;
   t: Record<string, any>;
 }) {
   const [selectedInterests, setSelectedInterests] = useState<Set<string>>(new Set());
   const [selectedPrefs, setSelectedPrefs] = useState<Set<string>>(new Set());
   const [basePreferences, setBasePreferences] = useState<Record<string, unknown>>({});
   const [generating, setGenerating] = useState(false);
-  const [status, setStatus] = useState<'idle' | 'polling' | 'done' | 'error'>('idle');
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // Cleanup polling on unmount
-  useEffect(() => {
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, []);
+  const [status, setStatus] = useState<'idle' | 'done' | 'error'>('idle');
 
   useEffect(() => {
     let cancelled = false;
@@ -518,7 +516,7 @@ function AIPreferencesPanel({ studentId, onGenerated, t }: {
   const handleGenerate = async () => {
     if (!studentId) return;
     setGenerating(true);
-    setStatus('polling');
+    setStatus('idle');
 
     const mergedPreferences = mergePreferenceTags(basePreferences, selectedInterests, selectedPrefs);
 
@@ -538,49 +536,15 @@ function AIPreferencesPanel({ studentId, onGenerated, t }: {
 
     try {
       const result = await schoolsApi.generateList(studentId, hints);
-
-      // If backend ran synchronously (no Celery), it returns status: "completed" directly
       if (result.status === 'completed') {
         setStatus('done');
-        setGenerating(false);
-        onGenerated();
-        return;
-      }
-
-      // Celery path: poll the task
-      if (result.task_id) {
-        pollRef.current = setInterval(async () => {
-          try {
-            const taskStatus = await reportsApi.getTask(result.task_id!);
-            if (taskStatus.status === 'completed' || taskStatus.status === 'SUCCESS') {
-              if (pollRef.current) clearInterval(pollRef.current);
-              setStatus('done');
-              setGenerating(false);
-              onGenerated();
-            } else if (taskStatus.status === 'failed' || taskStatus.status === 'FAILURE') {
-              if (pollRef.current) clearInterval(pollRef.current);
-              setStatus('error');
-              setGenerating(false);
-            }
-          } catch {
-            if (pollRef.current) clearInterval(pollRef.current);
-            setTimeout(() => {
-              setStatus('done');
-              setGenerating(false);
-              onGenerated();
-            }, 5000);
-          }
-        }, 2000);
-        // Safety timeout
-        setTimeout(() => {
-          if (pollRef.current) clearInterval(pollRef.current);
-          setGenerating(false);
-          setStatus('done');
-          onGenerated();
-        }, 30000);
+        onGenerated(result);
+      } else {
+        setStatus('error');
       }
     } catch {
       setStatus('error');
+    } finally {
       setGenerating(false);
     }
   };
@@ -690,6 +654,8 @@ export function SchoolListPanel({ studentId }: SchoolListPanelProps) {
   const [sortBy, setSortBy] = useState<'score' | 'tier' | 'favorite'>('score');
   const [tierFilter, setTierFilter] = useState<string | null>(null);
   const [listVersion, setListVersion] = useState(0);
+  const [scenarioPack, setScenarioPack] = useState<RecommendationScenarioPack | null>(null);
+  const [activeScenarioId, setActiveScenarioId] = useState<string>('baseline');
   const prevCountRef = useRef(0);
 
   // Auto-detect when chat adds new schools (evaluation count increases)
@@ -742,6 +708,18 @@ export function SchoolListPanel({ studentId }: SchoolListPanelProps) {
 
   const total = allEvals.length;
   const avgScore = total > 0 ? allEvals.reduce((s, e) => s + e.overall_score, 0) / total : 0;
+  const scenarioTabs = useMemo(() => {
+    if (!scenarioPack) return [];
+    const tabs: Array<{ id: string; label: string; schools: any[] }> = [
+      { id: 'baseline', label: t.sl_scenario_baseline ?? 'Baseline', schools: scenarioPack.baseline ?? [] },
+      ...((scenarioPack.scenarios ?? []).map((item) => ({ id: item.id, label: item.label || item.id, schools: item.schools || [] }))),
+    ];
+    return tabs;
+  }, [scenarioPack, t]);
+  const activeScenario = useMemo(() => {
+    if (scenarioTabs.length === 0) return null;
+    return scenarioTabs.find((item) => item.id === activeScenarioId) ?? scenarioTabs[0];
+  }, [scenarioTabs, activeScenarioId]);
 
   const handleRefresh = useCallback(() => {
     refetch();
@@ -844,9 +822,70 @@ export function SchoolListPanel({ studentId }: SchoolListPanelProps) {
           <MotionSection delay={0.04}>
             <AIPreferencesPanel
               studentId={studentId}
-              onGenerated={() => { refetch(); }}
+              onGenerated={(payload) => {
+                if (payload?.scenario_pack) {
+                  setScenarioPack(payload.scenario_pack);
+                  setActiveScenarioId('baseline');
+                }
+                refetch();
+              }}
               t={t}
             />
+          </MotionSection>
+        )}
+
+        {activeScenario && (
+          <MotionSection delay={0.05}>
+            <div className="dashboard-surface-soft border-primary/10 bg-primary/3 p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-primary/70">
+                    {t.sl_scenario_title ?? 'Scenario Pack'}
+                  </p>
+                  <p className="text-xs text-on-surface-variant/70">
+                    {t.sl_scenario_desc ?? 'Use scenario tabs to see how ranking changes under different constraints.'}
+                  </p>
+                </div>
+                <div className="text-[11px] font-semibold text-on-surface-variant/70">
+                  {activeScenario.schools.length} {t.sl_schools ?? 'schools'}
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {scenarioTabs.map((tab) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveScenarioId(tab.id)}
+                    className={`rounded-full px-3 py-1 text-xs font-bold transition-colors ${
+                      activeScenario.id === tab.id
+                        ? 'bg-primary text-on-primary'
+                        : 'bg-surface-container-high text-on-surface-variant hover:bg-surface-container-high/80'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+              <div className="space-y-2">
+                {(activeScenario.schools ?? []).slice(0, 8).map((school: any) => (
+                  <div key={`${activeScenario.id}-${school.school_id ?? school.school_name}`} className="flex items-center gap-3 rounded-xl border border-outline-variant/10 bg-surface-container-lowest px-3 py-2">
+                    <div className="w-8 text-center text-xs font-black text-on-surface-variant/60">#{school.rank ?? '—'}</div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-bold text-on-surface">{school.school_name}</div>
+                      <div className="flex items-center gap-2 text-[10px] text-on-surface-variant/60">
+                        {school.prefilter_tag === 'eligible' ? <span>{t.sl_in_budget ?? 'In budget'}</span> : null}
+                        {school.prefilter_tag === 'stretch' ? <span>{t.sl_stretch ?? 'Stretch'}</span> : null}
+                        {typeof school.rank_delta === 'number' && school.rank_delta !== 0 ? (
+                          <span className={school.rank_delta > 0 ? 'text-tertiary font-bold' : 'text-error font-bold'}>
+                            {school.rank_delta > 0 ? `↑${school.rank_delta}` : `${school.rank_delta}`}
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div className="text-xs font-black text-primary">{Math.round((school.scenario_score ?? school.overall_score ?? 0) * 100)}%</div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </MotionSection>
         )}
 

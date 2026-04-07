@@ -34,8 +34,8 @@ from scholarpath.services.causal_data_service import (
 
 logger = logging.getLogger(__name__)
 
-_TRUTH_STAGES = {"admit", "commit", "reject", "declined"}
-_EVENT_ONLY_STAGES = {"submitted", "interview", "waitlist", "deferred"}
+_TRUTH_STAGES = {"admit", "commit", "reject", "declined", "waitlist", "deferred"}
+_EVENT_ONLY_STAGES = {"submitted", "interview"}
 
 
 async def backfill_real_admission_assets(
@@ -61,8 +61,8 @@ async def backfill_real_admission_assets(
     The primary supervision is admission truth only:
     - ``CausalFeatureSnapshot`` is built from real student/school/offer/event rows.
     - ``CausalOutcomeEvent`` is only created for externally verifiable admission
-      truth stages: admit/commit/reject/declined.
-    - waitlist/deferred are preserved as events but not labels.
+      truth stages: admit/commit/reject/declined/waitlist/deferred.
+    - submitted/interview are preserved as event-only records.
     """
     active = [str(item).strip() for item in (active_outcomes or ["admission_probability"]) if str(item).strip()]
     if not active:

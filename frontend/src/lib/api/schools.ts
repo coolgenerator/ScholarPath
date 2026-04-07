@@ -1,5 +1,17 @@
 import { api } from './index';
-import type { GenerateSchoolListResponse, SchoolListResponse, SchoolResponse } from '../types';
+import type {
+  GenerateSchoolListResponse,
+  RecommendationScenarioPack,
+  RecommendationPrefilterMeta,
+  SchoolListResponse,
+  SchoolResponse,
+} from '../types';
+
+interface SchoolListHints {
+  interests?: string[];
+  preferences?: string[];
+  budget_cap_usd?: number;
+}
 
 export const schoolsApi = {
   list(params?: Record<string, string>) {
@@ -11,7 +23,15 @@ export const schoolsApi = {
   lookup(name: string) {
     return api.post<SchoolResponse>('/schools/lookup', { name });
   },
-  generateList(studentId: string, hints?: { interests?: string[]; preferences?: string[] }) {
+  generateList(studentId: string, hints?: SchoolListHints) {
     return api.post<GenerateSchoolListResponse>(`/schools/students/${studentId}/school-list`, hints ?? {});
+  },
+  generateScenarioPack(studentId: string, hints?: SchoolListHints) {
+    return api.post<{
+      status: 'completed';
+      count: number;
+      scenario_pack?: RecommendationScenarioPack | null;
+      prefilter_meta?: RecommendationPrefilterMeta | null;
+    }>(`/schools/students/${studentId}/scenario-pack`, hints ?? {});
   },
 };

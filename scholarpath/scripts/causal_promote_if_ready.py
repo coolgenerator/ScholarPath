@@ -49,10 +49,15 @@ def _load_latest_stage4_candidate(staged_root: Path) -> tuple[str | None, dict[s
     for run_dir in runs:
         gate_path = run_dir / "gate_results.json"
         summary_path = run_dir / "stage_summary.json"
+        report_path = run_dir / "report.json"
         if not gate_path.exists() or not summary_path.exists():
             continue
         gate = json.loads(gate_path.read_text(encoding="utf-8"))
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else {}
+        overrides_applied = report.get("overrides_applied", {}) if isinstance(report, dict) else {}
+        if isinstance(overrides_applied, dict) and "stage4_min_admission_rows" in overrides_applied:
+            continue
         stage4 = gate.get("stage_4") if isinstance(gate, dict) else None
         champion = summary.get("stage_4", {}).get("champion") if isinstance(summary, dict) else None
         model_version = None

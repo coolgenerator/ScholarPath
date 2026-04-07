@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
-from collections import defaultdict
-from dataclasses import dataclass
+import re
+import time
+from collections import defaultdict, deque
+from dataclasses import dataclass, fields as dataclass_fields
 from datetime import datetime, timedelta, timezone
 import uuid
 from typing import Any
 
 from sqlalchemy import and_, func, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from scholarpath.config import settings
 from scholarpath.db.models import (
@@ -24,6 +27,10 @@ from scholarpath.db.models import (
     EvidenceArtifact,
     FactLineage,
     FactQuarantine,
+    DocumentChunk,
+    PolicyFact,
+    PolicyFactAudit,
+    RawDocument,
     School,
     SchoolExternalId,
     Student,
@@ -51,8 +58,9 @@ logger = logging.getLogger(__name__)
 _ADMISSION_STAGE_TO_VALUE: dict[str, float | None] = {
     "submitted": None,
     "interview": None,
-    "waitlist": None,
-    "deferred": None,
+    # These are observed true statuses with intermediate certainty.
+    "waitlist": 0.35,
+    "deferred": 0.45,
     "admit": 1.0,
     "reject": 0.0,
     "declined": 0.0,
@@ -84,6 +92,9 @@ _DEFAULT_FACT_FIELDS = [
     "tuition_out_of_state",
     "avg_net_price",
     "graduation_rate_4yr",
+    "retention_rate",
+    "median_earnings_10yr",
+    "doctoral_completions_share",
     "student_faculty_ratio",
     "enrollment",
     "endowment_total",
@@ -101,6 +112,9 @@ _DEFAULT_ACTIVE_OUTCOMES = [
 ]
 
 _MIN_EXTERNAL_ID_CONFIDENCE = 0.75
+_OFFICIAL_SOURCE_TIMEOUT_SECONDS = 45.0
+_OFFICIAL_DIRECT_FETCH_TIMEOUT_SECONDS = 60.0
+_SCORECARD_SCHOOL_ID_RE = re.compile(r"/school/\?(\d+)")
 
 
 @dataclass(slots=True)
@@ -123,6 +137,10 @@ class IngestMetrics:
     external_id_match_total: int = 0
     trend_signals_written: int = 0
     trend_signals_attempted: int = 0
+    raw_documents_created: int = 0
+    document_chunks_created: int = 0
+    policy_facts_created: int = 0
+    policy_fact_audits_created: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         schema_valid_rate = (
@@ -166,7 +184,119 @@ class IngestMetrics:
             "official_source_coverage_rate": round(official_source_coverage_rate, 4),
             "external_id_match_rate": round(external_id_match_rate, 4),
             "trend_coverage_rate": round(trend_coverage_rate, 4),
+            "raw_documents_created": self.raw_documents_created,
+            "document_chunks_created": self.document_chunks_created,
+            "policy_facts_created": self.policy_facts_created,
+            "policy_fact_audits_created": self.policy_fact_audits_created,
         }
+
+
+@dataclass(slots=True)
+class _SchoolWorkItem:
+    school_id: uuid.UUID
+    school_name: str
+    state: str
+    website_url: str | None
+    cds_url: str | None
+
+
+@dataclass(slots=True)
+class _RpmFallbackState:
+    last_ts: float = 0.0
+    last_total_requests: float = 0.0
+
+
+def _merge_ingest_metrics(target: IngestMetrics, source: IngestMetrics) -> None:
+    for field in dataclass_fields(IngestMetrics):
+        if field.name == "run_id":
+            continue
+        setattr(target, field.name, int(getattr(target, field.name)) + int(getattr(source, field.name)))
+
+
+def _adjust_school_concurrency(
+    *,
+    current: int,
+    rpm_actual: float,
+    rate_limit_errors: int,
+    rpm_band_low: float,
+    rpm_band_high: float,
+    school_concurrency_max: int,
+) -> int:
+    current_safe = max(1, int(current))
+    max_safe = max(1, int(school_concurrency_max))
+    if rpm_actual < float(rpm_band_low) and int(rate_limit_errors) <= 0:
+        return min(max_safe, current_safe + 1)
+    if rpm_actual > float(rpm_band_high) or int(rate_limit_errors) > 0:
+        return max(1, current_safe - 2)
+    return current_safe
+
+
+async def _observe_llm_rpm(
+    *,
+    llm_client: LLMClient,
+    fallback_state: _RpmFallbackState,
+    window_seconds: int = 60,
+) -> dict[str, Any]:
+    window = max(10, int(window_seconds))
+    try:
+        health = await llm_client.endpoint_health(window_seconds=window)
+        endpoints = list(health.get("endpoints") or [])
+        requests_window = sum(float(item.get("requests_window") or 0.0) for item in endpoints)
+        rate_limit_window = int(
+            round(sum(float(item.get("rate_limit_window") or 0.0) for item in endpoints)),
+        )
+        if requests_window > 0:
+            return {
+                "rpm_actual": round(requests_window * (60.0 / float(window)), 2),
+                "rate_limit_window": rate_limit_window,
+                "observer_enabled": bool(health.get("observer_enabled", False)),
+                "observer_error": health.get("observer_error"),
+                "window_seconds": window,
+            }
+
+        # Fallback when observer window is empty: derive from cumulative totals.
+        requests_total = sum(float(item.get("requests_total") or 0.0) for item in endpoints)
+        now = time.monotonic()
+        rpm_est = 0.0
+        if fallback_state.last_ts > 0.0 and now > fallback_state.last_ts and requests_total >= fallback_state.last_total_requests:
+            delta_req = requests_total - fallback_state.last_total_requests
+            delta_sec = now - fallback_state.last_ts
+            if delta_sec > 0:
+                rpm_est = (delta_req / delta_sec) * 60.0
+        fallback_state.last_ts = now
+        fallback_state.last_total_requests = requests_total
+        return {
+            "rpm_actual": round(rpm_est, 2),
+            "rate_limit_window": rate_limit_window,
+            "observer_enabled": bool(health.get("observer_enabled", False)),
+            "observer_error": health.get("observer_error"),
+            "window_seconds": window,
+        }
+    except Exception as exc:
+        return {
+            "rpm_actual": 0.0,
+            "rate_limit_window": 0,
+            "observer_enabled": False,
+            "observer_error": str(exc),
+            "window_seconds": window,
+        }
+
+
+def _estimate_content_type(*, source_url: str | None, fetch_mode: str) -> str:
+    url = str(source_url or "").strip().lower()
+    mode = str(fetch_mode or "").strip().lower()
+    if mode == "direct_pdf" or url.endswith(".pdf"):
+        return "pdf"
+    if mode == "direct_html":
+        return "html"
+    return "text"
+
+
+def _token_estimate(text: str) -> int:
+    raw = (text or "").strip()
+    if not raw:
+        return 0
+    return max(1, int(len(raw) / 4))
 
 
 async def register_evidence_artifact(
@@ -283,12 +413,30 @@ async def register_admission_event(
     for existing in existing_rows:
         existing_meta = existing.metadata_ or {}
         if source_key and str(existing_meta.get("source_key") or "").strip() == source_key:
+            await _ensure_admission_outcome_for_event(
+                session,
+                student_id=student_uuid,
+                school_id=school_uuid,
+                cycle_year=int(cycle_year),
+                stage=stage_norm,
+                happened_at=existing.happened_at or happened_at,
+                admission_event_id=existing.id,
+            )
             return existing
         if (
             existing.happened_at == (happened_at or existing.happened_at)
             and existing.major_bucket == major_bucket
             and existing.evidence_ref == _as_uuid(evidence_ref)
         ):
+            await _ensure_admission_outcome_for_event(
+                session,
+                student_id=student_uuid,
+                school_id=school_uuid,
+                cycle_year=int(cycle_year),
+                stage=stage_norm,
+                happened_at=existing.happened_at or happened_at,
+                admission_event_id=existing.id,
+            )
             return existing
 
     row = AdmissionEvent(
@@ -305,39 +453,66 @@ async def register_admission_event(
     session.add(row)
     await session.flush()
 
-    outcome_value = _ADMISSION_STAGE_TO_VALUE[stage_norm]
-    if outcome_value is not None:
-        exists_stmt = select(CausalOutcomeEvent).where(
-            and_(
-                CausalOutcomeEvent.student_id == student_uuid,
-                CausalOutcomeEvent.school_id == school_uuid,
-                CausalOutcomeEvent.outcome_name == "admission_probability",
-                CausalOutcomeEvent.observed_at >= datetime(cycle_year, 1, 1, tzinfo=timezone.utc),
-                CausalOutcomeEvent.observed_at < datetime(cycle_year + 1, 1, 1, tzinfo=timezone.utc),
-            )
-        ).limit(1)
-        existing = (await session.execute(exists_stmt)).scalars().first()
-        if existing is None:
-            session.add(
-                CausalOutcomeEvent(
-                    student_id=student_uuid,
-                    school_id=school_uuid,
-                    offer_id=None,
-                    outcome_name="admission_probability",
-                    outcome_value=float(outcome_value),
-                    label_type="true",
-                    label_confidence=0.99,
-                    source="admission_events",
-                    observed_at=row.happened_at,
-                    metadata_={
-                        "stage": stage_norm,
-                        "admission_event_id": str(row.id),
-                    },
-                )
-            )
+    await _ensure_admission_outcome_for_event(
+        session,
+        student_id=student_uuid,
+        school_id=school_uuid,
+        cycle_year=int(cycle_year),
+        stage=stage_norm,
+        happened_at=row.happened_at,
+        admission_event_id=row.id,
+    )
 
     await session.flush()
     return row
+
+
+async def _ensure_admission_outcome_for_event(
+    session: AsyncSession,
+    *,
+    student_id: uuid.UUID,
+    school_id: uuid.UUID,
+    cycle_year: int,
+    stage: str,
+    happened_at: datetime | None,
+    admission_event_id: uuid.UUID,
+) -> bool:
+    outcome_value = _ADMISSION_STAGE_TO_VALUE.get(str(stage).strip().lower())
+    if outcome_value is None:
+        return False
+
+    exists_stmt = select(CausalOutcomeEvent).where(
+        and_(
+            CausalOutcomeEvent.student_id == student_id,
+            CausalOutcomeEvent.school_id == school_id,
+            CausalOutcomeEvent.outcome_name == "admission_probability",
+            CausalOutcomeEvent.observed_at >= datetime(cycle_year, 1, 1, tzinfo=timezone.utc),
+            CausalOutcomeEvent.observed_at < datetime(cycle_year + 1, 1, 1, tzinfo=timezone.utc),
+        )
+    ).limit(1)
+    existing = (await session.execute(exists_stmt)).scalars().first()
+    if existing is not None:
+        return False
+
+    observed_at = happened_at or datetime.now(timezone.utc)
+    session.add(
+        CausalOutcomeEvent(
+            student_id=student_id,
+            school_id=school_id,
+            offer_id=None,
+            outcome_name="admission_probability",
+            outcome_value=float(outcome_value),
+            label_type="true",
+            label_confidence=0.99,
+            source="admission_events",
+            observed_at=observed_at,
+            metadata_={
+                "stage": str(stage).strip().lower(),
+                "admission_event_id": str(admission_event_id),
+            },
+        )
+    )
+    return True
 
 
 async def ingest_ipeds_school_pool(
@@ -514,6 +689,11 @@ async def ingest_official_facts(
     run_id: str,
     fields: list[str] | None = None,
     llm: LLMClient | None = None,
+    school_concurrency_initial: int = 1,
+    school_concurrency_max: int = 1,
+    target_rpm_total: float = 180.0,
+    rpm_band_low: float = 170.0,
+    rpm_band_high: float = 185.0,
 ) -> dict[str, Any]:
     """Ingest official admission facts and write canonical/quarantine rows."""
     if not school_names:
@@ -522,7 +702,6 @@ async def ingest_official_facts(
     target_fields = [normalise_variable_name(field) for field in (fields or _DEFAULT_FACT_FIELDS)]
     metrics = IngestMetrics(run_id=run_id)
     llm_client = llm or get_llm_client()
-
     sources = _build_official_sources()
 
     school_rows = (
@@ -531,132 +710,421 @@ async def ingest_official_facts(
         )
     ).scalars().all()
     school_map = {row.name.lower(): row for row in school_rows}
+    school_work_items: list[_SchoolWorkItem] = []
+    per_school_results: list[dict[str, Any]] = []
+    missing_schools: list[str] = []
     updated_school_ids: set[str] = set()
+    rpm_windows: list[dict[str, Any]] = []
 
     for school_name in school_names:
         school = school_map.get(school_name.lower())
         if school is None:
+            missing_schools.append(school_name)
+            per_school_results.append(
+                {
+                    "school_name": school_name,
+                    "status": "not_found",
+                    "error": "school_not_found",
+                },
+            )
             continue
-        metrics.processed_schools += 1
-        school_results: list[SearchResult] = []
-        seen_fields: set[str] = set()
-        external_ids = await _load_school_external_ids(session, school_id=school.id)
-        for source in sources:
+        school_work_items.append(
+            _SchoolWorkItem(
+                school_id=school.id,
+                school_name=school.name,
+                state=school.state,
+                website_url=school.website_url,
+                cds_url=school.cds_url,
+            ),
+        )
+
+    max_workers = max(1, min(int(school_concurrency_max), len(school_work_items) or 1))
+    current_workers = max(1, min(int(school_concurrency_initial), max_workers))
+    if len(school_work_items) <= 1:
+        max_workers = 1
+        current_workers = 1
+
+    bind = session.bind
+    bind_url = ""
+    if bind is not None and hasattr(bind, "url"):
+        bind_url = str(getattr(bind, "url"))
+    elif bind is not None and hasattr(bind, "engine") and hasattr(bind.engine, "url"):
+        bind_url = str(bind.engine.url)
+    if "sqlite" in bind_url and ":memory:" in bind_url:
+        max_workers = 1
+        current_workers = 1
+
+    target_rpm = float(target_rpm_total)
+    band_low = float(rpm_band_low)
+    band_high = float(rpm_band_high)
+    if band_low > band_high:
+        band_low, band_high = band_high, band_low
+    band_high = min(190.0, max(band_high, 1.0))
+    band_low = min(max(1.0, band_low), band_high)
+
+    if max_workers <= 1:
+        for work_item in school_work_items:
             try:
-                if hasattr(source, "search_for_school"):
-                    rows = await source.search_for_school(
+                school_result, school_metrics = await _ingest_official_facts_for_school(
+                    session=session,
+                    school_id=work_item.school_id,
+                    cycle_year=cycle_year,
+                    run_id=run_id,
+                    target_fields=target_fields,
+                    llm_client=llm_client,
+                    sources=sources,
+                )
+                per_school_results.append(school_result)
+                _merge_ingest_metrics(metrics, school_metrics)
+                updated_school_ids.update(school_result.get("schools_updated") or [])
+            except Exception as exc:
+                logger.exception("Official facts ingest failed for %s", work_item.school_name)
+                per_school_results.append(
+                    {
+                        "school_id": str(work_item.school_id),
+                        "school_name": work_item.school_name,
+                        "status": "error",
+                        "error": str(exc),
+                    },
+                )
+        rpm_sample = await _observe_llm_rpm(llm_client=llm_client, fallback_state=_RpmFallbackState())
+        rpm_windows.append(
+            {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "rpm_actual": float(rpm_sample.get("rpm_actual") or 0.0),
+                "rate_limit_window": int(rpm_sample.get("rate_limit_window") or 0),
+                "observer_enabled": bool(rpm_sample.get("observer_enabled", False)),
+                "concurrency": 1,
+                "target_rpm_total": target_rpm,
+                "rpm_band_low": band_low,
+                "rpm_band_high": band_high,
+            },
+        )
+    else:
+        if bind is None:
+            raise RuntimeError("Cannot run concurrent ingest without an active session bind")
+        worker_factory = async_sessionmaker(
+            bind,
+            class_=AsyncSession,
+            expire_on_commit=False,
+        )
+
+        async def _run_school_worker(work_item: _SchoolWorkItem) -> tuple[dict[str, Any], IngestMetrics]:
+            async with worker_factory() as worker_session:
+                try:
+                    school_result, school_metrics = await _ingest_official_facts_for_school(
+                        session=worker_session,
+                        school_id=work_item.school_id,
+                        cycle_year=cycle_year,
+                        run_id=run_id,
+                        target_fields=target_fields,
+                        llm_client=llm_client,
+                        sources=sources,
+                    )
+                    await worker_session.commit()
+                    return school_result, school_metrics
+                except Exception as exc:
+                    await worker_session.rollback()
+                    logger.exception("Official facts ingest failed for %s", work_item.school_name)
+                    return (
+                        {
+                            "school_id": str(work_item.school_id),
+                            "school_name": work_item.school_name,
+                            "status": "error",
+                            "error": str(exc),
+                        },
+                        IngestMetrics(run_id=run_id),
+                    )
+
+        pending: deque[_SchoolWorkItem] = deque(school_work_items)
+        running: dict[asyncio.Task[tuple[dict[str, Any], IngestMetrics]], _SchoolWorkItem] = {}
+        fallback_state = _RpmFallbackState()
+        adjust_interval_seconds = 20.0
+        last_adjust = time.monotonic()
+
+        while pending or running:
+            while pending and len(running) < current_workers:
+                work_item = pending.popleft()
+                task = asyncio.create_task(_run_school_worker(work_item))
+                running[task] = work_item
+
+            timeout = max(0.1, adjust_interval_seconds - (time.monotonic() - last_adjust))
+            done: set[asyncio.Task[tuple[dict[str, Any], IngestMetrics]]] = set()
+            if running:
+                done, _ = await asyncio.wait(
+                    set(running.keys()),
+                    timeout=timeout,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+            else:
+                await asyncio.sleep(min(timeout, 0.2))
+
+            for task in done:
+                running.pop(task, None)
+                school_result, school_metrics = task.result()
+                per_school_results.append(school_result)
+                _merge_ingest_metrics(metrics, school_metrics)
+                updated_school_ids.update(school_result.get("schools_updated") or [])
+
+            now = time.monotonic()
+            should_adjust = (now - last_adjust) >= adjust_interval_seconds or (not pending and not running)
+            if should_adjust:
+                rpm_sample = await _observe_llm_rpm(
+                    llm_client=llm_client,
+                    fallback_state=fallback_state,
+                )
+                rpm_actual = float(rpm_sample.get("rpm_actual") or 0.0)
+                rate_limit_window = int(rpm_sample.get("rate_limit_window") or 0)
+                rpm_windows.append(
+                    {
+                        "ts": datetime.now(timezone.utc).isoformat(),
+                        "rpm_actual": rpm_actual,
+                        "rate_limit_window": rate_limit_window,
+                        "observer_enabled": bool(rpm_sample.get("observer_enabled", False)),
+                        "observer_error": rpm_sample.get("observer_error"),
+                        "concurrency": current_workers,
+                        "running": len(running),
+                        "pending": len(pending),
+                        "target_rpm_total": target_rpm,
+                        "rpm_band_low": band_low,
+                        "rpm_band_high": band_high,
+                    },
+                )
+                current_workers = _adjust_school_concurrency(
+                    current=current_workers,
+                    rpm_actual=rpm_actual,
+                    rate_limit_errors=rate_limit_window,
+                    rpm_band_low=band_low,
+                    rpm_band_high=band_high,
+                    school_concurrency_max=max_workers,
+                )
+                last_adjust = now
+
+    await session.flush()
+    rpm_values = [float(item.get("rpm_actual") or 0.0) for item in rpm_windows]
+    rate_limit_error_count = int(
+        round(sum(float(item.get("rate_limit_window") or 0.0) for item in rpm_windows)),
+    )
+    payload = metrics.to_dict()
+    payload["status"] = "ok"
+    payload["schools_updated"] = sorted(updated_school_ids)
+    payload["schools_updated_count"] = len(updated_school_ids)
+    payload["schools"] = per_school_results
+    payload["schools_not_found"] = missing_schools
+    payload["concurrency"] = {
+        "school_concurrency_initial": int(school_concurrency_initial),
+        "school_concurrency_max": int(school_concurrency_max),
+        "target_rpm_total": target_rpm,
+        "rpm_band_low": band_low,
+        "rpm_band_high": band_high,
+    }
+    payload["rpm_windows"] = rpm_windows
+    payload["rpm_actual_avg"] = round(sum(rpm_values) / len(rpm_values), 2) if rpm_values else 0.0
+    payload["rate_limit_error_count"] = rate_limit_error_count
+    return payload
+
+
+async def _ingest_official_facts_for_school(
+    *,
+    session: AsyncSession,
+    school_id: uuid.UUID,
+    cycle_year: int,
+    run_id: str,
+    target_fields: list[str],
+    llm_client: LLMClient,
+    sources: list[Any],
+) -> tuple[dict[str, Any], IngestMetrics]:
+    metrics = IngestMetrics(run_id=run_id, processed_schools=1)
+    school = await session.get(School, school_id)
+    if school is None:
+        metrics.processed_schools = 0
+        return (
+            {
+                "school_id": str(school_id),
+                "status": "not_found",
+                "error": "school_not_found",
+            },
+            metrics,
+        )
+
+    school_results: list[SearchResult] = []
+    seen_fields: set[str] = set()
+    external_ids = await _load_school_external_ids(session, school_id=school.id)
+    updated_school_ids: set[str] = set()
+
+    for source in sources:
+        try:
+            if hasattr(source, "search_for_school"):
+                rows = await asyncio.wait_for(
+                    source.search_for_school(
                         school_name=school.name,
                         school_state=school.state,
                         website_url=school.website_url,
                         fields=target_fields,
                         external_ids=external_ids,
-                    )
-                else:
-                    rows = await source.search(school.name, target_fields)
-            except Exception:
-                logger.warning("Official source failed: %s", source.name, exc_info=True)
-                continue
-            for item in rows:
-                school_results.append(item)
-                seen_fields.add(normalise_variable_name(item.variable_name))
+                    ),
+                    timeout=_OFFICIAL_SOURCE_TIMEOUT_SECONDS,
+                )
+            else:
+                rows = await asyncio.wait_for(
+                    source.search(school.name, target_fields),
+                    timeout=_OFFICIAL_SOURCE_TIMEOUT_SECONDS,
+                )
+        except TimeoutError:
+            logger.warning(
+                "Official source timeout: %s for school=%s after %.1fs",
+                getattr(source, "name", type(source).__name__),
+                school.name,
+                _OFFICIAL_SOURCE_TIMEOUT_SECONDS,
+            )
+            continue
+        except Exception:
+            logger.warning("Official source failed: %s", source.name, exc_info=True)
+            continue
+        for item in rows:
+            school_results.append(item)
+            seen_fields.add(normalise_variable_name(item.variable_name))
 
-        if school_results:
-            metrics.schools_with_any_fact += 1
+    if school_results:
+        metrics.schools_with_any_fact += 1
 
-        missing_fields = [
-            field for field in target_fields if normalise_variable_name(field) not in seen_fields
-        ]
-        if missing_fields and (school.website_url or school.cds_url):
-            try:
-                fallback_results: list[SearchResult] = []
-                if school.website_url:
-                    fallback_results.extend(
-                        await fetch_school_official_profile_direct(
+    missing_fields = [field for field in target_fields if normalise_variable_name(field) not in seen_fields]
+    if missing_fields and (school.website_url or school.cds_url):
+        try:
+            fallback_results: list[SearchResult] = []
+            if school.website_url:
+                fallback_results.extend(
+                    await asyncio.wait_for(
+                        fetch_school_official_profile_direct(
                             session,
                             school=school,
                             fields=missing_fields,
                             run_id=run_id,
-                        )
-                    )
-                fallback_results.extend(
-                    await fetch_common_dataset_direct(
+                        ),
+                        timeout=_OFFICIAL_DIRECT_FETCH_TIMEOUT_SECONDS,
+                    ),
+                )
+            fallback_results.extend(
+                await asyncio.wait_for(
+                    fetch_common_dataset_direct(
                         session,
                         school=school,
                         fields=missing_fields,
                         run_id=run_id,
-                    )
-                )
-                for item in fallback_results:
-                    school_results.append(item)
-                    seen_fields.add(normalise_variable_name(item.variable_name))
-            except Exception:
-                logger.warning("Official direct fallback failed: %s", school.name, exc_info=True)
-
-        for item in school_results:
-            match_confidence = float((item.raw_data or {}).get("match_confidence") or 1.0)
-            match_method = str((item.raw_data or {}).get("match_method") or "").strip().lower()
-            external_id = str((item.raw_data or {}).get("external_id") or "").strip()
-            if external_id:
-                metrics.external_id_match_total += 1
-                if match_confidence >= _MIN_EXTERNAL_ID_CONFIDENCE:
-                    updated = await _upsert_school_external_id(
-                        session,
-                        school_id=school.id,
-                        provider="ipeds",
-                        external_id=external_id,
-                        is_primary=(match_method == "external_id"),
-                        match_method=match_method or "ipeds_bulk",
-                        confidence=match_confidence,
-                        metadata={
-                            "run_id": run_id,
-                            "source_name": item.source_name,
-                            "source_url": item.source_url,
-                        },
-                    )
-                    if updated:
-                        external_ids["ipeds"] = external_id
-                    metrics.external_id_match_success += 1
-                else:
-                    await _to_quarantine(
-                        session=session,
-                        school_id=school.id,
-                        cycle_year=cycle_year,
-                        outcome_name=normalise_variable_name(item.variable_name),
-                        raw_value=item.value_text,
-                        stage="entity_match",
-                        reason="low_confidence_school_match",
-                        source_name=item.source_name,
-                        source_url=item.source_url,
-                        confidence=match_confidence,
-                        metadata={
-                            "run_id": run_id,
-                            "match_method": match_method,
-                            "match_confidence": match_confidence,
-                            "external_id": external_id,
-                        },
-                    )
-                    metrics.quarantined_count += 1
-                    continue
-
-            await _process_official_fact_item(
-                session=session,
-                school=school,
-                cycle_year=cycle_year,
-                run_id=run_id,
-                item=item,
-                metrics=metrics,
-                llm_client=llm_client,
-                updated_school_ids=updated_school_ids,
+                    ),
+                    timeout=_OFFICIAL_DIRECT_FETCH_TIMEOUT_SECONDS,
+                ),
             )
-        if any(item.source_type == "official" for item in school_results):
-            metrics.schools_with_official_fact += 1
+            for item in fallback_results:
+                school_results.append(item)
+                seen_fields.add(normalise_variable_name(item.variable_name))
+        except TimeoutError:
+            logger.warning(
+                "Official direct fallback timeout for school=%s after %.1fs",
+                school.name,
+                _OFFICIAL_DIRECT_FETCH_TIMEOUT_SECONDS,
+            )
+        except Exception:
+            logger.warning("Official direct fallback failed: %s", school.name, exc_info=True)
+
+    for item in school_results:
+        match_confidence = float((item.raw_data or {}).get("match_confidence") or 1.0)
+        match_method = str((item.raw_data or {}).get("match_method") or "").strip().lower()
+        external_id = str((item.raw_data or {}).get("external_id") or "").strip()
+        if external_id:
+            metrics.external_id_match_total += 1
+            if match_confidence >= _MIN_EXTERNAL_ID_CONFIDENCE:
+                updated = await _upsert_school_external_id(
+                    session,
+                    school_id=school.id,
+                    provider="ipeds",
+                    external_id=external_id,
+                    is_primary=(match_method == "external_id"),
+                    match_method=match_method or "ipeds_bulk",
+                    confidence=match_confidence,
+                    metadata={
+                        "run_id": run_id,
+                        "source_name": item.source_name,
+                        "source_url": item.source_url,
+                    },
+                )
+                if updated:
+                    external_ids["ipeds"] = external_id
+                metrics.external_id_match_success += 1
+            else:
+                await _to_quarantine(
+                    session=session,
+                    school_id=school.id,
+                    cycle_year=cycle_year,
+                    outcome_name=normalise_variable_name(item.variable_name),
+                    raw_value=item.value_text,
+                    stage="entity_match",
+                    reason="low_confidence_school_match",
+                    source_name=item.source_name,
+                    source_url=item.source_url,
+                    confidence=match_confidence,
+                    metadata={
+                        "run_id": run_id,
+                        "match_method": match_method,
+                        "match_confidence": match_confidence,
+                        "external_id": external_id,
+                    },
+                )
+                metrics.quarantined_count += 1
+                await _record_policy_fact_audit(
+                    session=session,
+                    policy_fact_id=None,
+                    school_id=school.id,
+                    cycle_year=cycle_year,
+                    run_id=run_id,
+                    actor="causal_data_service",
+                    action="rejected",
+                    payload={
+                        "stage": "entity_match",
+                        "reason": "low_confidence_school_match",
+                        "variable_name": item.variable_name,
+                        "match_method": match_method,
+                        "match_confidence": match_confidence,
+                        "external_id": external_id,
+                    },
+                    metrics=metrics,
+                )
+                continue
+
+        await _process_official_fact_item(
+            session=session,
+            school=school,
+            cycle_year=cycle_year,
+            run_id=run_id,
+            item=item,
+            metrics=metrics,
+            llm_client=llm_client,
+            updated_school_ids=updated_school_ids,
+        )
+
+    if any(item.source_type == "official" for item in school_results):
+        metrics.schools_with_official_fact += 1
 
     await session.flush()
-    payload = metrics.to_dict()
-    payload["status"] = "ok"
-    payload["schools_updated"] = sorted(updated_school_ids)
-    payload["schools_updated_count"] = len(updated_school_ids)
-    return payload
+    return (
+        {
+            "school_id": str(school.id),
+            "school_name": school.name,
+            "status": "ok",
+            "raw_facts": metrics.raw_facts,
+            "kept_count": metrics.kept_count,
+            "quarantined_count": metrics.quarantined_count,
+            "conflicts_count": metrics.conflicts_count,
+            "deduped_count": metrics.deduped_count,
+            "raw_documents_created": metrics.raw_documents_created,
+            "document_chunks_created": metrics.document_chunks_created,
+            "policy_facts_created": metrics.policy_facts_created,
+            "policy_fact_audits_created": metrics.policy_fact_audits_created,
+            "schools_updated": sorted(updated_school_ids),
+            "schools_updated_count": len(updated_school_ids),
+        },
+        metrics,
+    )
 
 
 async def reprocess_quarantine(
@@ -1029,6 +1497,66 @@ async def _process_official_fact_item(
     updated_school_ids: set[str],
 ) -> None:
     fetch_mode = str((item.raw_data or {}).get("fetch_mode") or "search_api")
+    raw_document_payload = json.dumps(
+        {
+            "school_name": school.name,
+            "cycle_year": cycle_year,
+            "variable_name": item.variable_name,
+            "value_text": item.value_text,
+            "value_numeric": item.value_numeric,
+            "temporal_range": item.temporal_range,
+            "raw_data": item.raw_data or {},
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    raw_document, raw_document_created = await _upsert_raw_document(
+        session=session,
+        school_id=school.id,
+        source_name=item.source_name,
+        source_url=item.source_url,
+        fetch_mode=fetch_mode,
+        content_text=raw_document_payload,
+        cycle_year=cycle_year,
+        run_id=run_id,
+        metadata={
+            "run_id": run_id,
+            "school_name": school.name,
+            "source_kind": (item.raw_data or {}).get("source_kind"),
+        },
+    )
+    metrics.raw_documents_created += int(raw_document_created)
+    chunk, chunk_created = await _upsert_document_chunk(
+        session=session,
+        raw_document_id=raw_document.id,
+        chunk_index=0,
+        chunk_text=str(item.value_text or "").strip(),
+        metadata={
+            "run_id": run_id,
+            "variable_name": item.variable_name,
+            "source_url": item.source_url,
+            "temporal_range": item.temporal_range,
+        },
+    )
+    metrics.document_chunks_created += int(chunk_created)
+    await _record_policy_fact_audit(
+        session=session,
+        policy_fact_id=None,
+        school_id=school.id,
+        cycle_year=cycle_year,
+        run_id=run_id,
+        actor="causal_data_service",
+        action="extracted",
+        payload={
+            "variable_name": item.variable_name,
+            "value_text": item.value_text,
+            "source_name": item.source_name,
+            "source_url": item.source_url,
+            "fetch_mode": fetch_mode,
+        },
+        metrics=metrics,
+    )
+
     evidence_payload = {
         "variable_name": item.variable_name,
         "value_text": item.value_text,
@@ -1082,8 +1610,41 @@ async def _process_official_fact_item(
             },
         )
         metrics.quarantined_count += 1
+        await _record_policy_fact_audit(
+            session=session,
+            policy_fact_id=None,
+            school_id=school.id,
+            cycle_year=cycle_year,
+            run_id=run_id,
+            actor="causal_data_service",
+            action="rejected",
+            payload={
+                "stage": "rule_normalize",
+                "reason": "invalid_schema_or_value",
+                "variable_name": item.variable_name,
+                "value_text": item.value_text,
+                "source_url": item.source_url,
+            },
+            metrics=metrics,
+        )
         return
     metrics.schema_valid_count += 1
+    await _record_policy_fact_audit(
+        session=session,
+        policy_fact_id=None,
+        school_id=school.id,
+        cycle_year=cycle_year,
+        run_id=run_id,
+        actor="causal_data_service",
+        action="validated",
+        payload={
+            "variable_name": cleaned["variable_name"],
+            "value_text": cleaned["value_text"],
+            "value_numeric": cleaned["value_numeric"],
+            "source_url": item.source_url,
+        },
+        metrics=metrics,
+    )
 
     judged = await _judge_fact(
         llm=llm_client,
@@ -1111,6 +1672,24 @@ async def _process_official_fact_item(
             },
         )
         metrics.quarantined_count += 1
+        await _record_policy_fact_audit(
+            session=session,
+            policy_fact_id=None,
+            school_id=school.id,
+            cycle_year=cycle_year,
+            run_id=run_id,
+            actor="causal_data_service",
+            action="rejected",
+            payload={
+                "stage": "llm_judge_fact",
+                "reason": str(judged.get("reason") or "judge_reject"),
+                "confidence": float(judged.get("confidence") or 0.0),
+                "variable_name": cleaned["variable_name"],
+                "value_text": cleaned["value_text"],
+                "source_url": item.source_url,
+            },
+            metrics=metrics,
+        )
         return
 
     conflict = await _check_conflict(
@@ -1120,7 +1699,102 @@ async def _process_official_fact_item(
         variable_name=cleaned["variable_name"],
         value_numeric=cleaned["value_numeric"],
         value_text=cleaned["value_text"],
+        source_family=item.source_name,
+        source_url=item.source_url,
     )
+    if conflict and conflict.get("replace_fact_id"):
+        replace_id = _as_uuid(conflict.get("replace_fact_id"))
+        existing = await session.get(CanonicalFact, replace_id) if replace_id else None
+        if existing is not None:
+            previous_source_url = str((existing.metadata_ or {}).get("source_url") or "")
+            existing.canonical_value_text = cleaned["value_text"]
+            existing.canonical_value_numeric = cleaned["value_numeric"]
+            existing.canonical_value_bucket = _canonical_bucket(cleaned["value_text"], cleaned["value_numeric"])
+            existing.source_family = str(item.source_name or existing.source_family)
+            existing.confidence = max(
+                float(existing.confidence or 0.0),
+                float(item.confidence or 0.0),
+                float(judged.get("confidence") or 0.0),
+            )
+            existing.observed_at = datetime.now(timezone.utc)
+            existing.metadata_ = {
+                **(existing.metadata_ or {}),
+                "run_id": run_id,
+                "source_url": item.source_url,
+                "temporal_range": item.temporal_range,
+                "fetch_mode": fetch_mode,
+                "judge": judged,
+                "replace_reason": str(conflict.get("replace_reason") or "newer_fact"),
+                "replaced_previous_source_url": previous_source_url,
+            }
+            _apply_official_school_fact(
+                school,
+                variable_name=cleaned["variable_name"],
+                value_text=cleaned["value_text"],
+                value_numeric=cleaned["value_numeric"],
+                source_name=item.source_name,
+                source_url=item.source_url,
+                fetch_mode=fetch_mode,
+                run_id=run_id,
+                cycle_year=cycle_year,
+            )
+            updated_school_ids.add(str(school.id))
+            await _append_lineage(
+                session=session,
+                canonical_fact_id=str(existing.id),
+                evidence_artifact_id=evidence.id,
+                source_name=item.source_name,
+                source_url=item.source_url,
+                raw_value_text=item.value_text,
+                raw_value_numeric=item.value_numeric,
+                decision="replaced",
+                metadata={"run_id": run_id, "fetch_mode": fetch_mode, "conflict": conflict},
+            )
+            metrics.kept_count += 1
+            metrics.extracted_count += 1
+            policy_fact, created = await _upsert_policy_fact(
+                session=session,
+                school_id=school.id,
+                raw_document_id=raw_document.id,
+                document_chunk_id=chunk.id,
+                cycle_year=cycle_year,
+                fact_key=cleaned["variable_name"],
+                value_text=cleaned["value_text"],
+                value_numeric=cleaned["value_numeric"],
+                source_url=item.source_url,
+                evidence_quote=cleaned["value_text"] or item.value_text,
+                extractor_version=str((item.raw_data or {}).get("extractor_version") or "phase2-v1"),
+                confidence=max(float(item.confidence), float(judged.get("confidence") or 0.5)),
+                reviewed_flag=True,
+                status="accepted",
+                metadata={
+                    "run_id": run_id,
+                    "canonical_fact_id": str(existing.id),
+                    "fetch_mode": fetch_mode,
+                    "decision": "replace",
+                    "replace_reason": str(conflict.get("replace_reason") or "newer_fact"),
+                },
+            )
+            metrics.policy_facts_created += int(created)
+            await _record_policy_fact_audit(
+                session=session,
+                policy_fact_id=policy_fact.id,
+                school_id=school.id,
+                cycle_year=cycle_year,
+                run_id=run_id,
+                actor="causal_data_service",
+                action="accepted",
+                payload={
+                    "decision": "replace",
+                    "canonical_fact_id": str(existing.id),
+                    "variable_name": cleaned["variable_name"],
+                    "source_url": item.source_url,
+                    "replace_reason": str(conflict.get("replace_reason") or "newer_fact"),
+                },
+                metrics=metrics,
+            )
+            return
+
     if conflict and conflict.get("duplicate_fact_id"):
         _apply_official_school_fact(
             school,
@@ -1147,6 +1821,44 @@ async def _process_official_fact_item(
         )
         metrics.deduped_count += 1
         metrics.extracted_count += 1
+        policy_fact, created = await _upsert_policy_fact(
+            session=session,
+            school_id=school.id,
+            raw_document_id=raw_document.id,
+            document_chunk_id=chunk.id,
+            cycle_year=cycle_year,
+            fact_key=cleaned["variable_name"],
+            value_text=cleaned["value_text"],
+            value_numeric=cleaned["value_numeric"],
+            source_url=item.source_url,
+            evidence_quote=cleaned["value_text"] or item.value_text,
+            extractor_version=str((item.raw_data or {}).get("extractor_version") or "phase2-v1"),
+            confidence=max(float(item.confidence), float(judged.get("confidence") or 0.5)),
+            reviewed_flag=True,
+            status="accepted",
+            metadata={
+                "run_id": run_id,
+                "fetch_mode": fetch_mode,
+                "decision": "duplicate",
+            },
+        )
+        metrics.policy_facts_created += int(created)
+        await _record_policy_fact_audit(
+            session=session,
+            policy_fact_id=policy_fact.id,
+            school_id=school.id,
+            cycle_year=cycle_year,
+            run_id=run_id,
+            actor="causal_data_service",
+            action="accepted",
+            payload={
+                "decision": "duplicate",
+                "canonical_fact_id": str(conflict["duplicate_fact_id"]),
+                "variable_name": cleaned["variable_name"],
+                "source_url": item.source_url,
+            },
+            metrics=metrics,
+        )
         return
 
     if conflict:
@@ -1170,6 +1882,23 @@ async def _process_official_fact_item(
             },
         )
         metrics.quarantined_count += 1
+        await _record_policy_fact_audit(
+            session=session,
+            policy_fact_id=None,
+            school_id=school.id,
+            cycle_year=cycle_year,
+            run_id=run_id,
+            actor="causal_data_service",
+            action="rejected",
+            payload={
+                "stage": "conflict_merge",
+                "reason": "conflict_with_existing_canonical",
+                "variable_name": cleaned["variable_name"],
+                "source_url": item.source_url,
+                "conflict": conflict,
+            },
+            metrics=metrics,
+        )
         return
 
     _apply_official_school_fact(
@@ -1215,6 +1944,224 @@ async def _process_official_fact_item(
     )
     metrics.kept_count += 1
     metrics.extracted_count += 1
+    policy_fact, created = await _upsert_policy_fact(
+        session=session,
+        school_id=school.id,
+        raw_document_id=raw_document.id,
+        document_chunk_id=chunk.id,
+        cycle_year=cycle_year,
+        fact_key=cleaned["variable_name"],
+        value_text=cleaned["value_text"],
+        value_numeric=cleaned["value_numeric"],
+        source_url=item.source_url,
+        evidence_quote=cleaned["value_text"] or item.value_text,
+        extractor_version=str((item.raw_data or {}).get("extractor_version") or "phase2-v1"),
+        confidence=max(float(item.confidence), float(judged.get("confidence") or 0.5)),
+        reviewed_flag=True,
+        status="accepted",
+        metadata={
+            "run_id": run_id,
+            "canonical_fact_id": str(canonical.id),
+            "fetch_mode": fetch_mode,
+            "judge": judged,
+            "temporal_range": item.temporal_range,
+        },
+    )
+    metrics.policy_facts_created += int(created)
+    await _record_policy_fact_audit(
+        session=session,
+        policy_fact_id=policy_fact.id,
+        school_id=school.id,
+        cycle_year=cycle_year,
+        run_id=run_id,
+        actor="causal_data_service",
+        action="accepted",
+        payload={
+            "decision": "keep",
+            "canonical_fact_id": str(canonical.id),
+            "variable_name": cleaned["variable_name"],
+            "source_url": item.source_url,
+        },
+        metrics=metrics,
+    )
+
+
+async def _upsert_raw_document(
+    *,
+    session: AsyncSession,
+    school_id: uuid.UUID,
+    source_name: str,
+    source_url: str | None,
+    fetch_mode: str,
+    content_text: str,
+    cycle_year: int,
+    run_id: str,
+    metadata: dict[str, Any] | None,
+) -> tuple[RawDocument, bool]:
+    source_url_text = str(source_url or "").strip() or "about:blank"
+    content_hash = hashlib.sha256(content_text.encode("utf-8")).hexdigest()
+    existing = await session.scalar(
+        select(RawDocument).where(
+            and_(
+                RawDocument.school_id == school_id,
+                RawDocument.source_url == source_url_text,
+                RawDocument.content_hash == content_hash,
+            )
+        )
+    )
+    if existing is not None:
+        return existing, False
+
+    row = RawDocument(
+        school_id=school_id,
+        source_name=str(source_name or "").strip()[:80] or "unknown",
+        source_url=source_url_text,
+        fetch_mode=str(fetch_mode or "").strip()[:40] or "search_api",
+        content_type=_estimate_content_type(source_url=source_url_text, fetch_mode=fetch_mode),
+        content_text=content_text,
+        content_hash=content_hash,
+        cycle_year=int(cycle_year),
+        run_id=str(run_id or "").strip()[:120],
+        pulled_at=datetime.now(timezone.utc),
+        metadata_=metadata or {},
+    )
+    session.add(row)
+    await session.flush()
+    return row, True
+
+
+async def _upsert_document_chunk(
+    *,
+    session: AsyncSession,
+    raw_document_id: uuid.UUID,
+    chunk_index: int,
+    chunk_text: str,
+    metadata: dict[str, Any] | None,
+) -> tuple[DocumentChunk, bool]:
+    existing = await session.scalar(
+        select(DocumentChunk).where(
+            and_(
+                DocumentChunk.raw_document_id == raw_document_id,
+                DocumentChunk.chunk_index == int(chunk_index),
+            )
+        )
+    )
+    if existing is not None:
+        return existing, False
+
+    text = str(chunk_text or "").strip() or "<empty>"
+    row = DocumentChunk(
+        raw_document_id=raw_document_id,
+        chunk_index=int(chunk_index),
+        chunk_text=text,
+        chunk_hash=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        token_estimate=_token_estimate(text),
+        metadata_=metadata or {},
+    )
+    session.add(row)
+    await session.flush()
+    return row, True
+
+
+async def _upsert_policy_fact(
+    *,
+    session: AsyncSession,
+    school_id: uuid.UUID,
+    raw_document_id: uuid.UUID | None,
+    document_chunk_id: uuid.UUID | None,
+    cycle_year: int,
+    fact_key: str,
+    value_text: str,
+    value_numeric: float | None,
+    source_url: str | None,
+    evidence_quote: str,
+    extractor_version: str,
+    confidence: float,
+    reviewed_flag: bool,
+    status: str,
+    metadata: dict[str, Any] | None,
+) -> tuple[PolicyFact, bool]:
+    source_url_text = str(source_url or "").strip() or "about:blank"
+    safe_value_text = str(value_text or "").strip() or "unknown"
+    safe_evidence_quote = str(evidence_quote or "").strip() or safe_value_text
+    fact_hash_input = "|".join(
+        [
+            str(cycle_year),
+            normalise_variable_name(fact_key),
+            safe_value_text,
+            str(value_numeric) if value_numeric is not None else "",
+            source_url_text,
+            safe_evidence_quote,
+        ]
+    )
+    fact_hash = hashlib.sha256(fact_hash_input.encode("utf-8")).hexdigest()
+
+    existing = await session.scalar(
+        select(PolicyFact).where(
+            and_(
+                PolicyFact.school_id == school_id,
+                PolicyFact.cycle_year == int(cycle_year),
+                PolicyFact.fact_key == normalise_variable_name(fact_key),
+                PolicyFact.source_url == source_url_text,
+                PolicyFact.fact_hash == fact_hash,
+            )
+        )
+    )
+    if existing is not None:
+        existing.raw_document_id = raw_document_id or existing.raw_document_id
+        existing.document_chunk_id = document_chunk_id or existing.document_chunk_id
+        existing.confidence = max(float(existing.confidence or 0.0), float(confidence))
+        existing.reviewed_flag = bool(existing.reviewed_flag or reviewed_flag)
+        existing.status = str(status or existing.status or "accepted")[:30]
+        existing.metadata_ = metadata or existing.metadata_ or {}
+        return existing, False
+
+    row = PolicyFact(
+        school_id=school_id,
+        raw_document_id=raw_document_id,
+        document_chunk_id=document_chunk_id,
+        cycle_year=int(cycle_year),
+        fact_key=normalise_variable_name(fact_key),
+        value_text=safe_value_text,
+        value_numeric=value_numeric,
+        source_url=source_url_text,
+        evidence_quote=safe_evidence_quote,
+        extractor_version=str(extractor_version or "").strip()[:80] or "phase2-v1",
+        confidence=max(0.0, min(1.0, float(confidence))),
+        reviewed_flag=bool(reviewed_flag),
+        status=str(status or "accepted").strip()[:30] or "accepted",
+        fact_hash=fact_hash,
+        metadata_=metadata or {},
+    )
+    session.add(row)
+    await session.flush()
+    return row, True
+
+
+async def _record_policy_fact_audit(
+    *,
+    session: AsyncSession,
+    policy_fact_id: uuid.UUID | None,
+    school_id: uuid.UUID,
+    cycle_year: int,
+    run_id: str,
+    actor: str,
+    action: str,
+    payload: dict[str, Any] | None,
+    metrics: IngestMetrics | None = None,
+) -> None:
+    row = PolicyFactAudit(
+        policy_fact_id=policy_fact_id,
+        school_id=school_id,
+        cycle_year=int(cycle_year),
+        run_id=str(run_id or "").strip()[:120],
+        actor=str(actor or "system").strip()[:80],
+        action=str(action or "unknown").strip()[:40],
+        payload=payload or {},
+    )
+    session.add(row)
+    if metrics is not None:
+        metrics.policy_fact_audits_created += 1
 
 
 _OFFICIAL_SCHOOL_FIELD_MAP: dict[str, str] = {
@@ -1462,25 +2409,24 @@ async def _check_conflict(
     variable_name: str,
     value_numeric: float | None,
     value_text: str,
+    source_family: str | None = None,
+    source_url: str | None = None,
 ) -> dict[str, Any] | None:
-    rows = (
-        (
-            await session.execute(
-                select(CanonicalFact).where(
-                    and_(
-                        CanonicalFact.school_id == school_id,
-                        CanonicalFact.cycle_year == cycle_year,
-                        CanonicalFact.outcome_name == variable_name,
-                    )
-                )
-            )
+    query = select(CanonicalFact).where(
+        and_(
+            CanonicalFact.school_id == school_id,
+            CanonicalFact.cycle_year == cycle_year,
+            CanonicalFact.outcome_name == variable_name,
         )
-        .scalars()
-        .all()
     )
+    if source_family:
+        query = query.where(CanonicalFact.source_family == str(source_family))
+
+    rows = ((await session.execute(query)).scalars().all())
     if not rows:
         return None
     new_bucket = _canonical_bucket(value_text, value_numeric)
+    incoming_scorecard_id = _extract_scorecard_school_id(source_url)
     for row in rows:
         if row.canonical_value_bucket == new_bucket:
             return {"duplicate_fact_id": str(row.id)}
@@ -1488,13 +2434,59 @@ async def _check_conflict(
             base = max(abs(row.canonical_value_numeric), 1e-6)
             relative = abs(value_numeric - row.canonical_value_numeric) / base
             if relative > 0.20:
+                if _should_replace_scorecard_row(
+                    existing=row,
+                    incoming_source_family=source_family,
+                    incoming_scorecard_id=incoming_scorecard_id,
+                ):
+                    return {
+                        "replace_fact_id": str(row.id),
+                        "replace_reason": "scorecard_school_id_changed",
+                        "relative_diff": round(relative, 4),
+                    }
                 return {
                     "existing_fact_id": str(row.id),
                     "relative_diff": round(relative, 4),
                 }
         elif row.canonical_value_text.strip().lower() != value_text.strip().lower():
+            if _should_replace_scorecard_row(
+                existing=row,
+                incoming_source_family=source_family,
+                incoming_scorecard_id=incoming_scorecard_id,
+            ):
+                return {
+                    "replace_fact_id": str(row.id),
+                    "replace_reason": "scorecard_school_id_changed",
+                    "text_mismatch": True,
+                }
             return {"existing_fact_id": str(row.id), "text_mismatch": True}
     return None
+
+
+def _extract_scorecard_school_id(source_url: str | None) -> str | None:
+    text = str(source_url or "").strip()
+    if not text:
+        return None
+    match = _SCORECARD_SCHOOL_ID_RE.search(text)
+    return str(match.group(1)).strip() if match else None
+
+
+def _should_replace_scorecard_row(
+    *,
+    existing: CanonicalFact,
+    incoming_source_family: str | None,
+    incoming_scorecard_id: str | None,
+) -> bool:
+    if str(incoming_source_family or "").strip().lower() != "college_scorecard":
+        return False
+    if str(existing.source_family or "").strip().lower() != "college_scorecard":
+        return False
+    if not incoming_scorecard_id:
+        return False
+    existing_scorecard_id = _extract_scorecard_school_id((existing.metadata_ or {}).get("source_url"))
+    if not existing_scorecard_id:
+        return False
+    return existing_scorecard_id != incoming_scorecard_id
 
 
 async def _to_quarantine(

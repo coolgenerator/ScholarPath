@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import logging
 
 from fastapi import APIRouter
 from sqlalchemy import select
 
-from scholarpath.api.deps import SessionDep
+from scholarpath.api.deps import AppLLMDep, SessionDep
 from scholarpath.db.models import School
-from scholarpath.llm.client import get_llm_client
 
 router = APIRouter(prefix="/enrich", tags=["enrich"])
 logger = logging.getLogger(__name__)
@@ -37,10 +35,8 @@ Use your training knowledge (US News, IPEDS, College Scorecard, CDS).
 
 
 @router.post("/schools")
-async def enrich_all_schools(session: SessionDep) -> dict:
+async def enrich_all_schools(llm: AppLLMDep, session: SessionDep) -> dict:
     """Enrich all schools with LLM-generated real stats."""
-    client = get_llm_client()
-
     stmt = select(School).order_by(School.us_news_rank.asc().nullslast())
     result = await session.execute(stmt)
     schools = list(result.scalars().all())
@@ -50,7 +46,7 @@ async def enrich_all_schools(session: SessionDep) -> dict:
 
     for school in schools:
         try:
-            data = await client.complete_json(
+            data = await llm.complete_json(
                 [
                     {"role": "system", "content": PROMPT},
                     {"role": "user", "content": f"{school.name}, {school.city}, {school.state}"},

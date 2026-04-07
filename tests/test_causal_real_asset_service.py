@@ -68,7 +68,7 @@ async def _create_school(session, name: str) -> School:
 
 
 @pytest.mark.asyncio
-async def test_waitlist_event_does_not_create_true_outcome(session):
+async def test_waitlist_event_creates_true_outcome(session):
     student = await _create_student(session)
     school = await _create_school(session, "Real Asset A")
 
@@ -85,10 +85,20 @@ async def test_waitlist_event_does_not_create_true_outcome(session):
 
     event_rows = int((await session.scalar(select(func.count()).select_from(AdmissionEvent))) or 0)
     outcome_rows = int((await session.scalar(select(func.count()).select_from(CausalOutcomeEvent))) or 0)
+    outcome = (
+        await session.scalar(
+            select(CausalOutcomeEvent).where(
+                CausalOutcomeEvent.outcome_name == "admission_probability",
+            )
+        )
+    )
 
     assert event.stage == "waitlist"
     assert event_rows == 1
-    assert outcome_rows == 0
+    assert outcome_rows == 1
+    assert outcome is not None
+    assert outcome.label_type == "true"
+    assert outcome.outcome_value == pytest.approx(0.35)
 
 
 @pytest.mark.asyncio
@@ -186,7 +196,7 @@ async def test_backfill_real_admission_assets_is_idempotent_and_admission_only(s
     assert first["dataset_result"]["truth_ratio_by_outcome"]["admission_probability"] == 1.0
     assert snapshot_rows >= 4
     assert event_rows == 2
-    assert outcome_rows == 1
+    assert outcome_rows == 2
     assert dataset_rows == 1
 
     second = await backfill_real_admission_assets(

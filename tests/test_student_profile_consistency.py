@@ -226,6 +226,34 @@ async def test_portfolio_patch_nullable_clear_and_non_nullable_reject(client) ->
 
 
 @pytest.mark.asyncio
+async def test_portfolio_patch_normalizes_invalid_ed_preference_to_null(client) -> None:
+    payload = {
+        "name": "Normalize ED Student",
+        "gpa": 3.8,
+        "gpa_scale": "4.0",
+        "sat_total": 1450,
+        "curriculum_type": "AP",
+        "intended_majors": ["CS"],
+        "budget_usd": 60000,
+        "target_year": 2028,
+    }
+    created = await client.post("/api/students/", json=payload)
+    assert created.status_code == 201
+    student_id = created.json()["id"]
+
+    patched = await client.patch(
+        f"/api/students/{student_id}/portfolio",
+        json={"strategy": {"ed_preference": "先不要提交ED，先补齐匹配校与安全校名单"}},
+    )
+    assert patched.status_code == 200
+    assert patched.json()["strategy"]["ed_preference"] is None
+
+    raw = await client.get(f"/api/students/{student_id}")
+    assert raw.status_code == 200
+    assert raw.json()["ed_preference"] is None
+
+
+@pytest.mark.asyncio
 async def test_portfolio_patch_rejects_unknown_fields(client) -> None:
     payload = {
         "name": "Unknown Field Student",

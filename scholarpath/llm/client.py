@@ -303,8 +303,8 @@ _RETRY = retry(
         (openai.APIConnectionError, openai.APITimeoutError, openai.RateLimitError,
          openai.InternalServerError),
     ),
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=1, max=10),
+    stop=stop_after_attempt(2),
+    wait=wait_exponential(multiplier=0.2, min=0.2, max=1.0),
     reraise=True,
 )
 
@@ -313,6 +313,18 @@ _RETRIABLE_EXCEPTIONS = (
     openai.APITimeoutError,
     openai.RateLimitError,
     openai.InternalServerError,
+)
+
+_SAME_TASK_RETRY_DELAY_SECONDS = 5.0
+_TIMEOUT_RETRY_DELAY_SECONDS = 0.4
+_PROVIDER_LIMIT_TEXT_HINTS = (
+    "too many pending requests",
+    "request reached limit",
+    "request has reached limit",
+    "request limit reached",
+    "request达到上限",
+    "请求达到上限",
+    "达到上限",
 )
 
 _CALLER_SUFFIX: ContextVar[str | None] = ContextVar(
@@ -332,6 +344,9 @@ class _Endpoint:
     rate_limit_errors: int = 0
     timeout_errors: int = 0
     cooldown_until: float = 0.0
+    same_task_retry_triggered: int = 0
+    same_task_retry_success: int = 0
+    same_task_retry_failed: int = 0
 
 
 class LLMClient:
@@ -346,7 +361,29 @@ class LLMClient:
         max_rpm: int | None = None,
     ) -> None:
         self._model = model
+        self._base_url = base_url
         max_rpm_per_endpoint = max_rpm or settings.LLM_RATE_LIMIT_RPM
+        self._request_timeout_seconds = max(
+            1.0,
+            float(getattr(settings, "LLM_REQUEST_TIMEOUT_SECONDS", 4.5) or 4.5),
+        )
+        base_url_lower = (base_url or "").strip().lower()
+        # Some providers return empty message.content for non-stream chat completions.
+        # For those providers, force JSON extraction through streamed deltas.
+        self._xcode_stream_json_mode = (
+            "api.xcode.best" in base_url_lower
+            or "beecode.cc" in base_url_lower
+        )
+        # beecode gateway is more stable with response_format only (no extra response_type/content_type hints).
+        self._chat_json_transport_hints_enabled = "beecode.cc" not in base_url_lower
+        # beecode blocks some default SDK headers; pin a lean header set for compatibility.
+        beecode_default_headers: dict[str, str] | None = None
+        if "beecode.cc" in base_url_lower:
+            beecode_default_headers = {
+                "User-Agent": "scholarpath-llm-client/1.0",
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            }
 
         keys = [k for k in (api_keys or [api_key]) if k]
         if not keys:
@@ -367,11 +404,17 @@ class LLMClient:
         self._endpoints: list[_Endpoint] = []
         for i, key in enumerate(keys):
             key_id = _api_key_fingerprint(key)
+            client_kwargs: dict[str, Any] = {
+                "api_key": key,
+                "base_url": base_url,
+            }
+            if beecode_default_headers is not None:
+                client_kwargs["default_headers"] = beecode_default_headers
             self._endpoints.append(
                 _Endpoint(
                     index=i,
                     key_id=key_id,
-                    client=openai.AsyncOpenAI(api_key=key, base_url=base_url),
+                    client=openai.AsyncOpenAI(**client_kwargs),
                     rate_limiter=_SmartRateLimiter(
                         max_rpm=max_rpm_per_endpoint,
                         redis_url=redis_url,
@@ -413,6 +456,15 @@ class LLMClient:
         if error_kind == "timeout":
             return 1.0
         return 0.4
+
+    @staticmethod
+    def _is_provider_limit_retry_error(exc: Exception) -> bool:
+        if not isinstance(exc, openai.RateLimitError):
+            return False
+        message = str(exc or "").strip().lower()
+        if not message:
+            return False
+        return any(token in message for token in _PROVIDER_LIMIT_TEXT_HINTS)
 
     async def _record_endpoint_outcome(
         self,
@@ -459,6 +511,7 @@ class LLMClient:
         temperature: float,
         max_tokens: int,
         response_format: dict[str, Any] | None = None,
+        json_transport_hints: bool = False,
         stream: bool = False,
     ) -> tuple[_Endpoint, Any]:
         last_exc: Exception | None = None
@@ -477,9 +530,20 @@ class LLMClient:
                     "temperature": temperature,
                     "max_tokens": max_tokens,
                     "stream": stream,
+                    "timeout": self._request_timeout_seconds,
                 }
                 if response_format is not None:
                     payload["response_format"] = response_format
+                if json_transport_hints:
+                    # Hint OpenAI-compatible gateways to keep request/response in strict JSON mode.
+                    payload["extra_headers"] = {
+                        "Content-Type": "application/json",
+                        "Accept": "application/json",
+                    }
+                    payload["extra_body"] = {
+                        "response_type": "json",
+                        "content_type": "application/json",
+                    }
 
                 response = await endpoint.client.chat.completions.create(**payload)
                 await self._record_endpoint_outcome(
@@ -490,6 +554,137 @@ class LLMClient:
                 )
                 return endpoint, response
             except _RETRIABLE_EXCEPTIONS as exc:
+                if self._is_provider_limit_retry_error(exc):
+                    endpoint.same_task_retry_triggered += 1
+                    await self._record_endpoint_outcome(
+                        endpoint=endpoint,
+                        ok=False,
+                        error_kind="rate_limit",
+                        latency_ms=int((time.monotonic() - attempt_t0) * 1000),
+                    )
+                    logger.warning(
+                        "same_task_retry_triggered endpoint[%d] key=%s op=chat wait=%.1fs reason=%s",
+                        endpoint.index,
+                        endpoint.key_id,
+                        _SAME_TASK_RETRY_DELAY_SECONDS,
+                        exc,
+                    )
+                    await asyncio.sleep(_SAME_TASK_RETRY_DELAY_SECONDS)
+                    retry_t0 = time.monotonic()
+                    try:
+                        await endpoint.rate_limiter.acquire()
+                        response = await endpoint.client.chat.completions.create(**payload)
+                        endpoint.same_task_retry_success += 1
+                        await self._record_endpoint_outcome(
+                            endpoint=endpoint,
+                            ok=True,
+                            error_kind=None,
+                            latency_ms=int((time.monotonic() - retry_t0) * 1000),
+                        )
+                        logger.info(
+                            "same_task_retry_success endpoint[%d] key=%s op=chat",
+                            endpoint.index,
+                            endpoint.key_id,
+                        )
+                        return endpoint, response
+                    except _RETRIABLE_EXCEPTIONS as retry_exc:
+                        endpoint.same_task_retry_failed += 1
+                        last_exc = retry_exc
+                        retry_kind = self._classify_error_kind(retry_exc)
+                        await self._record_endpoint_outcome(
+                            endpoint=endpoint,
+                            ok=False,
+                            error_kind=retry_kind,
+                            latency_ms=int((time.monotonic() - retry_t0) * 1000),
+                        )
+                        logger.warning(
+                            "same_task_retry_failed endpoint[%d] key=%s op=chat kind=%s, trying next endpoint: %s",
+                            endpoint.index,
+                            endpoint.key_id,
+                            retry_kind,
+                            retry_exc,
+                        )
+                        continue
+                    except Exception:
+                        endpoint.same_task_retry_failed += 1
+                        await self._record_endpoint_outcome(
+                            endpoint=endpoint,
+                            ok=False,
+                            error_kind="other",
+                            latency_ms=int((time.monotonic() - retry_t0) * 1000),
+                        )
+                        logger.warning(
+                            "same_task_retry_failed endpoint[%d] key=%s op=chat kind=other",
+                            endpoint.index,
+                            endpoint.key_id,
+                        )
+                        raise
+
+                if isinstance(exc, openai.APITimeoutError):
+                    endpoint.same_task_retry_triggered += 1
+                    await self._record_endpoint_outcome(
+                        endpoint=endpoint,
+                        ok=False,
+                        error_kind="timeout",
+                        latency_ms=int((time.monotonic() - attempt_t0) * 1000),
+                    )
+                    logger.warning(
+                        "same_task_retry_triggered endpoint[%d] key=%s op=chat wait=%.1fs reason=timeout",
+                        endpoint.index,
+                        endpoint.key_id,
+                        _TIMEOUT_RETRY_DELAY_SECONDS,
+                    )
+                    await asyncio.sleep(_TIMEOUT_RETRY_DELAY_SECONDS)
+                    retry_t0 = time.monotonic()
+                    try:
+                        await endpoint.rate_limiter.acquire()
+                        response = await endpoint.client.chat.completions.create(**payload)
+                        endpoint.same_task_retry_success += 1
+                        await self._record_endpoint_outcome(
+                            endpoint=endpoint,
+                            ok=True,
+                            error_kind=None,
+                            latency_ms=int((time.monotonic() - retry_t0) * 1000),
+                        )
+                        logger.info(
+                            "same_task_retry_success endpoint[%d] key=%s op=chat reason=timeout",
+                            endpoint.index,
+                            endpoint.key_id,
+                        )
+                        return endpoint, response
+                    except _RETRIABLE_EXCEPTIONS as retry_exc:
+                        endpoint.same_task_retry_failed += 1
+                        last_exc = retry_exc
+                        retry_kind = self._classify_error_kind(retry_exc)
+                        await self._record_endpoint_outcome(
+                            endpoint=endpoint,
+                            ok=False,
+                            error_kind=retry_kind,
+                            latency_ms=int((time.monotonic() - retry_t0) * 1000),
+                        )
+                        logger.warning(
+                            "same_task_retry_failed endpoint[%d] key=%s op=chat reason=timeout kind=%s, trying next endpoint: %s",
+                            endpoint.index,
+                            endpoint.key_id,
+                            retry_kind,
+                            retry_exc,
+                        )
+                        continue
+                    except Exception:
+                        endpoint.same_task_retry_failed += 1
+                        await self._record_endpoint_outcome(
+                            endpoint=endpoint,
+                            ok=False,
+                            error_kind="other",
+                            latency_ms=int((time.monotonic() - retry_t0) * 1000),
+                        )
+                        logger.warning(
+                            "same_task_retry_failed endpoint[%d] key=%s op=chat reason=timeout kind=other",
+                            endpoint.index,
+                            endpoint.key_id,
+                        )
+                        raise
+
                 last_exc = exc
                 error_kind = self._classify_error_kind(exc)
                 await self._record_endpoint_outcome(
@@ -542,6 +737,7 @@ class LLMClient:
                     "input": input_text,
                     "max_output_tokens": max_output_tokens,
                     "temperature": temperature,
+                    "timeout": self._request_timeout_seconds,
                 }
                 if tools is not None:
                     payload["tools"] = tools
@@ -555,6 +751,137 @@ class LLMClient:
                 )
                 return endpoint, response
             except _RETRIABLE_EXCEPTIONS as exc:
+                if self._is_provider_limit_retry_error(exc):
+                    endpoint.same_task_retry_triggered += 1
+                    await self._record_endpoint_outcome(
+                        endpoint=endpoint,
+                        ok=False,
+                        error_kind="rate_limit",
+                        latency_ms=int((time.monotonic() - attempt_t0) * 1000),
+                    )
+                    logger.warning(
+                        "same_task_retry_triggered endpoint[%d] key=%s op=responses wait=%.1fs reason=%s",
+                        endpoint.index,
+                        endpoint.key_id,
+                        _SAME_TASK_RETRY_DELAY_SECONDS,
+                        exc,
+                    )
+                    await asyncio.sleep(_SAME_TASK_RETRY_DELAY_SECONDS)
+                    retry_t0 = time.monotonic()
+                    try:
+                        await endpoint.rate_limiter.acquire()
+                        response = await endpoint.client.responses.create(**payload)
+                        endpoint.same_task_retry_success += 1
+                        await self._record_endpoint_outcome(
+                            endpoint=endpoint,
+                            ok=True,
+                            error_kind=None,
+                            latency_ms=int((time.monotonic() - retry_t0) * 1000),
+                        )
+                        logger.info(
+                            "same_task_retry_success endpoint[%d] key=%s op=responses",
+                            endpoint.index,
+                            endpoint.key_id,
+                        )
+                        return endpoint, response
+                    except _RETRIABLE_EXCEPTIONS as retry_exc:
+                        endpoint.same_task_retry_failed += 1
+                        last_exc = retry_exc
+                        retry_kind = self._classify_error_kind(retry_exc)
+                        await self._record_endpoint_outcome(
+                            endpoint=endpoint,
+                            ok=False,
+                            error_kind=retry_kind,
+                            latency_ms=int((time.monotonic() - retry_t0) * 1000),
+                        )
+                        logger.warning(
+                            "same_task_retry_failed endpoint[%d] key=%s op=responses kind=%s, trying next endpoint: %s",
+                            endpoint.index,
+                            endpoint.key_id,
+                            retry_kind,
+                            retry_exc,
+                        )
+                        continue
+                    except Exception:
+                        endpoint.same_task_retry_failed += 1
+                        await self._record_endpoint_outcome(
+                            endpoint=endpoint,
+                            ok=False,
+                            error_kind="other",
+                            latency_ms=int((time.monotonic() - retry_t0) * 1000),
+                        )
+                        logger.warning(
+                            "same_task_retry_failed endpoint[%d] key=%s op=responses kind=other",
+                            endpoint.index,
+                            endpoint.key_id,
+                        )
+                        raise
+
+                if isinstance(exc, openai.APITimeoutError):
+                    endpoint.same_task_retry_triggered += 1
+                    await self._record_endpoint_outcome(
+                        endpoint=endpoint,
+                        ok=False,
+                        error_kind="timeout",
+                        latency_ms=int((time.monotonic() - attempt_t0) * 1000),
+                    )
+                    logger.warning(
+                        "same_task_retry_triggered endpoint[%d] key=%s op=responses wait=%.1fs reason=timeout",
+                        endpoint.index,
+                        endpoint.key_id,
+                        _TIMEOUT_RETRY_DELAY_SECONDS,
+                    )
+                    await asyncio.sleep(_TIMEOUT_RETRY_DELAY_SECONDS)
+                    retry_t0 = time.monotonic()
+                    try:
+                        await endpoint.rate_limiter.acquire()
+                        response = await endpoint.client.responses.create(**payload)
+                        endpoint.same_task_retry_success += 1
+                        await self._record_endpoint_outcome(
+                            endpoint=endpoint,
+                            ok=True,
+                            error_kind=None,
+                            latency_ms=int((time.monotonic() - retry_t0) * 1000),
+                        )
+                        logger.info(
+                            "same_task_retry_success endpoint[%d] key=%s op=responses reason=timeout",
+                            endpoint.index,
+                            endpoint.key_id,
+                        )
+                        return endpoint, response
+                    except _RETRIABLE_EXCEPTIONS as retry_exc:
+                        endpoint.same_task_retry_failed += 1
+                        last_exc = retry_exc
+                        retry_kind = self._classify_error_kind(retry_exc)
+                        await self._record_endpoint_outcome(
+                            endpoint=endpoint,
+                            ok=False,
+                            error_kind=retry_kind,
+                            latency_ms=int((time.monotonic() - retry_t0) * 1000),
+                        )
+                        logger.warning(
+                            "same_task_retry_failed endpoint[%d] key=%s op=responses reason=timeout kind=%s, trying next endpoint: %s",
+                            endpoint.index,
+                            endpoint.key_id,
+                            retry_kind,
+                            retry_exc,
+                        )
+                        continue
+                    except Exception:
+                        endpoint.same_task_retry_failed += 1
+                        await self._record_endpoint_outcome(
+                            endpoint=endpoint,
+                            ok=False,
+                            error_kind="other",
+                            latency_ms=int((time.monotonic() - retry_t0) * 1000),
+                        )
+                        logger.warning(
+                            "same_task_retry_failed endpoint[%d] key=%s op=responses reason=timeout kind=other",
+                            endpoint.index,
+                            endpoint.key_id,
+                        )
+                        raise
+
                 last_exc = exc
                 error_kind = self._classify_error_kind(exc)
                 await self._record_endpoint_outcome(
@@ -731,21 +1058,42 @@ class LLMClient:
         request_id = None
 
         try:
-            endpoint, response = await self._chat_completion_with_failover(
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                response_format={"type": "json_object"},
+            response_format = _build_json_schema_response_format(
+                schema=schema,
+                name="scholarpath_complete_json",
             )
-            usage = response.usage
-            request_id = getattr(response, "id", None)
-            raw = response.choices[0].message.content or "{}"
+            chat_kwargs: dict[str, Any] = {
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "response_format": response_format,
+            }
+            if self._chat_json_transport_hints_enabled:
+                chat_kwargs["json_transport_hints"] = True
+
+            if self._xcode_stream_json_mode:
+                endpoint, stream_response = await self._chat_completion_with_failover(
+                    **chat_kwargs,
+                    stream=True,
+                )
+                raw = await _collect_stream_text(stream_response)
+            else:
+                endpoint, response = await self._chat_completion_with_failover(**chat_kwargs)
+                usage = response.usage
+                request_id = getattr(response, "id", None)
+                raw = response.choices[0].message.content or "{}"
             logger.debug(
                 "LLM complete_json  endpoint=%d  tokens=%s",
                 endpoint.index,
                 usage,
             )
-            return json.loads(raw)
+            parsed = _parse_json_object(raw)
+            if not parsed and (raw or "").strip():
+                logger.warning(
+                    "LLM complete_json received non-JSON payload, returning empty dict. caller=%s",
+                    caller,
+                )
+            return parsed
         except Exception as exc:
             error_msg = str(exc)
             raise
@@ -909,6 +1257,9 @@ class LLMClient:
                 "error_requests": endpoint.error_requests,
                 "rate_limit_errors": endpoint.rate_limit_errors,
                 "timeout_errors": endpoint.timeout_errors,
+                "same_task_retry_triggered": endpoint.same_task_retry_triggered,
+                "same_task_retry_success": endpoint.same_task_retry_success,
+                "same_task_retry_failed": endpoint.same_task_retry_failed,
                 "cooldown_active": endpoint.cooldown_until > now,
             }
             for endpoint in self._endpoints
@@ -929,6 +1280,9 @@ class LLMClient:
                     "errors_total": int(endpoint.error_requests),
                     "rate_limit_total": int(endpoint.rate_limit_errors),
                     "timeout_total": int(endpoint.timeout_errors),
+                    "same_task_retry_triggered": int(endpoint.same_task_retry_triggered),
+                    "same_task_retry_success": int(endpoint.same_task_retry_success),
+                    "same_task_retry_failed": int(endpoint.same_task_retry_failed),
                     "requests_window": 0.0,
                     "errors_window": 0.0,
                     "rate_limit_window": 0.0,
@@ -1013,6 +1367,76 @@ def _inject_schema_hint(
     return messages
 
 
+def _default_json_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "_": {
+                "type": "string",
+                "description": "Optional placeholder. Real output can use any keys.",
+            },
+        },
+        "additionalProperties": True,
+    }
+
+
+def _build_json_schema_response_format(
+    *,
+    schema: dict[str, Any] | None,
+    name: str,
+) -> dict[str, Any]:
+    effective_schema = _normalize_json_schema(schema)
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": name,
+            "strict": False,
+            "schema": effective_schema,
+        },
+    }
+
+
+def _normalize_json_schema(schema: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(schema, dict) or not schema:
+        return _default_json_schema()
+
+    normalized: dict[str, Any] = dict(schema)
+    if normalized.get("type") != "object":
+        logger.warning(
+            "Invalid JSON schema received (type=%r), fallback to default object schema",
+            normalized.get("type"),
+        )
+        return _default_json_schema()
+
+    properties = normalized.get("properties")
+    if not isinstance(properties, dict) or not properties:
+        normalized["properties"] = _default_json_schema().get("properties", {})
+    normalized.setdefault("additionalProperties", True)
+    return normalized
+
+
+async def _collect_stream_text(stream_response: Any) -> str:
+    chunks: list[str] = []
+    async for chunk in stream_response:
+        choices = getattr(chunk, "choices", None) or []
+        if not choices:
+            continue
+        delta = getattr(choices[0], "delta", None)
+        if delta is None:
+            continue
+        content = getattr(delta, "content", None)
+        if isinstance(content, str):
+            chunks.append(content)
+            continue
+        if isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict):
+                    text = part.get("text")
+                    if isinstance(text, str):
+                        chunks.append(text)
+    return "".join(chunks).strip()
+
+
 def _response_output_text(response: Any) -> str:
     text = getattr(response, "output_text", None)
     if text:
@@ -1081,6 +1505,18 @@ def get_llm_client() -> LLMClient:
     """Return a module-level singleton :class:`LLMClient` configured from settings."""
     global _singleton  # noqa: PLW0603
     if _singleton is None:
+        active_mode = settings.llm_active_mode
+        if active_mode is not None:
+            api_keys = list(active_mode.api_keys)
+            _singleton = LLMClient(
+                api_key=api_keys[0],
+                api_keys=api_keys,
+                base_url=active_mode.base_url,
+                model=active_mode.model,
+                max_rpm=settings.LLM_RATE_LIMIT_RPM,
+            )
+            return _singleton
+
         api_keys = settings.zai_api_keys
         if not api_keys:
             api_keys = [settings.ZAI_API_KEY]

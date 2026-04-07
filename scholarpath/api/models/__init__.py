@@ -1,6 +1,16 @@
 """Pydantic API schemas for ScholarPath."""
 
-from .chat import ChatMessage, ChatResponse
+from .chat import (
+    ChatBlock,
+    ChatHistoryEntry,
+    ChatMessage,
+    SessionTraceListResponse,
+    TurnEvent,
+    TurnResult,
+    TurnTraceResponse,
+    TurnTraceStep,
+    TurnTraceSummary,
+)
 from .evaluation import (
     EvaluationRequest,
     EvaluationResponse,
@@ -79,5 +89,12 @@ __all__ = [
     "GoNoGoResponse",
     # Chat
     "ChatMessage",
-    "ChatResponse",
+    "ChatBlock",
+    "TurnEvent",
+    "TurnResult",
+    "ChatHistoryEntry",
+    "TurnTraceStep",
+    "TurnTraceSummary",
+    "TurnTraceResponse",
+    "SessionTraceListResponse",
 ]

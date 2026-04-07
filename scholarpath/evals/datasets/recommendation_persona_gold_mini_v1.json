@@ -1,0 +1,3258 @@
+{
+  "dataset_id": "recommendation_persona_gold_mini_v1",
+  "version": "1",
+  "rubric_dimensions": [
+    "constraint_compliance",
+    "scenario_usefulness",
+    "personalization_fit",
+    "tradeoff_clarity",
+    "actionability",
+    "trustworthiness"
+  ],
+  "generator": {
+    "case_count": 30,
+    "seed": "recommendation-ux-gold-v1"
+  },
+  "cases": [
+    {
+      "case_id": "rec_001",
+      "bucket": "budget_first",
+      "tags": [
+        "recommendation",
+        "budget_first",
+        "persona",
+        "ab_judge"
+      ],
+      "student_seed": {
+        "id": "4b1d04c3-42d8-56b4-b26a-bc5804e9c819",
+        "name": "Recommendation Persona 1",
+        "gpa": 3.35,
+        "gpa_scale": "4.0",
+        "sat_total": 1290,
+        "curriculum_type": "AP",
+        "intended_majors": [
+          "Computer Science",
+          "Data Science"
+        ],
+        "budget_usd": 10000,
+        "need_financial_aid": true,
+        "target_year": 2027,
+        "preferences": {
+          "location": [
+            "CA",
+            "urban"
+          ],
+          "regions": [
+            "US"
+          ]
+        }
+      },
+      "turns": [
+        {
+          "content": "我预算10000美元，请给我美国本科选校推荐：预算内学校+最多3个冲刺位，并解释理由。"
+        }
+      ],
+      "hard_checks": [
+        {
+          "id": "status_ok",
+          "kind": "status_equals",
+          "value": "ok"
+        },
+        {
+          "id": "recommendation_payload_exists",
+          "kind": "recommendation_payload_exists"
+        },
+        {
+          "id": "prefilter_meta_fields",
+          "kind": "prefilter_meta_fields_exist",
+          "fields": [
+            "budget_cap_used",
+            "eligible_count",
+            "stretch_count",
+            "excluded_count"
+          ]
+        },
+        {
+          "id": "stretch_quota_max",
+          "kind": "stretch_quota_max",
+          "max_stretch": 3
+        },
+        {
+          "id": "budget_hard_gate",
+          "kind": "budget_hard_gate"
+        },
+        {
+          "id": "scenario_ids_present",
+          "kind": "scenario_ids_present",
+          "ids": [
+            "budget_first",
+            "risk_first",
+            "major_first",
+            "geo_first",
+            "roi_first"
+          ]
+        },
+        {
+          "id": "scenario_shape_complete",
+          "kind": "scenario_shape_complete"
+        },
+        {
+          "id": "content_min_chars",
+          "kind": "content_min_chars",
+          "min_chars": 20
+        }
+      ],
+      "soft_checks": [
+        {
+          "id": "keyword_hit",
+          "kind": "content_keywords_any",
+          "keywords": [
+            "预算",
+            "冲刺",
+            "费用",
+            "budget",
+            "stretch"
+          ]
+        },
+        {
+          "id": "block_presence",
+          "kind": "block_count_min",
+          "min_count": 1
+        }
+      ]
+    },
+    {
+      "case_id": "rec_002",
+      "bucket": "risk_first",
+      "tags": [
+        "recommendation",
+        "risk_first",
+        "persona",
+        "ab_judge"
+      ],
+      "student_seed": {
+        "id": "737d3f9a-450c-558e-8204-79e963c633d5",
+        "name": "Recommendation Persona 2",
+        "gpa": 3.43,
+        "gpa_scale": "4.0",
+        "sat_total": 1315,
+        "curriculum_type": "AP",
+        "intended_majors": [
+          "Economics",
+          "Finance"
+        ],
+        "budget_usd": 11500,
+        "need_financial_aid": true,
+        "target_year": 2028,
+        "preferences": {
+          "location": [
+            "NY",
+            "suburban"
+          ],
+          "regions": [
+            "US"
+          ]
+        }
+      },
+      "turns": [
+        {
+          "content": "我背景一般，预算11500美元。请按录取稳健性给我选校，并保留少量冲刺。"
+        }
+      ],
+      "hard_checks": [
+        {
+          "id": "status_ok",
+          "kind": "status_equals",
+          "value": "ok"
+        },
+        {
+          "id": "recommendation_payload_exists",
+          "kind": "recommendation_payload_exists"
+        },
+        {
+          "id": "prefilter_meta_fields",
+          "kind": "prefilter_meta_fields_exist",
+          "fields": [
+            "budget_cap_used",
+            "eligible_count",
+            "stretch_count",
+            "excluded_count"
+          ]
+        },
+        {
+          "id": "stretch_quota_max",
+          "kind": "stretch_quota_max",
+          "max_stretch": 3
+        },
+        {
+          "id": "budget_hard_gate",
+          "kind": "budget_hard_gate"
+        },
+        {
+          "id": "scenario_ids_present",
+          "kind": "scenario_ids_present",
+          "ids": [
+            "budget_first",
+            "risk_first",
+            "major_first",
+            "geo_first",
+            "roi_first"
+          ]
+        },
+        {
+          "id": "scenario_shape_complete",
+          "kind": "scenario_shape_complete"
+        },
+        {
+          "id": "content_min_chars",
+          "kind": "content_min_chars",
+          "min_chars": 20
+        }
+      ],
+      "soft_checks": [
+        {
+          "id": "keyword_hit",
+          "kind": "content_keywords_any",
+          "keywords": [
+            "录取",
+            "稳健",
+            "概率",
+            "risk",
+            "admission"
+          ]
+        },
+        {
+          "id": "block_presence",
+          "kind": "block_count_min",
+          "min_count": 1
+        }
+      ]
+    },
+    {
+      "case_id": "rec_003",
+      "bucket": "major_first",
+      "tags": [
+        "recommendation",
+        "major_first",
+        "persona",
+        "ab_judge"
+      ],
+      "student_seed": {
+        "id": "5ab90c52-2cd5-5629-b26f-badb9f3e5db5",
+        "name": "Recommendation Persona 3",
+        "gpa": 3.51,
+        "gpa_scale": "4.0",
+        "sat_total": 1340,
+        "curriculum_type": "AP",
+        "intended_majors": [
+          "Biology",
+          "Neuroscience"
+        ],
+        "budget_usd": 13000,
+        "need_financial_aid": true,
+        "target_year": 2029,
+        "preferences": {
+          "location": [
+            "TX",
+            "urban"
+          ],
+          "regions": [
+            "US"
+          ]
+        }
+      },
+      "turns": [
+        {
+          "content": "我想申Biology方向，预算13000美元。请优先专业匹配给出选校建议。"
+        },
+        {
+          "content": "请再给我一个可执行的下一步行动清单，分本周/本月。"
+        }
+      ],
+      "hard_checks": [
+        {
+          "id": "status_ok",
+          "kind": "status_equals",
+          "value": "ok"
+        },
+        {
+          "id": "recommendation_payload_exists",
+          "kind": "recommendation_payload_exists"
+        },
+        {
+          "id": "prefilter_meta_fields",
+          "kind": "prefilter_meta_fields_exist",
+          "fields": [
+            "budget_cap_used",
+            "eligible_count",
+            "stretch_count",
+            "excluded_count"
+          ]
+        },
+        {
+          "id": "stretch_quota_max",
+          "kind": "stretch_quota_max",
+          "max_stretch": 3
+        },
+        {
+          "id": "budget_hard_gate",
+          "kind": "budget_hard_gate"
+        },
+        {
+          "id": "scenario_ids_present",
+          "kind": "scenario_ids_present",
+          "ids": [
+            "budget_first",
+            "risk_first",
+            "major_first",
+            "geo_first",
+            "roi_first"
+          ]
+        },
+        {
+          "id": "scenario_shape_complete",
+          "kind": "scenario_shape_complete"
+        },
+        {
+          "id": "content_min_chars",
+          "kind": "content_min_chars",
+          "min_chars": 20
+        }
+      ],
+      "soft_checks": [
+        {
+          "id": "keyword_hit",
+          "kind": "content_keywords_any",
+          "keywords": [
+            "专业",
+            "匹配",
+            "课程",
+            "major",
+            "fit"
+          ]
+        },
+        {
+          "id": "block_presence",
+          "kind": "block_count_min",
+          "min_count": 1
+        }
+      ]
+    },
+    {
+      "case_id": "rec_004",
+      "bucket": "geo_first",
+      "tags": [
+        "recommendation",
+        "geo_first",
+        "persona",
+        "ab_judge"
+      ],
+      "student_seed": {
+        "id": "87933068-0359-5a18-a0b2-cee93fc3a36d",
+        "name": "Recommendation Persona 4",
+        "gpa": 3.59,
+        "gpa_scale": "4.0",
+        "sat_total": 1365,
+        "curriculum_type": "AP",
+        "intended_majors": [
+          "Mechanical Engineering",
+          "Aerospace Engineering"
+        ],
+        "budget_usd": 14500,
+        "need_financial_aid": true,
+        "target_year": 2027,
+        "preferences": {
+          "location": [
+            "MA",
+            "urban"
+          ],
+          "regions": [
+            "US"
+          ]
+        }
+      },
+      "turns": [
+        {
+          "content": "我偏好MA州和大城市，预算14500美元。请按地域偏好给我推荐学校。"
+        }
+      ],
+      "hard_checks": [
+        {
+          "id": "status_ok",
+          "kind": "status_equals",
+          "value": "ok"
+        },
+        {
+          "id": "recommendation_payload_exists",
+          "kind": "recommendation_payload_exists"
+        },
+        {
+          "id": "prefilter_meta_fields",
+          "kind": "prefilter_meta_fields_exist",
+          "fields": [
+            "budget_cap_used",
+            "eligible_count",
+            "stretch_count",
+            "excluded_count"
+          ]
+        },
+        {
+          "id": "stretch_quota_max",
+          "kind": "stretch_quota_max",
+          "max_stretch": 3
+        },
+        {
+          "id": "budget_hard_gate",
+          "kind": "budget_hard_gate"
+        },
+        {
+          "id": "scenario_ids_present",
+          "kind": "scenario_ids_present",
+          "ids": [
+            "budget_first",
+            "risk_first",
+            "major_first",
+            "geo_first",
+            "roi_first"
+          ]
+        },
+        {
+          "id": "scenario_shape_complete",
+          "kind": "scenario_shape_complete"
+        },
+        {
+          "id": "content_min_chars",
+          "kind": "content_min_chars",
+          "min_chars": 20
+        }
+      ],
+      "soft_checks": [
+        {
+          "id": "keyword_hit",
+          "kind": "content_keywords_any",
+          "keywords": [
+            "地域",
+            "城市",
+            "州",
+            "geo",
+            "location"
+          ]
+        },
+        {
+          "id": "block_presence",
+          "kind": "block_count_min",
+          "min_count": 1
+        }
+      ]
+    },
+    {
+      "case_id": "rec_005",
+      "bucket": "roi_first",
+      "tags": [
+        "recommendation",
+        "roi_first",
+        "persona",
+        "ab_judge"
+      ],
+      "student_seed": {
+        "id": "59a2fd54-0790-5fd7-9dad-8907ccda753e",
+        "name": "Recommendation Persona 5",
+        "gpa": 3.67,
+        "gpa_scale": "4.0",
+        "sat_total": 1390,
+        "curriculum_type": "AP",
+        "intended_majors": [
+          "Political Science",
+          "Public Policy"
+        ],
+        "budget_usd": 16000,
+        "need_financial_aid": true,
+        "target_year": 2028,
+        "preferences": {
+          "location": [
+            "WA",
+            "suburban"
+          ],
+          "regions": [
+            "US"
+          ]
+        }
+      },
+      "turns": [
+        {
+          "content": "我关心毕业后就业和投入产出，预算16000美元。请给我ROI导向的选校建议。"
+        }
+      ],
+      "hard_checks": [
+        {
+          "id": "status_ok",
+          "kind": "status_equals",
+          "value": "ok"
+        },
+        {
+          "id": "recommendation_payload_exists",
+          "kind": "recommendation_payload_exists"
+        },
+        {
+          "id": "prefilter_meta_fields",
+          "kind": "prefilter_meta_fields_exist",
+          "fields": [
+            "budget_cap_used",
+            "eligible_count",
+            "stretch_count",
+            "excluded_count"
+          ]
+        },
+        {
+          "id": "stretch_quota_max",
+          "kind": "stretch_quota_max",
+          "max_stretch": 3
+        },
+        {
+          "id": "budget_hard_gate",
+          "kind": "budget_hard_gate"
+        },
+        {
+          "id": "scenario_ids_present",
+          "kind": "scenario_ids_present",
+          "ids": [
+            "budget_first",
+            "risk_first",
+            "major_first",
+            "geo_first",
+            "roi_first"
+          ]
+        },
+        {
+          "id": "scenario_shape_complete",
+          "kind": "scenario_shape_complete"
+        },
+        {
+          "id": "content_min_chars",
+          "kind": "content_min_chars",
+          "min_chars": 20
+        }
+      ],
+      "soft_checks": [
+        {
+          "id": "keyword_hit",
+          "kind": "content_keywords_any",
+          "keywords": [
+            "就业",
+            "ROI",
+            "回报",
+            "career",
+            "salary"
+          ]
+        },
+        {
+          "id": "block_presence",
+          "kind": "block_count_min",
+          "min_count": 1
+        }
+      ]
+    },
+    {
+      "case_id": "rec_006",
+      "bucket": "budget_first",
+      "tags": [
+        "recommendation",
+        "budget_first",
+        "persona",
+        "ab_judge"
+      ],
+      "student_seed": {
+        "id": "fada1286-6e1c-5f74-90f9-583a3a06e6a3",
+        "name": "Recommendation Persona 6",
+        "gpa": 3.75,
+        "gpa_scale": "4.0",
+        "sat_total": 1415,
+        "curriculum_type": "AP",
+        "intended_majors": [
+          "Computer Science",
+          "Data Science"
+        ],
+        "budget_usd": 17500,
+        "need_financial_aid": true,
+        "target_year": 2029,
+        "preferences": {
+          "location": [
+            "IL",
+            "urban"
+          ],
+          "regions": [
+            "US"
+          ]
+        }
+      },
+      "turns": [
+        {
+          "content": "我预算17500美元，请给我美国本科选校推荐：预算内学校+最多3个冲刺位，并解释理由。"
+        },
+        {
+          "content": "请再给我一个可执行的下一步行动清单，分本周/本月。"
+        }
+      ],
+      "hard_checks": [
+        {
+          "id": "status_ok",
+          "kind": "status_equals",
+          "value": "ok"
+        },
+        {
+          "id": "recommendation_payload_exists",
+          "kind": "recommendation_payload_exists"
+        },
+        {
+          "id": "prefilter_meta_fields",
+          "kind": "prefilter_meta_fields_exist",
+          "fields": [
+            "budget_cap_used",
+            "eligible_count",
+            "stretch_count",
+            "excluded_count"
+          ]
+        },
+        {
+          "id": "stretch_quota_max",
+          "kind": "stretch_quota_max",
+          "max_stretch": 3
+        },
+        {
+          "id": "budget_hard_gate",
+          "kind": "budget_hard_gate"
+        },
+        {
+          "id": "scenario_ids_present",
+          "kind": "scenario_ids_present",
+          "ids": [
+            "budget_first",
+            "risk_first",
+            "major_first",
+            "geo_first",
+            "roi_first"
+          ]
+        },
+        {
+          "id": "scenario_shape_complete",
+          "kind": "scenario_shape_complete"
+        },
+        {
+          "id": "content_min_chars",
+          "kind": "content_min_chars",
+          "min_chars": 20
+        }
+      ],
+      "soft_checks": [
+        {
+          "id": "keyword_hit",
+          "kind": "content_keywords_any",
+          "keywords": [
+            "预算",
+            "冲刺",
+            "费用",
+            "budget",
+            "stretch"
+          ]
+        },
+        {
+          "id": "block_presence",
+          "kind": "block_count_min",
+          "min_count": 1
+        }
+      ]
+    },
+    {
+      "case_id": "rec_007",
+      "bucket": "risk_first",
+      "tags": [
+        "recommendation",
+        "risk_first",
+        "persona",
+        "ab_judge"
+      ],
+      "student_seed": {
+        "id": "71f7342f-f1f3-5129-90a1-9a6195316553",
+        "name": "Recommendation Persona 7",
+        "gpa": 3.83,
+        "gpa_scale": "4.0",
+        "sat_total": 1440,
+        "curriculum_type": "AP",
+        "intended_majors": [
+          "Economics",
+          "Finance"
+        ],
+        "budget_usd": 19000,
+        "need_financial_aid": true,
+        "target_year": 2027,
+        "preferences": {
+          "location": [
+            "CA",
+            "urban"
+          ],
+          "regions": [
+            "US"
+          ]
+        }
+      },
+      "turns": [
+        {
+          "content": "我背景一般，预算19000美元。请按录取稳健性给我选校，并保留少量冲刺。"
+        }
+      ],
+      "hard_checks": [
+        {
+          "id": "status_ok",
+          "kind": "status_equals",
+          "value": "ok"
+        },
+        {
+          "id": "recommendation_payload_exists",
+          "kind": "recommendation_payload_exists"
+        },
+        {
+          "id": "prefilter_meta_fields",
+          "kind": "prefilter_meta_fields_exist",
+          "fields": [
+            "budget_cap_used",
+            "eligible_count",
+            "stretch_count",
+            "excluded_count"
+          ]
+        },
+        {
+          "id": "stretch_quota_max",
+          "kind": "stretch_quota_max",
+          "max_stretch": 3
+        },
+        {
+          "id": "budget_hard_gate",
+          "kind": "budget_hard_gate"
+        },
+        {
+          "id": "scenario_ids_present",
+          "kind": "scenario_ids_present",
+          "ids": [
+            "budget_first",
+            "risk_first",
+            "major_first",
+            "geo_first",
+            "roi_first"
+          ]
+        },
+        {
+          "id": "scenario_shape_complete",
+          "kind": "scenario_shape_complete"
+        },
+        {
+          "id": "content_min_chars",
+          "kind": "content_min_chars",
+          "min_chars": 20
+        }
+      ],
+      "soft_checks": [
+        {
+          "id": "keyword_hit",
+          "kind": "content_keywords_any",
+          "keywords": [
+            "录取",
+            "稳健",
+            "概率",
+            "risk",
+            "admission"
+          ]
+        },
+        {
+          "id": "block_presence",
+          "kind": "block_count_min",
+          "min_count": 1
+        }
+      ]
+    },
+    {
+      "case_id": "rec_008",
+      "bucket": "major_first",
+      "tags": [
+        "recommendation",
+        "major_first",
+        "persona",
+        "ab_judge"
+      ],
+      "student_seed": {
+        "id": "b6d16b61-2c61-55a2-aba3-56c5258eb943",
+        "name": "Recommendation Persona 8",
+        "gpa": 3.91,
+        "gpa_scale": "4.0",
+        "sat_total": 1465,
+        "curriculum_type": "AP",
+        "intended_majors": [
+          "Biology",
+          "Neuroscience"
+        ],
+        "budget_usd": 10000,
+        "need_financial_aid": true,
+        "target_year": 2028,
+        "preferences": {
+          "location": [
+            "NY",
+            "suburban"
+          ],
+          "regions": [
+            "US"
+          ]
+        }
+      },
+      "turns": [
+        {
+          "content": "我想申Biology方向，预算10000美元。请优先专业匹配给出选校建议。"
+        }
+      ],
+      "hard_checks": [
+        {
+          "id": "status_ok",
+          "kind": "status_equals",
+          "value": "ok"
+        },
+        {
+          "id": "recommendation_payload_exists",
+          "kind": "recommendation_payload_exists"
+        },
+        {
+          "id": "prefilter_meta_fields",
+          "kind": "prefilter_meta_fields_exist",
+          "fields": [
+            "budget_cap_used",
+            "eligible_count",
+            "stretch_count",
+            "excluded_count"
+          ]
+        },
+        {
+          "id": "stretch_quota_max",
+          "kind": "stretch_quota_max",
+          "max_stretch": 3
+        },
+        {
+          "id": "budget_hard_gate",
+          "kind": "budget_hard_gate"
+        },
+        {
+          "id": "scenario_ids_present",
+          "kind": "scenario_ids_present",
+          "ids": [
+            "budget_first",
+            "risk_first",
+            "major_first",
+            "geo_first",
+            "roi_first"
+          ]
+        },
+        {
+          "id": "scenario_shape_complete",
+          "kind": "scenario_shape_complete"
+        },
+        {
+          "id": "content_min_chars",
+          "kind": "content_min_chars",
+          "min_chars": 20
+        }
+      ],
+      "soft_checks": [
+        {
+          "id": "keyword_hit",
+          "kind": "content_keywords_any",
+          "keywords": [
+            "专业",
+            "匹配",
+            "课程",
+            "major",
+            "fit"
+          ]
+        },
+        {
+          "id": "block_presence",
+          "kind": "block_count_min",
+          "min_count": 1
+        }
+      ]
+    },
+    {
+      "case_id": "rec_009",
+      "bucket": "geo_first",
+      "tags": [
+        "recommendation",
+        "geo_first",
+        "persona",
+        "ab_judge"
+      ],
+      "student_seed": {
+        "id": "8a80f20d-eba7-5844-bb83-9439cdafcd05",
+        "name": "Recommendation Persona 9",
+        "gpa": 3.35,
+        "gpa_scale": "4.0",
+        "sat_total": 1490,
+        "curriculum_type": "AP",
+        "intended_majors": [
+          "Mechanical Engineering",
+          "Aerospace Engineering"
+        ],
+        "budget_usd": 11500,
+        "need_financial_aid": true,
+        "target_year": 2029,
+        "preferences": {
+          "location": [
+            "TX",
+            "urban"
+          ],
+          "regions": [
+            "US"
+          ]
+        }
+      },
+      "turns": [
+        {
+          "content": "我偏好TX州和大城市，预算11500美元。请按地域偏好给我推荐学校。"
+        },
+        {
+          "content": "请再给我一个可执行的下一步行动清单，分本周/本月。"
+        }
+      ],
+      "hard_checks": [
+        {
+          "id": "status_ok",
+          "kind": "status_equals",
+          "value": "ok"
+        },
+        {
+          "id": "recommendation_payload_exists",
+          "kind": "recommendation_payload_exists"
+        },
+        {
+          "id": "prefilter_meta_fields",
+          "kind": "prefilter_meta_fields_exist",
+          "fields": [
+            "budget_cap_used",
+            "eligible_count",
+            "stretch_count",
+            "excluded_count"
+          ]
+        },
+        {
+          "id": "stretch_quota_max",
+          "kind": "stretch_quota_max",
+          "max_stretch": 3
+        },
+        {
+          "id": "budget_hard_gate",
+          "kind": "budget_hard_gate"
+        },
+        {
+          "id": "scenario_ids_present",
+          "kind": "scenario_ids_present",
+          "ids": [
+            "budget_first",
+            "risk_first",
+            "major_first",
+            "geo_first",
+            "roi_first"
+          ]
+        },
+        {
+          "id": "scenario_shape_complete",
+          "kind": "scenario_shape_complete"
+        },
+        {
+          "id": "content_min_chars",
+          "kind": "content_min_chars",
+          "min_chars": 20
+        }
+      ],
+      "soft_checks": [
+        {
+          "id": "keyword_hit",
+          "kind": "content_keywords_any",
+          "keywords": [
+            "地域",
+            "城市",
+            "州",
+            "geo",
+            "location"
+          ]
+        },
+        {
+          "id": "block_presence",
+          "kind": "block_count_min",
+          "min_count": 1
+        }
+      ]
+    },
+    {
+      "case_id": "rec_010",
+      "bucket": "roi_first",
+      "tags": [
+        "recommendation",
+        "roi_first",
+        "persona",
+        "ab_judge"
+      ],
+      "student_seed": {
+        "id": "e7633e44-9147-58a6-88bb-7da6da1c9458",
+        "name": "Recommendation Persona 10",
+        "gpa": 3.43,
+        "gpa_scale": "4.0",
+        "sat_total": 1515,
+        "curriculum_type": "AP",
+        "intended_majors": [
+          "Political Science",
+          "Public Policy"
+        ],
+        "budget_usd": 13000,
+        "need_financial_aid": true,
+        "target_year": 2027,
+        "preferences": {
+          "location": [
+            "MA",
+            "urban"
+          ],
+          "regions": [
+            "US"
+          ]
+        }
+      },
+      "turns": [
+        {
+          "content": "我关心毕业后就业和投入产出，预算13000美元。请给我ROI导向的选校建议。"
+        }
+      ],
+      "hard_checks": [
+        {
+          "id": "status_ok",
+          "kind": "status_equals",
+          "value": "ok"
+        },
+        {
+          "id": "recommendation_payload_exists",
+          "kind": "recommendation_payload_exists"
+        },
+        {
+          "id": "prefilter_meta_fields",
+          "kind": "prefilter_meta_fields_exist",
+          "fields": [
+            "budget_cap_used",
+            "eligible_count",
+            "stretch_count",
+            "excluded_count"
+          ]
+        },
+        {
+          "id": "stretch_quota_max",
+          "kind": "stretch_quota_max",
+          "max_stretch": 3
+        },
+        {
+          "id": "budget_hard_gate",
+          "kind": "budget_hard_gate"
+        },
+        {
+          "id": "scenario_ids_present",
+          "kind": "scenario_ids_present",
+          "ids": [
+            "budget_first",
+            "risk_first",
+            "major_first",
+            "geo_first",
+            "roi_first"
+          ]
+        },
+        {
+          "id": "scenario_shape_complete",
+          "kind": "scenario_shape_complete"
+        },
+        {
+          "id": "content_min_chars",
+          "kind": "content_min_chars",
+          "min_chars": 20
+        }
+      ],
+      "soft_checks": [
+        {
+          "id": "keyword_hit",
+          "kind": "content_keywords_any",
+          "keywords": [
+            "就业",
+            "ROI",
+            "回报",
+            "career",
+            "salary"
+          ]
+        },
+        {
+          "id": "block_presence",
+          "kind": "block_count_min",
+          "min_count": 1
+        }
+      ]
+    },
+    {
+      "case_id": "rec_011",
+      "bucket": "budget_first",
+      "tags": [
+        "recommendation",
+        "budget_first",
+        "persona",
+        "ab_judge"
+      ],
+      "student_seed": {
+        "id": "51ee3bb8-29de-5ede-a28d-e0cf6d519109",
+        "name": "Recommendation Persona 11",
+        "gpa": 3.51,
+        "gpa_scale": "4.0",
+        "sat_total": 1540,
+        "curriculum_type": "AP",
+        "intended_majors": [
+          "Computer Science",
+          "Data Science"
+        ],
+        "budget_usd": 14500,
+        "need_financial_aid": true,
+        "target_year": 2028,
+        "preferences": {
+          "location": [
+            "WA",
+            "suburban"
+          ],
+          "regions": [
+            "US"
+          ]
+        }
+      },
+      "turns": [
+        {
+          "content": "我预算14500美元，请给我美国本科选校推荐：预算内学校+最多3个冲刺位，并解释理由。"
+        }
+      ],
+      "hard_checks": [
+        {
+          "id": "status_ok",
+          "kind": "status_equals",
+          "value": "ok"
+        },
+        {
+          "id": "recommendation_payload_exists",
+          "kind": "recommendation_payload_exists"
+        },
+        {
+          "id": "prefilter_meta_fields",
+          "kind": "prefilter_meta_fields_exist",
+          "fields": [
+            "budget_cap_used",
+            "eligible_count",
+            "stretch_count",
+            "excluded_count"
+          ]
+        },
+        {
+          "id": "stretch_quota_max",
+          "kind": "stretch_quota_max",
+          "max_stretch": 3
+        },
+        {
+          "id": "budget_hard_gate",
+          "kind": "budget_hard_gate"
+        },
+        {
+          "id": "scenario_ids_present",
+          "kind": "scenario_ids_present",
+          "ids": [
+            "budget_first",
+            "risk_first",
+            "major_first",
+            "geo_first",
+            "roi_first"
+          ]
+        },
+        {
+          "id": "scenario_shape_complete",
+          "kind": "scenario_shape_complete"
+        },
+        {
+          "id": "content_min_chars",
+          "kind": "content_min_chars",
+          "min_chars": 20
+        }
+      ],
+      "soft_checks": [
+        {
+          "id": "keyword_hit",
+          "kind": "content_keywords_any",
+          "keywords": [
+            "预算",
+            "冲刺",
+            "费用",
+            "budget",
+            "stretch"
+          ]
+        },
+        {
+          "id": "block_presence",
+          "kind": "block_count_min",
+          "min_count": 1
+        }
+      ]
+    },
+    {
+      "case_id": "rec_012",
+      "bucket": "risk_first",
+      "tags": [
+        "recommendation",
+        "risk_first",
+        "persona",
+        "ab_judge"
+      ],
+      "student_seed": {
+        "id": "5704f1c8-c491-5571-b186-d8a59ebe324b",
+        "name": "Recommendation Persona 12",
+        "gpa": 3.59,
+        "gpa_scale": "4.0",
+        "sat_total": 1290,
+        "curriculum_type": "AP",
+        "intended_majors": [
+          "Economics",
+          "Finance"
+        ],
+        "budget_usd": 16000,
+        "need_financial_aid": true,
+        "target_year": 2029,
+        "preferences": {
+          "location": [
+            "IL",
+            "urban"
+          ],
+          "regions": [
+            "US"
+          ]
+        }
+      },
+      "turns": [
+        {
+          "content": "我背景一般，预算16000美元。请按录取稳健性给我选校，并保留少量冲刺。"
+        },
+        {
+          "content": "请再给我一个可执行的下一步行动清单，分本周/本月。"
+        }
+      ],
+      "hard_checks": [
+        {
+          "id": "status_ok",
+          "kind": "status_equals",
+          "value": "ok"
+        },
+        {
+          "id": "recommendation_payload_exists",
+          "kind": "recommendation_payload_exists"
+        },
+        {
+          "id": "prefilter_meta_fields",
+          "kind": "prefilter_meta_fields_exist",
+          "fields": [
+            "budget_cap_used",
+            "eligible_count",
+            "stretch_count",
+            "excluded_count"
+          ]
+        },
+        {
+          "id": "stretch_quota_max",
+          "kind": "stretch_quota_max",
+          "max_stretch": 3
+        },
+        {
+          "id": "budget_hard_gate",
+          "kind": "budget_hard_gate"
+        },
+        {
+          "id": "scenario_ids_present",
+          "kind": "scenario_ids_present",
+          "ids": [
+            "budget_first",
+            "risk_first",
+            "major_first",
+            "geo_first",
+            "roi_first"
+          ]
+        },
+        {
+          "id": "scenario_shape_complete",
+          "kind": "scenario_shape_complete"
+        },
+        {
+          "id": "content_min_chars",
+          "kind": "content_min_chars",
+          "min_chars": 20
+        }
+      ],
+      "soft_checks": [
+        {
+          "id": "keyword_hit",
+          "kind": "content_keywords_any",
+          "keywords": [
+            "录取",
+            "稳健",
+            "概率",
+            "risk",
+            "admission"
+          ]
+        },
+        {
+          "id": "block_presence",
+          "kind": "block_count_min",
+          "min_count": 1
+        }
+      ]
+    },
+    {
+      "case_id": "rec_013",
+      "bucket": "major_first",
+      "tags": [
+        "recommendation",
+        "major_first",
+        "persona",
+        "ab_judge"
+      ],
+      "student_seed": {
+        "id": "375e93e4-de82-51ab-974b-06a3b8f7e60a",
+        "name": "Recommendation Persona 13",
+        "gpa": 3.67,
+        "gpa_scale": "4.0",
+        "sat_total": 1315,
+        "curriculum_type": "AP",
+        "intended_majors": [
+          "Biology",
+          "Neuroscience"
+        ],
+        "budget_usd": 17500,
+        "need_financial_aid": true,
+        "target_year": 2027,
+        "preferences": {
+          "location": [
+            "CA",
+            "urban"
+          ],
+          "regions": [
+            "US"
+          ]
+        }
+      },
+      "turns": [
+        {
+          "content": "我想申Biology方向，预算17500美元。请优先专业匹配给出选校建议。"
+        }
+      ],
+      "hard_checks": [
+        {
+          "id": "status_ok",
+          "kind": "status_equals",
+          "value": "ok"
+        },
+        {
+          "id": "recommendation_payload_exists",
+          "kind": "recommendation_payload_exists"
+        },
+        {
+          "id": "prefilter_meta_fields",
+          "kind": "prefilter_meta_fields_exist",
+          "fields": [
+            "budget_cap_used",
+            "eligible_count",
+            "stretch_count",
+            "excluded_count"
+          ]
+        },
+        {
+          "id": "stretch_quota_max",
+          "kind": "stretch_quota_max",
+          "max_stretch": 3
+        },
+        {
+          "id": "budget_hard_gate",
+          "kind": "budget_hard_gate"
+        },
+        {
+          "id": "scenario_ids_present",
+          "kind": "scenario_ids_present",
+          "ids": [
+            "budget_first",
+            "risk_first",
+            "major_first",
+            "geo_first",
+            "roi_first"
+          ]
+        },
+        {
+          "id": "scenario_shape_complete",
+          "kind": "scenario_shape_complete"
+        },
+        {
+          "id": "content_min_chars",
+          "kind": "content_min_chars",
+          "min_chars": 20
+        }
+      ],
+      "soft_checks": [
+        {
+          "id": "keyword_hit",
+          "kind": "content_keywords_any",
+          "keywords": [
+            "专业",
+            "匹配",
+            "课程",
+            "major",
+            "fit"
+          ]
+        },
+        {
+          "id": "block_presence",
+          "kind": "block_count_min",
+          "min_count": 1
+        }
+      ]
+    },
+    {
+      "case_id": "rec_014",
+      "bucket": "geo_first",
+      "tags": [
+        "recommendation",
+        "geo_first",
+        "persona",
+        "ab_judge"
+      ],
+      "student_seed": {
+        "id": "8d78035b-f87b-592a-a3ff-24b6fbe341f0",
+        "name": "Recommendation Persona 14",
+        "gpa": 3.75,
+        "gpa_scale": "4.0",
+        "sat_total": 1340,
+        "curriculum_type": "AP",
+        "intended_majors": [
+          "Mechanical Engineering",
+          "Aerospace Engineering"
+        ],
+        "budget_usd": 19000,
+        "need_financial_aid": true,
+        "target_year": 2028,
+        "preferences": {
+          "location": [
+            "NY",
+            "suburban"
+          ],
+          "regions": [
+            "US"
+          ]
+        }
+      },
+      "turns": [
+        {
+          "content": "我偏好NY州和大城市，预算19000美元。请按地域偏好给我推荐学校。"
+        }
+      ],
+      "hard_checks": [
+        {
+          "id": "status_ok",
+          "kind": "status_equals",
+          "value": "ok"
+        },
+        {
+          "id": "recommendation_payload_exists",
+          "kind": "recommendation_payload_exists"
+        },
+        {
+          "id": "prefilter_meta_fields",
+          "kind": "prefilter_meta_fields_exist",
+          "fields": [
+            "budget_cap_used",
+            "eligible_count",
+            "stretch_count",
+            "excluded_count"
+          ]
+        },
+        {
+          "id": "stretch_quota_max",
+          "kind": "stretch_quota_max",
+          "max_stretch": 3
+        },
+        {
+          "id": "budget_hard_gate",
+          "kind": "budget_hard_gate"
+        },
+        {
+          "id": "scenario_ids_present",
+          "kind": "scenario_ids_present",
+          "ids": [
+            "budget_first",
+            "risk_first",
+            "major_first",
+            "geo_first",
+            "roi_first"
+          ]
+        },
+        {
+          "id": "scenario_shape_complete",
+          "kind": "scenario_shape_complete"
+        },
+        {
+          "id": "content_min_chars",
+          "kind": "content_min_chars",
+          "min_chars": 20
+        }
+      ],
+      "soft_checks": [
+        {
+          "id": "keyword_hit",
+          "kind": "content_keywords_any",
+          "keywords": [
+            "地域",
+            "城市",
+            "州",
+            "geo",
+            "location"
+          ]
+        },
+        {
+          "id": "block_presence",
+          "kind": "block_count_min",
+          "min_count": 1
+        }
+      ]
+    },
+    {
+      "case_id": "rec_015",
+      "bucket": "roi_first",
+      "tags": [
+        "recommendation",
+        "roi_first",
+        "persona",
+        "ab_judge"
+      ],
+      "student_seed": {
+        "id": "9cbd3487-5e9f-5abc-aa1c-1f0641171488",
+        "name": "Recommendation Persona 15",
+        "gpa": 3.83,
+        "gpa_scale": "4.0",
+        "sat_total": 1365,
+        "curriculum_type": "AP",
+        "intended_majors": [
+          "Political Science",
+          "Public Policy"
+        ],
+        "budget_usd": 10000,
+        "need_financial_aid": true,
+        "target_year": 2029,
+        "preferences": {
+          "location": [
+            "TX",
+            "urban"
+          ],
+          "regions": [
+            "US"
+          ]
+        }
+      },
+      "turns": [
+        {
+          "content": "我关心毕业后就业和投入产出，预算10000美元。请给我ROI导向的选校建议。"
+        },
+        {
+          "content": "请再给我一个可执行的下一步行动清单，分本周/本月。"
+        }
+      ],
+      "hard_checks": [
+        {
+          "id": "status_ok",
+          "kind": "status_equals",
+          "value": "ok"
+        },
+        {
+          "id": "recommendation_payload_exists",
+          "kind": "recommendation_payload_exists"
+        },
+        {
+          "id": "prefilter_meta_fields",
+          "kind": "prefilter_meta_fields_exist",
+          "fields": [
+            "budget_cap_used",
+            "eligible_count",
+            "stretch_count",
+            "excluded_count"
+          ]
+        },
+        {
+          "id": "stretch_quota_max",
+          "kind": "stretch_quota_max",
+          "max_stretch": 3
+        },
+        {
+          "id": "budget_hard_gate",
+          "kind": "budget_hard_gate"
+        },
+        {
+          "id": "scenario_ids_present",
+          "kind": "scenario_ids_present",
+          "ids": [
+            "budget_first",
+            "risk_first",
+            "major_first",
+            "geo_first",
+            "roi_first"
+          ]
+        },
+        {
+          "id": "scenario_shape_complete",
+          "kind": "scenario_shape_complete"
+        },
+        {
+          "id": "content_min_chars",
+          "kind": "content_min_chars",
+          "min_chars": 20
+        }
+      ],
+      "soft_checks": [
+        {
+          "id": "keyword_hit",
+          "kind": "content_keywords_any",
+          "keywords": [
+            "就业",
+            "ROI",
+            "回报",
+            "career",
+            "salary"
+          ]
+        },
+        {
+          "id": "block_presence",
+          "kind": "block_count_min",
+          "min_count": 1
+        }
+      ]
+    },
+    {
+      "case_id": "rec_016",
+      "bucket": "budget_first",
+      "tags": [
+        "recommendation",
+        "budget_first",
+        "persona",
+        "ab_judge"
+      ],
+      "student_seed": {
+        "id": "dce7644e-b735-5625-98a5-1982ff2989bd",
+        "name": "Recommendation Persona 16",
+        "gpa": 3.91,
+        "gpa_scale": "4.0",
+        "sat_total": 1390,
+        "curriculum_type": "AP",
+        "intended_majors": [
+          "Computer Science",
+          "Data Science"
+        ],
+        "budget_usd": 11500,
+        "need_financial_aid": true,
+        "target_year": 2027,
+        "preferences": {
+          "location": [
+            "MA",
+            "urban"
+          ],
+          "regions": [
+            "US"
+          ]
+        }
+      },
+      "turns": [
+        {
+          "content": "我预算11500美元，请给我美国本科选校推荐：预算内学校+最多3个冲刺位，并解释理由。"
+        }
+      ],
+      "hard_checks": [
+        {
+          "id": "status_ok",
+          "kind": "status_equals",
+          "value": "ok"
+        },
+        {
+          "id": "recommendation_payload_exists",
+          "kind": "recommendation_payload_exists"
+        },
+        {
+          "id": "prefilter_meta_fields",
+          "kind": "prefilter_meta_fields_exist",
+          "fields": [
+            "budget_cap_used",
+            "eligible_count",
+            "stretch_count",
+            "excluded_count"
+          ]
+        },
+        {
+          "id": "stretch_quota_max",
+          "kind": "stretch_quota_max",
+          "max_stretch": 3
+        },
+        {
+          "id": "budget_hard_gate",
+          "kind": "budget_hard_gate"
+        },
+        {
+          "id": "scenario_ids_present",
+          "kind": "scenario_ids_present",
+          "ids": [
+            "budget_first",
+            "risk_first",
+            "major_first",
+            "geo_first",
+            "roi_first"
+          ]
+        },
+        {
+          "id": "scenario_shape_complete",
+          "kind": "scenario_shape_complete"
+        },
+        {
+          "id": "content_min_chars",
+          "kind": "content_min_chars",
+          "min_chars": 20
+        }
+      ],
+      "soft_checks": [
+        {
+          "id": "keyword_hit",
+          "kind": "content_keywords_any",
+          "keywords": [
+            "预算",
+            "冲刺",
+            "费用",
+            "budget",
+            "stretch"
+          ]
+        },
+        {
+          "id": "block_presence",
+          "kind": "block_count_min",
+          "min_count": 1
+        }
+      ]
+    },
+    {
+      "case_id": "rec_017",
+      "bucket": "risk_first",
+      "tags": [
+        "recommendation",
+        "risk_first",
+        "persona",
+        "ab_judge"
+      ],
+      "student_seed": {
+        "id": "3c7a120e-3950-595d-99ff-91ce68f0a65e",
+        "name": "Recommendation Persona 17",
+        "gpa": 3.35,
+        "gpa_scale": "4.0",
+        "sat_total": 1415,
+        "curriculum_type": "AP",
+        "intended_majors": [
+          "Economics",
+          "Finance"
+        ],
+        "budget_usd": 13000,
+        "need_financial_aid": true,
+        "target_year": 2028,
+        "preferences": {
+          "location": [
+            "WA",
+            "suburban"
+          ],
+          "regions": [
+            "US"
+          ]
+        }
+      },
+      "turns": [
+        {
+          "content": "我背景一般，预算13000美元。请按录取稳健性给我选校，并保留少量冲刺。"
+        }
+      ],
+      "hard_checks": [
+        {
+          "id": "status_ok",
+          "kind": "status_equals",
+          "value": "ok"
+        },
+        {
+          "id": "recommendation_payload_exists",
+          "kind": "recommendation_payload_exists"
+        },
+        {
+          "id": "prefilter_meta_fields",
+          "kind": "prefilter_meta_fields_exist",
+          "fields": [
+            "budget_cap_used",
+            "eligible_count",
+            "stretch_count",
+            "excluded_count"
+          ]
+        },
+        {
+          "id": "stretch_quota_max",
+          "kind": "stretch_quota_max",
+          "max_stretch": 3
+        },
+        {
+          "id": "budget_hard_gate",
+          "kind": "budget_hard_gate"
+        },
+        {
+          "id": "scenario_ids_present",
+          "kind": "scenario_ids_present",
+          "ids": [
+            "budget_first",
+            "risk_first",
+            "major_first",
+            "geo_first",
+            "roi_first"
+          ]
+        },
+        {
+          "id": "scenario_shape_complete",
+          "kind": "scenario_shape_complete"
+        },
+        {
+          "id": "content_min_chars",
+          "kind": "content_min_chars",
+          "min_chars": 20
+        }
+      ],
+      "soft_checks": [
+        {
+          "id": "keyword_hit",
+          "kind": "content_keywords_any",
+          "keywords": [
+            "录取",
+            "稳健",
+            "概率",
+            "risk",
+            "admission"
+          ]
+        },
+        {
+          "id": "block_presence",
+          "kind": "block_count_min",
+          "min_count": 1
+        }
+      ]
+    },
+    {
+      "case_id": "rec_018",
+      "bucket": "major_first",
+      "tags": [
+        "recommendation",
+        "major_first",
+        "persona",
+        "ab_judge"
+      ],
+      "student_seed": {
+        "id": "547db4bf-cb92-5473-b5df-4c9f57315c7b",
+        "name": "Recommendation Persona 18",
+        "gpa": 3.43,
+        "gpa_scale": "4.0",
+        "sat_total": 1440,
+        "curriculum_type": "AP",
+        "intended_majors": [
+          "Biology",
+          "Neuroscience"
+        ],
+        "budget_usd": 14500,
+        "need_financial_aid": true,
+        "target_year": 2029,
+        "preferences": {
+          "location": [
+            "IL",
+            "urban"
+          ],
+          "regions": [
+            "US"
+          ]
+        }
+      },
+      "turns": [
+        {
+          "content": "我想申Biology方向，预算14500美元。请优先专业匹配给出选校建议。"
+        },
+        {
+          "content": "请再给我一个可执行的下一步行动清单，分本周/本月。"
+        }
+      ],
+      "hard_checks": [
+        {
+          "id": "status_ok",
+          "kind": "status_equals",
+          "value": "ok"
+        },
+        {
+          "id": "recommendation_payload_exists",
+          "kind": "recommendation_payload_exists"
+        },
+        {
+          "id": "prefilter_meta_fields",
+          "kind": "prefilter_meta_fields_exist",
+          "fields": [
+            "budget_cap_used",
+            "eligible_count",
+            "stretch_count",
+            "excluded_count"
+          ]
+        },
+        {
+          "id": "stretch_quota_max",
+          "kind": "stretch_quota_max",
+          "max_stretch": 3
+        },
+        {
+          "id": "budget_hard_gate",
+          "kind": "budget_hard_gate"
+        },
+        {
+          "id": "scenario_ids_present",
+          "kind": "scenario_ids_present",
+          "ids": [
+            "budget_first",
+            "risk_first",
+            "major_first",
+            "geo_first",
+            "roi_first"
+          ]
+        },
+        {
+          "id": "scenario_shape_complete",
+          "kind": "scenario_shape_complete"
+        },
+        {
+          "id": "content_min_chars",
+          "kind": "content_min_chars",
+          "min_chars": 20
+        }
+      ],
+      "soft_checks": [
+        {
+          "id": "keyword_hit",
+          "kind": "content_keywords_any",
+          "keywords": [
+            "专业",
+            "匹配",
+            "课程",
+            "major",
+            "fit"
+          ]
+        },
+        {
+          "id": "block_presence",
+          "kind": "block_count_min",
+          "min_count": 1
+        }
+      ]
+    },
+    {
+      "case_id": "rec_019",
+      "bucket": "geo_first",
+      "tags": [
+        "recommendation",
+        "geo_first",
+        "persona",
+        "ab_judge"
+      ],
+      "student_seed": {
+        "id": "b1440e9e-e244-5e53-879e-e7c8de9e4760",
+        "name": "Recommendation Persona 19",
+        "gpa": 3.51,
+        "gpa_scale": "4.0",
+        "sat_total": 1465,
+        "curriculum_type": "AP",
+        "intended_majors": [
+          "Mechanical Engineering",
+          "Aerospace Engineering"
+        ],
+        "budget_usd": 16000,
+        "need_financial_aid": true,
+        "target_year": 2027,
+        "preferences": {
+          "location": [
+            "CA",
+            "urban"
+          ],
+          "regions": [
+            "US"
+          ]
+        }
+      },
+      "turns": [
+        {
+          "content": "我偏好CA州和大城市，预算16000美元。请按地域偏好给我推荐学校。"
+        }
+      ],
+      "hard_checks": [
+        {
+          "id": "status_ok",
+          "kind": "status_equals",
+          "value": "ok"
+        },
+        {
+          "id": "recommendation_payload_exists",
+          "kind": "recommendation_payload_exists"
+        },
+        {
+          "id": "prefilter_meta_fields",
+          "kind": "prefilter_meta_fields_exist",
+          "fields": [
+            "budget_cap_used",
+            "eligible_count",
+            "stretch_count",
+            "excluded_count"
+          ]
+        },
+        {
+          "id": "stretch_quota_max",
+          "kind": "stretch_quota_max",
+          "max_stretch": 3
+        },
+        {
+          "id": "budget_hard_gate",
+          "kind": "budget_hard_gate"
+        },
+        {
+          "id": "scenario_ids_present",
+          "kind": "scenario_ids_present",
+          "ids": [
+            "budget_first",
+            "risk_first",
+            "major_first",
+            "geo_first",
+            "roi_first"
+          ]
+        },
+        {
+          "id": "scenario_shape_complete",
+          "kind": "scenario_shape_complete"
+        },
+        {
+          "id": "content_min_chars",
+          "kind": "content_min_chars",
+          "min_chars": 20
+        }
+      ],
+      "soft_checks": [
+        {
+          "id": "keyword_hit",
+          "kind": "content_keywords_any",
+          "keywords": [
+            "地域",
+            "城市",
+            "州",
+            "geo",
+            "location"
+          ]
+        },
+        {
+          "id": "block_presence",
+          "kind": "block_count_min",
+          "min_count": 1
+        }
+      ]
+    },
+    {
+      "case_id": "rec_020",
+      "bucket": "roi_first",
+      "tags": [
+        "recommendation",
+        "roi_first",
+        "persona",
+        "ab_judge"
+      ],
+      "student_seed": {
+        "id": "e0990a14-1212-5391-b8a2-49121be5b1a9",
+        "name": "Recommendation Persona 20",
+        "gpa": 3.59,
+        "gpa_scale": "4.0",
+        "sat_total": 1490,
+        "curriculum_type": "AP",
+        "intended_majors": [
+          "Political Science",
+          "Public Policy"
+        ],
+        "budget_usd": 17500,
+        "need_financial_aid": true,
+        "target_year": 2028,
+        "preferences": {
+          "location": [
+            "NY",
+            "suburban"
+          ],
+          "regions": [
+            "US"
+          ]
+        }
+      },
+      "turns": [
+        {
+          "content": "我关心毕业后就业和投入产出，预算17500美元。请给我ROI导向的选校建议。"
+        }
+      ],
+      "hard_checks": [
+        {
+          "id": "status_ok",
+          "kind": "status_equals",
+          "value": "ok"
+        },
+        {
+          "id": "recommendation_payload_exists",
+          "kind": "recommendation_payload_exists"
+        },
+        {
+          "id": "prefilter_meta_fields",
+          "kind": "prefilter_meta_fields_exist",
+          "fields": [
+            "budget_cap_used",
+            "eligible_count",
+            "stretch_count",
+            "excluded_count"
+          ]
+        },
+        {
+          "id": "stretch_quota_max",
+          "kind": "stretch_quota_max",
+          "max_stretch": 3
+        },
+        {
+          "id": "budget_hard_gate",
+          "kind": "budget_hard_gate"
+        },
+        {
+          "id": "scenario_ids_present",
+          "kind": "scenario_ids_present",
+          "ids": [
+            "budget_first",
+            "risk_first",
+            "major_first",
+            "geo_first",
+            "roi_first"
+          ]
+        },
+        {
+          "id": "scenario_shape_complete",
+          "kind": "scenario_shape_complete"
+        },
+        {
+          "id": "content_min_chars",
+          "kind": "content_min_chars",
+          "min_chars": 20
+        }
+      ],
+      "soft_checks": [
+        {
+          "id": "keyword_hit",
+          "kind": "content_keywords_any",
+          "keywords": [
+            "就业",
+            "ROI",
+            "回报",
+            "career",
+            "salary"
+          ]
+        },
+        {
+          "id": "block_presence",
+          "kind": "block_count_min",
+          "min_count": 1
+        }
+      ]
+    },
+    {
+      "case_id": "rec_021",
+      "bucket": "budget_first",
+      "tags": [
+        "recommendation",
+        "budget_first",
+        "persona",
+        "ab_judge"
+      ],
+      "student_seed": {
+        "id": "ae5e752c-1284-5e38-a061-80f76adbea39",
+        "name": "Recommendation Persona 21",
+        "gpa": 3.67,
+        "gpa_scale": "4.0",
+        "sat_total": 1515,
+        "curriculum_type": "AP",
+        "intended_majors": [
+          "Computer Science",
+          "Data Science"
+        ],
+        "budget_usd": 19000,
+        "need_financial_aid": true,
+        "target_year": 2029,
+        "preferences": {
+          "location": [
+            "TX",
+            "urban"
+          ],
+          "regions": [
+            "US"
+          ]
+        }
+      },
+      "turns": [
+        {
+          "content": "我预算19000美元，请给我美国本科选校推荐：预算内学校+最多3个冲刺位，并解释理由。"
+        },
+        {
+          "content": "请再给我一个可执行的下一步行动清单，分本周/本月。"
+        }
+      ],
+      "hard_checks": [
+        {
+          "id": "status_ok",
+          "kind": "status_equals",
+          "value": "ok"
+        },
+        {
+          "id": "recommendation_payload_exists",
+          "kind": "recommendation_payload_exists"
+        },
+        {
+          "id": "prefilter_meta_fields",
+          "kind": "prefilter_meta_fields_exist",
+          "fields": [
+            "budget_cap_used",
+            "eligible_count",
+            "stretch_count",
+            "excluded_count"
+          ]
+        },
+        {
+          "id": "stretch_quota_max",
+          "kind": "stretch_quota_max",
+          "max_stretch": 3
+        },
+        {
+          "id": "budget_hard_gate",
+          "kind": "budget_hard_gate"
+        },
+        {
+          "id": "scenario_ids_present",
+          "kind": "scenario_ids_present",
+          "ids": [
+            "budget_first",
+            "risk_first",
+            "major_first",
+            "geo_first",
+            "roi_first"
+          ]
+        },
+        {
+          "id": "scenario_shape_complete",
+          "kind": "scenario_shape_complete"
+        },
+        {
+          "id": "content_min_chars",
+          "kind": "content_min_chars",
+          "min_chars": 20
+        }
+      ],
+      "soft_checks": [
+        {
+          "id": "keyword_hit",
+          "kind": "content_keywords_any",
+          "keywords": [
+            "预算",
+            "冲刺",
+            "费用",
+            "budget",
+            "stretch"
+          ]
+        },
+        {
+          "id": "block_presence",
+          "kind": "block_count_min",
+          "min_count": 1
+        }
+      ]
+    },
+    {
+      "case_id": "rec_022",
+      "bucket": "risk_first",
+      "tags": [
+        "recommendation",
+        "risk_first",
+        "persona",
+        "ab_judge"
+      ],
+      "student_seed": {
+        "id": "2e9adb09-7038-5193-84a4-4b9f575eca9a",
+        "name": "Recommendation Persona 22",
+        "gpa": 3.75,
+        "gpa_scale": "4.0",
+        "sat_total": 1540,
+        "curriculum_type": "AP",
+        "intended_majors": [
+          "Economics",
+          "Finance"
+        ],
+        "budget_usd": 10000,
+        "need_financial_aid": true,
+        "target_year": 2027,
+        "preferences": {
+          "location": [
+            "MA",
+            "urban"
+          ],
+          "regions": [
+            "US"
+          ]
+        }
+      },
+      "turns": [
+        {
+          "content": "我背景一般，预算10000美元。请按录取稳健性给我选校，并保留少量冲刺。"
+        }
+      ],
+      "hard_checks": [
+        {
+          "id": "status_ok",
+          "kind": "status_equals",
+          "value": "ok"
+        },
+        {
+          "id": "recommendation_payload_exists",
+          "kind": "recommendation_payload_exists"
+        },
+        {
+          "id": "prefilter_meta_fields",
+          "kind": "prefilter_meta_fields_exist",
+          "fields": [
+            "budget_cap_used",
+            "eligible_count",
+            "stretch_count",
+            "excluded_count"
+          ]
+        },
+        {
+          "id": "stretch_quota_max",
+          "kind": "stretch_quota_max",
+          "max_stretch": 3
+        },
+        {
+          "id": "budget_hard_gate",
+          "kind": "budget_hard_gate"
+        },
+        {
+          "id": "scenario_ids_present",
+          "kind": "scenario_ids_present",
+          "ids": [
+            "budget_first",
+            "risk_first",
+            "major_first",
+            "geo_first",
+            "roi_first"
+          ]
+        },
+        {
+          "id": "scenario_shape_complete",
+          "kind": "scenario_shape_complete"
+        },
+        {
+          "id": "content_min_chars",
+          "kind": "content_min_chars",
+          "min_chars": 20
+        }
+      ],
+      "soft_checks": [
+        {
+          "id": "keyword_hit",
+          "kind": "content_keywords_any",
+          "keywords": [
+            "录取",
+            "稳健",
+            "概率",
+            "risk",
+            "admission"
+          ]
+        },
+        {
+          "id": "block_presence",
+          "kind": "block_count_min",
+          "min_count": 1
+        }
+      ]
+    },
+    {
+      "case_id": "rec_023",
+      "bucket": "major_first",
+      "tags": [
+        "recommendation",
+        "major_first",
+        "persona",
+        "ab_judge"
+      ],
+      "student_seed": {
+        "id": "554b4b52-544d-5da8-bc57-ed7791db58d6",
+        "name": "Recommendation Persona 23",
+        "gpa": 3.83,
+        "gpa_scale": "4.0",
+        "sat_total": 1290,
+        "curriculum_type": "AP",
+        "intended_majors": [
+          "Biology",
+          "Neuroscience"
+        ],
+        "budget_usd": 11500,
+        "need_financial_aid": true,
+        "target_year": 2028,
+        "preferences": {
+          "location": [
+            "WA",
+            "suburban"
+          ],
+          "regions": [
+            "US"
+          ]
+        }
+      },
+      "turns": [
+        {
+          "content": "我想申Biology方向，预算11500美元。请优先专业匹配给出选校建议。"
+        }
+      ],
+      "hard_checks": [
+        {
+          "id": "status_ok",
+          "kind": "status_equals",
+          "value": "ok"
+        },
+        {
+          "id": "recommendation_payload_exists",
+          "kind": "recommendation_payload_exists"
+        },
+        {
+          "id": "prefilter_meta_fields",
+          "kind": "prefilter_meta_fields_exist",
+          "fields": [
+            "budget_cap_used",
+            "eligible_count",
+            "stretch_count",
+            "excluded_count"
+          ]
+        },
+        {
+          "id": "stretch_quota_max",
+          "kind": "stretch_quota_max",
+          "max_stretch": 3
+        },
+        {
+          "id": "budget_hard_gate",
+          "kind": "budget_hard_gate"
+        },
+        {
+          "id": "scenario_ids_present",
+          "kind": "scenario_ids_present",
+          "ids": [
+            "budget_first",
+            "risk_first",
+            "major_first",
+            "geo_first",
+            "roi_first"
+          ]
+        },
+        {
+          "id": "scenario_shape_complete",
+          "kind": "scenario_shape_complete"
+        },
+        {
+          "id": "content_min_chars",
+          "kind": "content_min_chars",
+          "min_chars": 20
+        }
+      ],
+      "soft_checks": [
+        {
+          "id": "keyword_hit",
+          "kind": "content_keywords_any",
+          "keywords": [
+            "专业",
+            "匹配",
+            "课程",
+            "major",
+            "fit"
+          ]
+        },
+        {
+          "id": "block_presence",
+          "kind": "block_count_min",
+          "min_count": 1
+        }
+      ]
+    },
+    {
+      "case_id": "rec_024",
+      "bucket": "geo_first",
+      "tags": [
+        "recommendation",
+        "geo_first",
+        "persona",
+        "ab_judge"
+      ],
+      "student_seed": {
+        "id": "e2c1bf88-79cb-5daa-884b-1813fbc76373",
+        "name": "Recommendation Persona 24",
+        "gpa": 3.91,
+        "gpa_scale": "4.0",
+        "sat_total": 1315,
+        "curriculum_type": "AP",
+        "intended_majors": [
+          "Mechanical Engineering",
+          "Aerospace Engineering"
+        ],
+        "budget_usd": 13000,
+        "need_financial_aid": true,
+        "target_year": 2029,
+        "preferences": {
+          "location": [
+            "IL",
+            "urban"
+          ],
+          "regions": [
+            "US"
+          ]
+        }
+      },
+      "turns": [
+        {
+          "content": "我偏好IL州和大城市，预算13000美元。请按地域偏好给我推荐学校。"
+        },
+        {
+          "content": "请再给我一个可执行的下一步行动清单，分本周/本月。"
+        }
+      ],
+      "hard_checks": [
+        {
+          "id": "status_ok",
+          "kind": "status_equals",
+          "value": "ok"
+        },
+        {
+          "id": "recommendation_payload_exists",
+          "kind": "recommendation_payload_exists"
+        },
+        {
+          "id": "prefilter_meta_fields",
+          "kind": "prefilter_meta_fields_exist",
+          "fields": [
+            "budget_cap_used",
+            "eligible_count",
+            "stretch_count",
+            "excluded_count"
+          ]
+        },
+        {
+          "id": "stretch_quota_max",
+          "kind": "stretch_quota_max",
+          "max_stretch": 3
+        },
+        {
+          "id": "budget_hard_gate",
+          "kind": "budget_hard_gate"
+        },
+        {
+          "id": "scenario_ids_present",
+          "kind": "scenario_ids_present",
+          "ids": [
+            "budget_first",
+            "risk_first",
+            "major_first",
+            "geo_first",
+            "roi_first"
+          ]
+        },
+        {
+          "id": "scenario_shape_complete",
+          "kind": "scenario_shape_complete"
+        },
+        {
+          "id": "content_min_chars",
+          "kind": "content_min_chars",
+          "min_chars": 20
+        }
+      ],
+      "soft_checks": [
+        {
+          "id": "keyword_hit",
+          "kind": "content_keywords_any",
+          "keywords": [
+            "地域",
+            "城市",
+            "州",
+            "geo",
+            "location"
+          ]
+        },
+        {
+          "id": "block_presence",
+          "kind": "block_count_min",
+          "min_count": 1
+        }
+      ]
+    },
+    {
+      "case_id": "rec_025",
+      "bucket": "roi_first",
+      "tags": [
+        "recommendation",
+        "roi_first",
+        "persona",
+        "ab_judge"
+      ],
+      "student_seed": {
+        "id": "44a8aa15-f758-558f-bbec-5a2d98da5774",
+        "name": "Recommendation Persona 25",
+        "gpa": 3.35,
+        "gpa_scale": "4.0",
+        "sat_total": 1340,
+        "curriculum_type": "AP",
+        "intended_majors": [
+          "Political Science",
+          "Public Policy"
+        ],
+        "budget_usd": 14500,
+        "need_financial_aid": true,
+        "target_year": 2027,
+        "preferences": {
+          "location": [
+            "CA",
+            "urban"
+          ],
+          "regions": [
+            "US"
+          ]
+        }
+      },
+      "turns": [
+        {
+          "content": "我关心毕业后就业和投入产出，预算14500美元。请给我ROI导向的选校建议。"
+        }
+      ],
+      "hard_checks": [
+        {
+          "id": "status_ok",
+          "kind": "status_equals",
+          "value": "ok"
+        },
+        {
+          "id": "recommendation_payload_exists",
+          "kind": "recommendation_payload_exists"
+        },
+        {
+          "id": "prefilter_meta_fields",
+          "kind": "prefilter_meta_fields_exist",
+          "fields": [
+            "budget_cap_used",
+            "eligible_count",
+            "stretch_count",
+            "excluded_count"
+          ]
+        },
+        {
+          "id": "stretch_quota_max",
+          "kind": "stretch_quota_max",
+          "max_stretch": 3
+        },
+        {
+          "id": "budget_hard_gate",
+          "kind": "budget_hard_gate"
+        },
+        {
+          "id": "scenario_ids_present",
+          "kind": "scenario_ids_present",
+          "ids": [
+            "budget_first",
+            "risk_first",
+            "major_first",
+            "geo_first",
+            "roi_first"
+          ]
+        },
+        {
+          "id": "scenario_shape_complete",
+          "kind": "scenario_shape_complete"
+        },
+        {
+          "id": "content_min_chars",
+          "kind": "content_min_chars",
+          "min_chars": 20
+        }
+      ],
+      "soft_checks": [
+        {
+          "id": "keyword_hit",
+          "kind": "content_keywords_any",
+          "keywords": [
+            "就业",
+            "ROI",
+            "回报",
+            "career",
+            "salary"
+          ]
+        },
+        {
+          "id": "block_presence",
+          "kind": "block_count_min",
+          "min_count": 1
+        }
+      ]
+    },
+    {
+      "case_id": "rec_026",
+      "bucket": "budget_first",
+      "tags": [
+        "recommendation",
+        "budget_first",
+        "persona",
+        "ab_judge"
+      ],
+      "student_seed": {
+        "id": "7fc080ac-96dd-5840-9004-762ea3c529e4",
+        "name": "Recommendation Persona 26",
+        "gpa": 3.43,
+        "gpa_scale": "4.0",
+        "sat_total": 1365,
+        "curriculum_type": "AP",
+        "intended_majors": [
+          "Computer Science",
+          "Data Science"
+        ],
+        "budget_usd": 16000,
+        "need_financial_aid": true,
+        "target_year": 2028,
+        "preferences": {
+          "location": [
+            "NY",
+            "suburban"
+          ],
+          "regions": [
+            "US"
+          ]
+        }
+      },
+      "turns": [
+        {
+          "content": "我预算16000美元，请给我美国本科选校推荐：预算内学校+最多3个冲刺位，并解释理由。"
+        }
+      ],
+      "hard_checks": [
+        {
+          "id": "status_ok",
+          "kind": "status_equals",
+          "value": "ok"
+        },
+        {
+          "id": "recommendation_payload_exists",
+          "kind": "recommendation_payload_exists"
+        },
+        {
+          "id": "prefilter_meta_fields",
+          "kind": "prefilter_meta_fields_exist",
+          "fields": [
+            "budget_cap_used",
+            "eligible_count",
+            "stretch_count",
+            "excluded_count"
+          ]
+        },
+        {
+          "id": "stretch_quota_max",
+          "kind": "stretch_quota_max",
+          "max_stretch": 3
+        },
+        {
+          "id": "budget_hard_gate",
+          "kind": "budget_hard_gate"
+        },
+        {
+          "id": "scenario_ids_present",
+          "kind": "scenario_ids_present",
+          "ids": [
+            "budget_first",
+            "risk_first",
+            "major_first",
+            "geo_first",
+            "roi_first"
+          ]
+        },
+        {
+          "id": "scenario_shape_complete",
+          "kind": "scenario_shape_complete"
+        },
+        {
+          "id": "content_min_chars",
+          "kind": "content_min_chars",
+          "min_chars": 20
+        }
+      ],
+      "soft_checks": [
+        {
+          "id": "keyword_hit",
+          "kind": "content_keywords_any",
+          "keywords": [
+            "预算",
+            "冲刺",
+            "费用",
+            "budget",
+            "stretch"
+          ]
+        },
+        {
+          "id": "block_presence",
+          "kind": "block_count_min",
+          "min_count": 1
+        }
+      ]
+    },
+    {
+      "case_id": "rec_027",
+      "bucket": "risk_first",
+      "tags": [
+        "recommendation",
+        "risk_first",
+        "persona",
+        "ab_judge"
+      ],
+      "student_seed": {
+        "id": "1b1a3f93-d70a-57a9-891e-986705649e52",
+        "name": "Recommendation Persona 27",
+        "gpa": 3.51,
+        "gpa_scale": "4.0",
+        "sat_total": 1390,
+        "curriculum_type": "AP",
+        "intended_majors": [
+          "Economics",
+          "Finance"
+        ],
+        "budget_usd": 17500,
+        "need_financial_aid": true,
+        "target_year": 2029,
+        "preferences": {
+          "location": [
+            "TX",
+            "urban"
+          ],
+          "regions": [
+            "US"
+          ]
+        }
+      },
+      "turns": [
+        {
+          "content": "我背景一般，预算17500美元。请按录取稳健性给我选校，并保留少量冲刺。"
+        },
+        {
+          "content": "请再给我一个可执行的下一步行动清单，分本周/本月。"
+        }
+      ],
+      "hard_checks": [
+        {
+          "id": "status_ok",
+          "kind": "status_equals",
+          "value": "ok"
+        },
+        {
+          "id": "recommendation_payload_exists",
+          "kind": "recommendation_payload_exists"
+        },
+        {
+          "id": "prefilter_meta_fields",
+          "kind": "prefilter_meta_fields_exist",
+          "fields": [
+            "budget_cap_used",
+            "eligible_count",
+            "stretch_count",
+            "excluded_count"
+          ]
+        },
+        {
+          "id": "stretch_quota_max",
+          "kind": "stretch_quota_max",
+          "max_stretch": 3
+        },
+        {
+          "id": "budget_hard_gate",
+          "kind": "budget_hard_gate"
+        },
+        {
+          "id": "scenario_ids_present",
+          "kind": "scenario_ids_present",
+          "ids": [
+            "budget_first",
+            "risk_first",
+            "major_first",
+            "geo_first",
+            "roi_first"
+          ]
+        },
+        {
+          "id": "scenario_shape_complete",
+          "kind": "scenario_shape_complete"
+        },
+        {
+          "id": "content_min_chars",
+          "kind": "content_min_chars",
+          "min_chars": 20
+        }
+      ],
+      "soft_checks": [
+        {
+          "id": "keyword_hit",
+          "kind": "content_keywords_any",
+          "keywords": [
+            "录取",
+            "稳健",
+            "概率",
+            "risk",
+            "admission"
+          ]
+        },
+        {
+          "id": "block_presence",
+          "kind": "block_count_min",
+          "min_count": 1
+        }
+      ]
+    },
+    {
+      "case_id": "rec_028",
+      "bucket": "major_first",
+      "tags": [
+        "recommendation",
+        "major_first",
+        "persona",
+        "ab_judge"
+      ],
+      "student_seed": {
+        "id": "dbda96e2-9fc1-5111-a12e-3991c3afb0f3",
+        "name": "Recommendation Persona 28",
+        "gpa": 3.59,
+        "gpa_scale": "4.0",
+        "sat_total": 1415,
+        "curriculum_type": "AP",
+        "intended_majors": [
+          "Biology",
+          "Neuroscience"
+        ],
+        "budget_usd": 19000,
+        "need_financial_aid": true,
+        "target_year": 2027,
+        "preferences": {
+          "location": [
+            "MA",
+            "urban"
+          ],
+          "regions": [
+            "US"
+          ]
+        }
+      },
+      "turns": [
+        {
+          "content": "我想申Biology方向，预算19000美元。请优先专业匹配给出选校建议。"
+        }
+      ],
+      "hard_checks": [
+        {
+          "id": "status_ok",
+          "kind": "status_equals",
+          "value": "ok"
+        },
+        {
+          "id": "recommendation_payload_exists",
+          "kind": "recommendation_payload_exists"
+        },
+        {
+          "id": "prefilter_meta_fields",
+          "kind": "prefilter_meta_fields_exist",
+          "fields": [
+            "budget_cap_used",
+            "eligible_count",
+            "stretch_count",
+            "excluded_count"
+          ]
+        },
+        {
+          "id": "stretch_quota_max",
+          "kind": "stretch_quota_max",
+          "max_stretch": 3
+        },
+        {
+          "id": "budget_hard_gate",
+          "kind": "budget_hard_gate"
+        },
+        {
+          "id": "scenario_ids_present",
+          "kind": "scenario_ids_present",
+          "ids": [
+            "budget_first",
+            "risk_first",
+            "major_first",
+            "geo_first",
+            "roi_first"
+          ]
+        },
+        {
+          "id": "scenario_shape_complete",
+          "kind": "scenario_shape_complete"
+        },
+        {
+          "id": "content_min_chars",
+          "kind": "content_min_chars",
+          "min_chars": 20
+        }
+      ],
+      "soft_checks": [
+        {
+          "id": "keyword_hit",
+          "kind": "content_keywords_any",
+          "keywords": [
+            "专业",
+            "匹配",
+            "课程",
+            "major",
+            "fit"
+          ]
+        },
+        {
+          "id": "block_presence",
+          "kind": "block_count_min",
+          "min_count": 1
+        }
+      ]
+    },
+    {
+      "case_id": "rec_029",
+      "bucket": "geo_first",
+      "tags": [
+        "recommendation",
+        "geo_first",
+        "persona",
+        "ab_judge"
+      ],
+      "student_seed": {
+        "id": "677f88d0-9a05-5c60-9fb1-9c7df3e40d12",
+        "name": "Recommendation Persona 29",
+        "gpa": 3.67,
+        "gpa_scale": "4.0",
+        "sat_total": 1440,
+        "curriculum_type": "AP",
+        "intended_majors": [
+          "Mechanical Engineering",
+          "Aerospace Engineering"
+        ],
+        "budget_usd": 10000,
+        "need_financial_aid": true,
+        "target_year": 2028,
+        "preferences": {
+          "location": [
+            "WA",
+            "suburban"
+          ],
+          "regions": [
+            "US"
+          ]
+        }
+      },
+      "turns": [
+        {
+          "content": "我偏好WA州和大城市，预算10000美元。请按地域偏好给我推荐学校。"
+        }
+      ],
+      "hard_checks": [
+        {
+          "id": "status_ok",
+          "kind": "status_equals",
+          "value": "ok"
+        },
+        {
+          "id": "recommendation_payload_exists",
+          "kind": "recommendation_payload_exists"
+        },
+        {
+          "id": "prefilter_meta_fields",
+          "kind": "prefilter_meta_fields_exist",
+          "fields": [
+            "budget_cap_used",
+            "eligible_count",
+            "stretch_count",
+            "excluded_count"
+          ]
+        },
+        {
+          "id": "stretch_quota_max",
+          "kind": "stretch_quota_max",
+          "max_stretch": 3
+        },
+        {
+          "id": "budget_hard_gate",
+          "kind": "budget_hard_gate"
+        },
+        {
+          "id": "scenario_ids_present",
+          "kind": "scenario_ids_present",
+          "ids": [
+            "budget_first",
+            "risk_first",
+            "major_first",
+            "geo_first",
+            "roi_first"
+          ]
+        },
+        {
+          "id": "scenario_shape_complete",
+          "kind": "scenario_shape_complete"
+        },
+        {
+          "id": "content_min_chars",
+          "kind": "content_min_chars",
+          "min_chars": 20
+        }
+      ],
+      "soft_checks": [
+        {
+          "id": "keyword_hit",
+          "kind": "content_keywords_any",
+          "keywords": [
+            "地域",
+            "城市",
+            "州",
+            "geo",
+            "location"
+          ]
+        },
+        {
+          "id": "block_presence",
+          "kind": "block_count_min",
+          "min_count": 1
+        }
+      ]
+    },
+    {
+      "case_id": "rec_030",
+      "bucket": "roi_first",
+      "tags": [
+        "recommendation",
+        "roi_first",
+        "persona",
+        "ab_judge"
+      ],
+      "student_seed": {
+        "id": "250e4448-e2b5-5fc3-94bd-8d400b80e6b2",
+        "name": "Recommendation Persona 30",
+        "gpa": 3.75,
+        "gpa_scale": "4.0",
+        "sat_total": 1465,
+        "curriculum_type": "AP",
+        "intended_majors": [
+          "Political Science",
+          "Public Policy"
+        ],
+        "budget_usd": 11500,
+        "need_financial_aid": true,
+        "target_year": 2029,
+        "preferences": {
+          "location": [
+            "IL",
+            "urban"
+          ],
+          "regions": [
+            "US"
+          ]
+        }
+      },
+      "turns": [
+        {
+          "content": "我关心毕业后就业和投入产出，预算11500美元。请给我ROI导向的选校建议。"
+        },
+        {
+          "content": "请再给我一个可执行的下一步行动清单，分本周/本月。"
+        }
+      ],
+      "hard_checks": [
+        {
+          "id": "status_ok",
+          "kind": "status_equals",
+          "value": "ok"
+        },
+        {
+          "id": "recommendation_payload_exists",
+          "kind": "recommendation_payload_exists"
+        },
+        {
+          "id": "prefilter_meta_fields",
+          "kind": "prefilter_meta_fields_exist",
+          "fields": [
+            "budget_cap_used",
+            "eligible_count",
+            "stretch_count",
+            "excluded_count"
+          ]
+        },
+        {
+          "id": "stretch_quota_max",
+          "kind": "stretch_quota_max",
+          "max_stretch": 3
+        },
+        {
+          "id": "budget_hard_gate",
+          "kind": "budget_hard_gate"
+        },
+        {
+          "id": "scenario_ids_present",
+          "kind": "scenario_ids_present",
+          "ids": [
+            "budget_first",
+            "risk_first",
+            "major_first",
+            "geo_first",
+            "roi_first"
+          ]
+        },
+        {
+          "id": "scenario_shape_complete",
+          "kind": "scenario_shape_complete"
+        },
+        {
+          "id": "content_min_chars",
+          "kind": "content_min_chars",
+          "min_chars": 20
+        }
+      ],
+      "soft_checks": [
+        {
+          "id": "keyword_hit",
+          "kind": "content_keywords_any",
+          "keywords": [
+            "就业",
+            "ROI",
+            "回报",
+            "career",
+            "salary"
+          ]
+        },
+        {
+          "id": "block_presence",
+          "kind": "block_count_min",
+          "min_count": 1
+        }
+      ]
+    }
+  ]
+}

@@ -158,11 +158,27 @@ function TopBar({
 }
 
 export default function App() {
-  const { studentId, sessionId, activeNav, sidebarCollapsed } = useApp();
+  const { studentId, sessionId, activeNav, sidebarCollapsed, locale, t } = useApp();
   const isMobile = useIsMobile();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const sidebarOffset = isMobile ? 'ml-0' : sidebarCollapsed ? 'ml-[72px]' : 'ml-64';
   const suspenseFallback = <PageFallback variant={activeNav === 'advisor' ? 'advisor' : 'dashboard'} activeNav={activeNav} />;
+
+  useEffect(() => {
+    const pageTitles: Record<string, string> = {
+      advisor: t.nav_advisor,
+      'school-list': t.sl_title,
+      discover: t.disc_title,
+      offers: t.off_title,
+      decisions: t.dec_title,
+      history: t.hist_title,
+      profile: t.prof_title,
+    };
+    const sectionTitle = pageTitles[activeNav] ?? t.nav_advisor;
+
+    document.title = `${sectionTitle} | ScholarPath`;
+    document.documentElement.lang = locale === 'zh' ? 'zh-CN' : 'en';
+  }, [activeNav, locale, t]);
 
   return (
     <div className="bg-background text-on-surface flex min-h-screen overflow-hidden font-body selection:bg-primary/20">

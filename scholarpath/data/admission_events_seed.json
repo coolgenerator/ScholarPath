@@ -1,0 +1,121 @@
+[
+  {
+    "student_id": "ea4ead45-7fcc-4fe9-b83b-fc76b3ef4077",
+    "school_id": "9da23b43-9193-4e73-bd07-9260743c6045",
+    "cycle_year": 2026,
+    "major_bucket": null,
+    "stage": "admit",
+    "happened_at": "2026-04-03T00:38:03.457441+00:00",
+    "evidence_ref": null,
+    "source_name": "offer_import",
+    "metadata": {
+      "run_id": "real-only-backfill-20260402-214857",
+      "source_key": "offer_truth_event:8e4c2713-9bcb-4977-ab23-715703129c6a:admit",
+      "source_kind": "offer",
+      "offer_id": "8e4c2713-9bcb-4977-ab23-715703129c6a",
+      "offer_status": "admitted"
+    }
+  },
+  {
+    "student_id": "ea4ead45-7fcc-4fe9-b83b-fc76b3ef4077",
+    "school_id": "3e07b8ce-617b-46aa-88a4-4b27a8e98445",
+    "cycle_year": 2026,
+    "major_bucket": null,
+    "stage": "admit",
+    "happened_at": "2026-04-03T00:38:03.457441+00:00",
+    "evidence_ref": null,
+    "source_name": "offer_import",
+    "metadata": {
+      "run_id": "real-only-backfill-20260402-214857",
+      "source_key": "offer_truth_event:eaf31bd7-27d8-44ed-80c9-57c19f598fc7:admit",
+      "source_kind": "offer",
+      "offer_id": "eaf31bd7-27d8-44ed-80c9-57c19f598fc7",
+      "offer_status": "admitted"
+    }
+  },
+  {
+    "student_id": "ea4ead45-7fcc-4fe9-b83b-fc76b3ef4077",
+    "school_id": "ad65e7af-f7f2-44c9-85db-2a5b817ba190",
+    "cycle_year": 2026,
+    "major_bucket": null,
+    "stage": "admit",
+    "happened_at": "2026-04-03T00:38:03.457441+00:00",
+    "evidence_ref": null,
+    "source_name": "offer_import",
+    "metadata": {
+      "run_id": "real-only-backfill-20260402-214857",
+      "source_key": "offer_truth_event:4d1314fb-766e-4f6a-8358-3aff7b56f002:admit",
+      "source_kind": "offer",
+      "offer_id": "4d1314fb-766e-4f6a-8358-3aff7b56f002",
+      "offer_status": "admitted"
+    }
+  },
+  {
+    "student_id": "ea4ead45-7fcc-4fe9-b83b-fc76b3ef4077",
+    "school_id": "34e67546-4634-4365-9b2f-f14dddeed8e0",
+    "cycle_year": 2026,
+    "major_bucket": null,
+    "stage": "waitlist",
+    "happened_at": "2026-04-03T00:38:03.457441+00:00",
+    "evidence_ref": null,
+    "source_name": "offer_import",
+    "metadata": {
+      "run_id": "real-only-backfill-20260402-214857",
+      "source_key": "offer_truth_event:f335f1d3-0e22-498e-ad3b-0625007f9cee:waitlist",
+      "source_kind": "offer",
+      "offer_id": "f335f1d3-0e22-498e-ad3b-0625007f9cee",
+      "offer_status": "waitlisted"
+    }
+  },
+  {
+    "student_id": "ea4ead45-7fcc-4fe9-b83b-fc76b3ef4077",
+    "school_id": "f8d9d81f-88d1-45c8-be82-6e7c99e998e8",
+    "cycle_year": 2026,
+    "major_bucket": null,
+    "stage": "deferred",
+    "happened_at": "2026-04-03T00:38:03.457441+00:00",
+    "evidence_ref": null,
+    "source_name": "offer_import",
+    "metadata": {
+      "run_id": "real-only-backfill-20260402-214857",
+      "source_key": "offer_truth_event:55e8aadc-7c71-4ec1-ab46-1124a8e1894b:deferred",
+      "source_kind": "offer",
+      "offer_id": "55e8aadc-7c71-4ec1-ab46-1124a8e1894b",
+      "offer_status": "deferred"
+    }
+  },
+  {
+    "student_id": "ea4ead45-7fcc-4fe9-b83b-fc76b3ef4077",
+    "school_id": "921506c6-f48d-45ad-8b15-f35f87d7d859",
+    "cycle_year": 2026,
+    "major_bucket": null,
+    "stage": "admit",
+    "happened_at": "2026-04-03T00:38:03.457441+00:00",
+    "evidence_ref": null,
+    "source_name": "offer_import",
+    "metadata": {
+      "run_id": "real-only-backfill-20260402-214857",
+      "source_key": "offer_truth_event:9f5a0ea3-6f0b-45ee-9f2b-8494d544bb3d:admit",
+      "source_kind": "offer",
+      "offer_id": "9f5a0ea3-6f0b-45ee-9f2b-8494d544bb3d",
+      "offer_status": "admitted"
+    }
+  },
+  {
+    "student_id": "ea4ead45-7fcc-4fe9-b83b-fc76b3ef4077",
+    "school_id": "5cd36183-441c-49ce-8a4c-0f239fcedba8",
+    "cycle_year": 2026,
+    "major_bucket": null,
+    "stage": "admit",
+    "happened_at": "2026-04-03T00:38:03.457441+00:00",
+    "evidence_ref": null,
+    "source_name": "offer_import",
+    "metadata": {
+      "run_id": "real-only-backfill-20260402-214857",
+      "source_key": "offer_truth_event:675d298b-66cf-4458-bbfc-e31db1dad4df:admit",
+      "source_kind": "offer",
+      "offer_id": "675d298b-66cf-4458-bbfc-e31db1dad4df",
+      "offer_status": "admitted"
+    }
+  }
+]

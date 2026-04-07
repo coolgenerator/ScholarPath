@@ -4,7 +4,12 @@ import { useApp } from '../../context/AppContext';
 import { useEvaluations } from '../../hooks/useEvaluations';
 import { useSimulations } from '../../hooks/useSimulations';
 import { WhatIfDeltaCard } from './StructuredMessageCards';
-import type { EvaluationWithSchool, WhatIfResponse, WhatIfViewModel } from '../../lib/types';
+import type {
+  EvaluationWithSchool,
+  ScenarioCompareRequestItem,
+  WhatIfResponse,
+  WhatIfViewModel,
+} from '../../lib/types';
 import {
   DASHBOARD_SELECT_EMPTY_VALUE,
   DashboardFieldLabel,
@@ -340,6 +345,7 @@ interface ScenarioInterventionDraft {
 interface ScenarioDraft {
   id: string;
   name: string;
+  schoolId: string | null;
   interventions: ScenarioInterventionDraft[];
 }
 
@@ -366,17 +372,28 @@ function createScenarioDraft(index: number, isCn = false): ScenarioDraft {
   return {
     id: createLocalId('scenario'),
     name: isCn ? `场景 ${String.fromCharCode(65 + index)}` : `Scenario ${String.fromCharCode(65 + index)}`,
+    schoolId: null,
     interventions: [createInterventionDraft(fallback.key, fallback.value)],
   };
 }
 
-function buildScenarioComparePayload(scenarios: ScenarioDraft[]): Array<{ interventions: Record<string, number> }> {
+function buildScenarioComparePayload(
+  scenarios: ScenarioDraft[],
+): ScenarioCompareRequestItem[] {
   return scenarios.map((scenario) => ({
+    school_id: scenario.schoolId!,
+    label: scenario.name,
     interventions: scenario.interventions.reduce<Record<string, number>>((acc, intervention) => {
       acc[intervention.key] = Number(intervention.value.toFixed(2));
       return acc;
     }, {}),
   }));
+}
+
+interface ScenarioSchoolOption {
+  id: string;
+  label: string;
+  rank: number;
 }
 
 function mapSimulationResultToViewModel(result: WhatIfResponse): WhatIfViewModel {
@@ -406,19 +423,23 @@ function localizeScenarioNodeLabel(key: ScenarioNodeKey, t: Record<string, any>)
 
 function ScenarioDraftCard({
   scenario,
+  schoolOptions,
   isCn,
   t,
   canRemoveScenario,
   onRemoveScenario,
+  onChangeSchool,
   onAddIntervention,
   onRemoveIntervention,
   onChangeIntervention,
 }: {
   scenario: ScenarioDraft;
+  schoolOptions: ScenarioSchoolOption[];
   isCn: boolean;
   t: Record<string, any>;
   canRemoveScenario: boolean;
   onRemoveScenario: () => void;
+  onChangeSchool: (schoolId: string | null) => void;
   onAddIntervention: () => void;
   onRemoveIntervention: (interventionId: string) => void;
   onChangeIntervention: (interventionId: string, patch: Partial<Omit<ScenarioInterventionDraft, 'id'>>) => void;
@@ -444,6 +465,30 @@ function ScenarioDraftCard({
       </div>
 
       <div className="space-y-3">
+        <div className="rounded-2xl bg-white px-4 py-3 shadow-sm ring-1 ring-outline-variant/8">
+          <DashboardFieldLabel>{t.dec_compare_school}</DashboardFieldLabel>
+          <DashboardSelect
+            value={scenario.schoolId ?? undefined}
+            onValueChange={(value) => {
+              onChangeSchool(value === DASHBOARD_SELECT_EMPTY_VALUE ? null : value);
+            }}
+          >
+            <DashboardSelectTrigger>
+              <DashboardSelectValue placeholder={t.dec_compare_pick_school} />
+            </DashboardSelectTrigger>
+            <DashboardSelectContent>
+              <DashboardSelectItem value={DASHBOARD_SELECT_EMPTY_VALUE}>
+                {t.dec_compare_pick_school}
+              </DashboardSelectItem>
+              {schoolOptions.map((schoolOption) => (
+                <DashboardSelectItem key={schoolOption.id} value={schoolOption.id}>
+                  #{schoolOption.rank} {schoolOption.label}
+                </DashboardSelectItem>
+              ))}
+            </DashboardSelectContent>
+          </DashboardSelect>
+        </div>
+
         {scenario.interventions.map((intervention) => (
           <div key={intervention.id} className="rounded-2xl bg-white px-4 py-3 shadow-sm ring-1 ring-outline-variant/8">
             <div className="flex items-start gap-3">
@@ -646,6 +691,21 @@ export function DecisionsPanel({ studentId }: DecisionsPanelProps) {
     () => computeRanking(allEvals, weights, isCn),
     [allEvals, weights, isCn],
   );
+  const scenarioSchoolOptions = useMemo<ScenarioSchoolOption[]>(() => {
+    const seen = new Set<string>();
+    return ranked
+      .filter((item) => {
+        if (seen.has(item.eval.school_id)) return false;
+        seen.add(item.eval.school_id);
+        return true;
+      })
+      .map((item) => ({
+        id: item.eval.school_id,
+        rank: item.rank,
+        label: item.eval.school?.name ?? `${t.common_school} #${item.rank}`,
+      }));
+  }, [ranked, t.common_school]);
+  const missingScenarioSchool = scenarios.some((scenario) => !scenario.schoolId);
 
   const handlePreset = (preset: Preset) => {
     setWeights({ ...preset.weights });
@@ -709,8 +769,15 @@ export function DecisionsPanel({ studentId }: DecisionsPanelProps) {
     }));
   };
 
+  const handleScenarioSchoolChange = (scenarioId: string, schoolId: string | null) => {
+    setScenarios((prev) => prev.map((scenario) => (
+      scenario.id === scenarioId ? { ...scenario, schoolId } : scenario
+    )));
+  };
+
   const handleCompareScenarios = async () => {
     if (!studentId) return;
+    if (missingScenarioSchool) return;
     await compareScenarios(studentId, buildScenarioComparePayload(scenarios));
   };
 
@@ -834,16 +901,30 @@ export function DecisionsPanel({ studentId }: DecisionsPanelProps) {
                   <ScenarioDraftCard
                     key={scenario.id}
                     scenario={scenario}
+                    schoolOptions={scenarioSchoolOptions}
                     isCn={isCn}
                     t={t}
                     canRemoveScenario={scenarios.length > 2}
                     onRemoveScenario={() => handleRemoveScenario(scenario.id)}
+                    onChangeSchool={(schoolId) => handleScenarioSchoolChange(scenario.id, schoolId)}
                     onAddIntervention={() => handleAddIntervention(scenario.id)}
                     onRemoveIntervention={(interventionId) => handleRemoveIntervention(scenario.id, interventionId)}
                     onChangeIntervention={(interventionId, patch) => handleInterventionChange(scenario.id, interventionId, patch)}
                   />
                 ))}
               </div>
+
+              {scenarioSchoolOptions.length === 0 && (
+                <div className="mt-4 rounded-2xl border border-outline-variant/10 bg-surface-container-high/30 px-4 py-3 text-xs text-on-surface-variant/70">
+                  {t.dec_compare_school_empty}
+                </div>
+              )}
+
+              {scenarioSchoolOptions.length > 0 && missingScenarioSchool && (
+                <div className="mt-4 rounded-2xl border border-outline-variant/10 bg-surface-container-high/30 px-4 py-3 text-xs text-on-surface-variant/70">
+                  {t.dec_compare_school_required}
+                </div>
+              )}
 
               {scenarios.length < 3 && (
                 <button
@@ -863,7 +944,7 @@ export function DecisionsPanel({ studentId }: DecisionsPanelProps) {
 
               <button
                 onClick={() => { void handleCompareScenarios(); }}
-                disabled={!studentId || isComparingScenarios}
+                disabled={!studentId || isComparingScenarios || missingScenarioSchool}
                 className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-bold text-on-primary shadow-md transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <span className="material-symbols-outlined text-sm">compare_arrows</span>

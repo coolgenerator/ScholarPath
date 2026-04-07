@@ -26,6 +26,39 @@ from scholarpath.evals.advisor_orchestrator_judge import (
     AdvisorJudgeRunSummary,
     AdvisorOrchestratorJudge,
 )
+from scholarpath.evals.advisor_ux_judge import (
+    AdvisorUXABJudge,
+    AdvisorUXJudgeCaseResult,
+    AdvisorUXJudgeRunSummary,
+    RUBRIC_DIMENSIONS,
+)
+from scholarpath.evals.advisor_ux_live import (
+    AdvisorUXCaseExecution,
+    AdvisorUXDataset,
+    AdvisorUXEvalReport,
+    AdvisorUXGoldCase,
+    run_advisor_ux_gold_eval,
+)
+from scholarpath.evals.recommendation_gold_live import (
+    RecommendationGoldCase,
+    RecommendationGoldCaseResult,
+    RecommendationGoldEvalReport,
+    run_recommendation_gold_eval,
+)
+from scholarpath.evals.recommendation_judge import (
+    RECOMMENDATION_RUBRIC_DIMENSIONS,
+    RecommendationABJudge,
+    RecommendationJudgeCaseResult,
+    RecommendationJudgeRunSummary,
+    create_unscored_recommendation_case_result,
+)
+from scholarpath.evals.recommendation_ux_live import (
+    RecommendationPersonaCase,
+    RecommendationPersonaDataset,
+    RecommendationUXCaseExecution,
+    RecommendationUXEvalReport,
+    run_recommendation_ux_gold_eval,
+)
 
 __all__ = [
     "DeepSearchLiveEvalReport",
@@ -44,4 +77,27 @@ __all__ = [
     "AdvisorJudgeCaseResult",
     "AdvisorJudgeRunSummary",
     "AdvisorOrchestratorJudge",
+    "RUBRIC_DIMENSIONS",
+    "AdvisorUXABJudge",
+    "AdvisorUXJudgeCaseResult",
+    "AdvisorUXJudgeRunSummary",
+    "AdvisorUXGoldCase",
+    "AdvisorUXDataset",
+    "AdvisorUXCaseExecution",
+    "AdvisorUXEvalReport",
+    "run_advisor_ux_gold_eval",
+    "RecommendationGoldCase",
+    "RecommendationGoldCaseResult",
+    "RecommendationGoldEvalReport",
+    "run_recommendation_gold_eval",
+    "RECOMMENDATION_RUBRIC_DIMENSIONS",
+    "RecommendationABJudge",
+    "RecommendationJudgeCaseResult",
+    "RecommendationJudgeRunSummary",
+    "create_unscored_recommendation_case_result",
+    "RecommendationPersonaCase",
+    "RecommendationPersonaDataset",
+    "RecommendationUXCaseExecution",
+    "RecommendationUXEvalReport",
+    "run_recommendation_ux_gold_eval",
 ]

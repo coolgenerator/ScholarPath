@@ -1,5 +1,5 @@
 import { api } from './index';
-import type { ScenarioCompareResponse, WhatIfResponse } from '../types';
+import type { ScenarioCompareRequestItem, ScenarioCompareResponse, WhatIfResponse } from '../types';
 
 export const simulationsApi = {
   whatIf(studentId: string, schoolId: string, interventions: Record<string, unknown>) {
@@ -7,7 +7,7 @@ export const simulationsApi = {
       interventions,
     });
   },
-  compareScenarios(studentId: string, scenarios: Array<{ interventions: Record<string, unknown> }>) {
+  compareScenarios(studentId: string, scenarios: ScenarioCompareRequestItem[]) {
     return api.post<ScenarioCompareResponse>(`/simulations/students/${studentId}/compare-scenarios`, {
       scenarios,
     });
