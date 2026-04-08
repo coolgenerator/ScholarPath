@@ -8,6 +8,7 @@ import io
 import json
 import logging
 import re
+import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -123,13 +124,49 @@ _EXTERNAL_ID_ALIASES = (
 _NAME_ALIASES = (
     "institution_name",
     "school_name",
+    "instnm",
     "name",
     "school",
 )
-_STATE_ALIASES = ("state", "state_abbr", "school_state")
+_STATE_ALIASES = ("state", "stabbr", "state_abbr", "school_state")
 _CITY_ALIASES = ("city", "school_city")
-_WEBSITE_ALIASES = ("website_url", "school_url", "institution_url")
+_WEBSITE_ALIASES = ("website_url", "school_url", "institution_url", "webaddr")
 _YEAR_ALIASES = ("year", "cycle_year", "survey_year", "academic_year")
+_CIP_CODE_ALIASES = (
+    "cip_code",
+    "cipcode",
+    "cip",
+    "cip_6",
+    "cip6",
+    "cip_4",
+    "cip4",
+)
+_CIP_TITLE_ALIASES = (
+    "cip_title",
+    "cip_description",
+    "cip_desc",
+    "cipdesc",
+    "program_name",
+    "program_title",
+    "major",
+    "major_name",
+)
+_AWARD_LEVEL_ALIASES = (
+    "award_level",
+    "awlevel",
+    "degree_level",
+    "credential_level",
+    "award",
+)
+_COMPLETIONS_ALIASES = (
+    "completions_total",
+    "completions",
+    "completions_count",
+    "ctotalt",
+    "awards",
+    "graduates_total",
+    "graduates",
+)
 
 
 @dataclass(slots=True)
@@ -154,14 +191,25 @@ class IPEDSCollegeNavigatorSource(BaseSource):
         *,
         dataset_url: str = "",
         dataset_path: str = "",
+        completions_dataset_url: str = "",
+        completions_dataset_path: str = "",
+        institution_dataset_url: str = "",
+        institution_dataset_path: str = "",
         timeout_seconds: float = 30.0,
     ) -> None:
         self._dataset_url = (dataset_url or "").strip()
         self._dataset_path = (dataset_path or "").strip()
+        self._completions_dataset_url = (completions_dataset_url or "").strip()
+        self._completions_dataset_path = (completions_dataset_path or "").strip()
+        self._institution_dataset_url = (institution_dataset_url or "").strip()
+        self._institution_dataset_path = (institution_dataset_path or "").strip()
         self._timeout_seconds = max(float(timeout_seconds), 5.0)
         self._records_cache: list[IPEDSRecord] | None = None
         self._records_cache_ts: datetime | None = None
+        self._program_rows_cache: list[dict[str, Any]] | None = None
+        self._institution_rows_cache: list[dict[str, Any]] | None = None
         self._load_lock = asyncio.Lock()
+        self._program_load_lock = asyncio.Lock()
 
     async def search(
         self,
@@ -284,6 +332,79 @@ class IPEDSCollegeNavigatorSource(BaseSource):
         ranked = sorted(grouped.values(), key=lambda item: (item["score"], item["latest_year"]), reverse=True)
         return ranked[:top_n]
 
+    async def list_program_completions(
+        self,
+        *,
+        years: int = 3,
+        min_completions: int = 1,
+        award_levels: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        async with self._program_load_lock:
+            if self._program_rows_cache is None:
+                self._program_rows_cache = await self._load_program_rows()
+            rows = self._program_rows_cache
+        if not rows:
+            return []
+
+        years = max(1, int(years))
+        min_completions = max(0, int(min_completions))
+        latest_year = max(int(item.get("year") or 0) for item in rows) or datetime.now(timezone.utc).year
+        min_year = latest_year - years + 1
+        normalized_awards = {
+            _normalise_award_level(item)
+            for item in (award_levels or set())
+            if str(item).strip()
+        }
+
+        grouped: dict[tuple[str, str, str], dict[str, Any]] = {}
+        for item in rows:
+            year = _to_int(item.get("year"))
+            if year is None or year < min_year:
+                continue
+            completions = _to_int(item.get("completions"))
+            if completions is None or completions < min_completions:
+                continue
+            award_level = _normalise_award_level(item.get("award_level"))
+            if normalized_awards and award_level not in normalized_awards:
+                continue
+            external_id = str(item.get("external_id") or "").strip()
+            cip_code = _normalise_cip_code(item.get("cip_code"))
+            cip_title = str(item.get("cip_title") or "").strip() or (f"CIP {cip_code}" if cip_code else "")
+            if not external_id or not cip_code:
+                continue
+            key = (external_id, cip_code, award_level)
+            existing = grouped.get(key)
+            candidate = {
+                "external_id": external_id,
+                "school_name": str(item.get("school_name") or "").strip(),
+                "state": str(item.get("state") or "").strip(),
+                "city": str(item.get("city") or "").strip(),
+                "website_url": str(item.get("website_url") or "").strip(),
+                "year": int(year),
+                "cip_code": cip_code,
+                "cip_title": cip_title,
+                "award_level": award_level or "unknown",
+                "completions": int(completions),
+            }
+            if existing is None:
+                grouped[key] = candidate
+                continue
+            should_update = int(candidate["year"]) > int(existing.get("year") or 0) or (
+                int(candidate["year"]) == int(existing.get("year") or 0)
+                and int(candidate["completions"]) > int(existing.get("completions") or 0)
+            )
+            if should_update:
+                grouped[key] = candidate
+
+        return sorted(grouped.values(), key=lambda item: (item["completions"], item["year"]), reverse=True)
+
+    async def list_institutions(self) -> list[dict[str, Any]]:
+        async with self._program_load_lock:
+            if self._institution_rows_cache is None:
+                self._institution_rows_cache = await self._load_institution_rows()
+            rows = self._institution_rows_cache
+        return [dict(item) for item in rows]
+
     async def health_check(self) -> bool:
         records = await self._load_records()
         return bool(records)
@@ -326,25 +447,123 @@ class IPEDSCollegeNavigatorSource(BaseSource):
             return parsed
 
     async def _fetch_raw_rows(self) -> list[dict[str, Any]]:
-        path = Path(self._dataset_path) if self._dataset_path else None
+        rows = await self._fetch_rows_from_dataset(
+            dataset_path=self._dataset_path,
+            dataset_url=self._dataset_url,
+            label="ipeds_default",
+        )
+        return rows
+
+    async def _load_program_rows(self) -> list[dict[str, Any]]:
+        # Preferred Phase A path: explicit completions + institution datasets.
+        if (
+            self._completions_dataset_path
+            or self._completions_dataset_url
+            or self._institution_dataset_path
+            or self._institution_dataset_url
+        ):
+            completion_rows = await self._fetch_rows_from_dataset(
+                dataset_path=self._completions_dataset_path,
+                dataset_url=self._completions_dataset_url,
+                label="ipeds_completions",
+            )
+            institution_rows = await self._fetch_rows_from_dataset(
+                dataset_path=self._institution_dataset_path,
+                dataset_url=self._institution_dataset_url,
+                label="ipeds_institution",
+            )
+            return _join_completion_with_institution(
+                completion_rows=completion_rows,
+                institution_rows=institution_rows,
+                completions_year_hint=_extract_year_hint(self._completions_dataset_url, self._completions_dataset_path),
+            )
+
+        # Backward-compatible fallback: single merged dataset.
+        records = await self._load_records()
+        fallback_rows: list[dict[str, Any]] = []
+        for record in records:
+            row = record.row
+            unitid = str(record.external_id or _pick_value(row, _EXTERNAL_ID_ALIASES) or "").strip()
+            if not unitid:
+                continue
+            cip_code = _normalise_cip_code(_pick_value(row, _CIP_CODE_ALIASES))
+            if not cip_code:
+                continue
+            completions = _to_int(_pick_value(row, _COMPLETIONS_ALIASES))
+            if completions is None:
+                continue
+            award_level = _normalise_award_level(_pick_value(row, _AWARD_LEVEL_ALIASES))
+            year = record.cycle_year or _to_int(_pick_value(row, _YEAR_ALIASES)) or datetime.now(timezone.utc).year
+            cip_title = str(_pick_value(row, _CIP_TITLE_ALIASES) or "").strip() or f"CIP {cip_code}"
+            fallback_rows.append(
+                {
+                    "external_id": unitid,
+                    "school_name": str(row.get("institution_name") or row.get("school_name") or "").strip(),
+                    "state": str(row.get("state") or "").strip(),
+                    "city": str(row.get("city") or "").strip(),
+                    "website_url": str(row.get("website_url") or "").strip(),
+                    "year": year,
+                    "cip_code": cip_code,
+                    "cip_title": cip_title,
+                    "award_level": award_level,
+                    "completions": completions,
+                }
+            )
+        return fallback_rows
+
+    async def _load_institution_rows(self) -> list[dict[str, Any]]:
+        rows = await self._fetch_rows_from_dataset(
+            dataset_path=self._institution_dataset_path or self._dataset_path,
+            dataset_url=self._institution_dataset_url or self._dataset_url,
+            label="ipeds_institution",
+        )
+        if not rows:
+            return []
+
+        deduped: dict[str, dict[str, Any]] = {}
+        for raw in rows:
+            if not isinstance(raw, dict):
+                continue
+            row = {_normalise_key(key): raw.get(key) for key in raw.keys()}
+            unitid = str(_pick_value(row, _EXTERNAL_ID_ALIASES) or "").strip()
+            if not unitid:
+                continue
+            merged = deduped.get(unitid, {})
+            merged["external_id"] = unitid
+            merged["school_name"] = str(_pick_value(row, _NAME_ALIASES) or merged.get("school_name") or "").strip()
+            merged["state"] = str(_pick_value(row, _STATE_ALIASES) or merged.get("state") or "").strip()
+            merged["city"] = str(_pick_value(row, _CITY_ALIASES) or merged.get("city") or "").strip()
+            merged["website_url"] = str(_pick_value(row, _WEBSITE_ALIASES) or merged.get("website_url") or "").strip()
+            deduped[unitid] = merged
+        return sorted(deduped.values(), key=lambda item: str(item.get("external_id") or ""))
+
+    async def _fetch_rows_from_dataset(
+        self,
+        *,
+        dataset_path: str,
+        dataset_url: str,
+        label: str,
+    ) -> list[dict[str, Any]]:
+        path = Path(dataset_path) if dataset_path else None
         if path and path.exists():
             try:
-                return _parse_dataset(path.read_text(encoding="utf-8"), suffix=path.suffix.lower())
+                payload = path.read_bytes()
+                return _parse_dataset_bytes(payload, suffix=path.suffix.lower(), source_hint=str(path))
             except Exception:
-                logger.warning("Failed to parse IPEDS dataset file: %s", path, exc_info=True)
+                logger.warning("Failed to parse %s dataset file: %s", label, path, exc_info=True)
                 return []
-        if not self._dataset_url:
+        if not dataset_url:
             return []
         try:
             async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
-                response = await client.get(self._dataset_url)
+                response = await client.get(dataset_url)
                 response.raise_for_status()
-                text = response.text
+                payload = response.content
         except Exception:
-            logger.warning("Failed to fetch IPEDS dataset: %s", self._dataset_url, exc_info=True)
+            logger.warning("Failed to fetch %s dataset: %s", label, dataset_url, exc_info=True)
             return []
-        suffix = Path(urlparse(self._dataset_url).path).suffix.lower()
-        return _parse_dataset(text, suffix=suffix)
+        suffix = Path(urlparse(dataset_url).path).suffix.lower()
+        return _parse_dataset_bytes(payload, suffix=suffix, source_hint=dataset_url)
 
     def _match_by_name_state(
         self,
@@ -417,6 +636,7 @@ class IPEDSCollegeNavigatorSource(BaseSource):
 
 
 def _parse_dataset(payload: str, *, suffix: str) -> list[dict[str, Any]]:
+    # Backward-compatible text parser.
     text = (payload or "").strip()
     if not text:
         return []
@@ -424,10 +644,59 @@ def _parse_dataset(payload: str, *, suffix: str) -> list[dict[str, Any]]:
         return _parse_csv(text)
     if suffix == ".json":
         return _parse_json(text)
-    # Auto-detect.
     if text.startswith("{") or text.startswith("["):
         return _parse_json(text)
     return _parse_csv(text)
+
+
+def _parse_dataset_bytes(payload: bytes, *, suffix: str, source_hint: str = "") -> list[dict[str, Any]]:
+    blob = payload or b""
+    if not blob:
+        return []
+    if suffix == ".zip" or _looks_like_zip(blob):
+        return _parse_zip_blob(blob, source_hint=source_hint)
+    text = _decode_blob(blob)
+    return _parse_dataset(text, suffix=suffix)
+
+
+def _looks_like_zip(blob: bytes) -> bool:
+    return len(blob) >= 4 and blob[:2] == b"PK"
+
+
+def _parse_zip_blob(blob: bytes, *, source_hint: str = "") -> list[dict[str, Any]]:
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(blob))
+    except zipfile.BadZipFile:
+        logger.warning("Failed to parse zip dataset: %s", source_hint)
+        return []
+    members = [name for name in zf.namelist() if not name.endswith("/")]
+    if not members:
+        return []
+    preferred = sorted(
+        members,
+        key=lambda name: (
+            0 if name.lower().endswith(".csv") else 1,
+            0 if name.lower().endswith(".json") else 1,
+            len(name),
+        ),
+    )[0]
+    try:
+        with zf.open(preferred) as fh:
+            inner = fh.read()
+    except Exception:
+        logger.warning("Failed to read zip member %s from %s", preferred, source_hint, exc_info=True)
+        return []
+    inner_suffix = Path(preferred).suffix.lower()
+    return _parse_dataset_bytes(inner, suffix=inner_suffix, source_hint=f"{source_hint}:{preferred}")
+
+
+def _decode_blob(blob: bytes) -> str:
+    for encoding in ("utf-8-sig", "utf-8", "latin1"):
+        try:
+            return blob.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return blob.decode("latin1", errors="ignore")
 
 
 def _parse_csv(text: str) -> list[dict[str, Any]]:
@@ -494,3 +763,115 @@ def _to_int(value: Any) -> int | None:
     if numeric is None:
         return None
     return int(round(numeric))
+
+
+def _normalise_cip_code(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    text = re.sub(r"[^0-9.]", "", text)
+    if not text:
+        return ""
+    if "." in text:
+        left, _, right = text.partition(".")
+        left = left.zfill(2)[:2]
+        right = right[:4]
+        return f"{left}.{right}" if right else left
+    digits = text
+    if len(digits) >= 6:
+        return f"{digits[:2]}.{digits[2:6]}"
+    if len(digits) >= 2:
+        return digits[:2]
+    return digits
+
+
+def _normalise_award_level(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return "unknown"
+    if raw in {"bachelor", "bachelors", "ba", "bs"}:
+        return "bachelor"
+    if raw in {"master", "masters", "ma", "ms", "mba"}:
+        return "master"
+    if raw in {"doctorate", "doctoral", "phd"}:
+        return "doctorate"
+    if raw in {"associate", "associates", "aa", "as"}:
+        return "associate"
+    if raw.isdigit():
+        # IPEDS AWLEVEL numeric families.
+        if raw in {"5", "6", "7"}:
+            return "bachelor"
+        if raw in {"8", "17", "18"}:
+            return "master"
+        if raw in {"9", "19"}:
+            return "doctorate"
+        if raw in {"3", "4"}:
+            return "associate"
+    return raw
+
+
+def _extract_year_hint(*sources: str) -> int | None:
+    for source in sources:
+        text = str(source or "")
+        if not text:
+            continue
+        for match in re.finditer(r"(19|20)\d{2}", text):
+            year = int(match.group(0))
+            if 1900 <= year <= 2100:
+                return year
+    return None
+
+
+def _join_completion_with_institution(
+    *,
+    completion_rows: list[dict[str, Any]],
+    institution_rows: list[dict[str, Any]],
+    completions_year_hint: int | None,
+) -> list[dict[str, Any]]:
+    inst_map: dict[str, dict[str, Any]] = {}
+    for raw in institution_rows:
+        if not isinstance(raw, dict):
+            continue
+        row = {_normalise_key(key): raw.get(key) for key in raw.keys()}
+        unitid = str(_pick_value(row, _EXTERNAL_ID_ALIASES) or "").strip()
+        if not unitid:
+            continue
+        inst_map[unitid] = row
+
+    merged: list[dict[str, Any]] = []
+    for raw in completion_rows:
+        if not isinstance(raw, dict):
+            continue
+        row = {_normalise_key(key): raw.get(key) for key in raw.keys()}
+        unitid = str(_pick_value(row, _EXTERNAL_ID_ALIASES) or "").strip()
+        if not unitid:
+            continue
+        inst = inst_map.get(unitid, {})
+        cip_code = _normalise_cip_code(_pick_value(row, _CIP_CODE_ALIASES))
+        if not cip_code:
+            continue
+        award_level = _normalise_award_level(_pick_value(row, _AWARD_LEVEL_ALIASES))
+        completions = _to_int(_pick_value(row, _COMPLETIONS_ALIASES))
+        if completions is None:
+            continue
+        year = _to_int(_pick_value(row, _YEAR_ALIASES)) or completions_year_hint or datetime.now(timezone.utc).year
+        cip_title = str(_pick_value(row, _CIP_TITLE_ALIASES) or "").strip() or f"CIP {cip_code}"
+        school_name = str(_pick_value(inst, _NAME_ALIASES) or "").strip()
+        state = str(_pick_value(inst, _STATE_ALIASES) or "").strip()
+        city = str(_pick_value(inst, _CITY_ALIASES) or "").strip()
+        website_url = str(_pick_value(inst, _WEBSITE_ALIASES) or "").strip()
+        merged.append(
+            {
+                "external_id": unitid,
+                "school_name": school_name,
+                "state": state,
+                "city": city,
+                "website_url": website_url,
+                "year": int(year),
+                "cip_code": cip_code,
+                "cip_title": cip_title,
+                "award_level": award_level,
+                "completions": int(completions),
+            }
+        )
+    return merged

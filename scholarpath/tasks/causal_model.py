@@ -50,6 +50,25 @@ def causal_ingest_ipeds_college_navigator(
     )
 
 
+@celery_app.task(name="scholarpath.tasks.causal_model.causal_ingest_ipeds_program_facts")
+def causal_ingest_ipeds_program_facts(
+    years: int = 3,
+    min_completions: int = 5,
+    award_levels: list[str] | None = None,
+    school_names: list[str] | None = None,
+    run_id: str | None = None,
+) -> dict:
+    return asyncio.run(
+        _ingest_ipeds_program_facts_async(
+            years=years,
+            min_completions=min_completions,
+            award_levels=award_levels,
+            school_names=school_names,
+            run_id=run_id or f"causal-ipeds-program-{uuid4().hex[:8]}",
+        )
+    )
+
+
 async def _ingest_ipeds_college_navigator_async(
     *,
     top_schools: int,
@@ -66,6 +85,29 @@ async def _ingest_ipeds_college_navigator_async(
             top_schools=top_schools,
             years=years,
             selection_metric=selection_metric,
+        )
+        await session.commit()
+        return result
+
+
+async def _ingest_ipeds_program_facts_async(
+    *,
+    years: int,
+    min_completions: int,
+    award_levels: list[str] | None,
+    school_names: list[str] | None,
+    run_id: str,
+) -> dict:
+    from scholarpath.services.causal_data_service import ingest_ipeds_program_facts
+
+    async with async_session_factory() as session:
+        result = await ingest_ipeds_program_facts(
+            session,
+            run_id=run_id,
+            years=years,
+            min_completions=min_completions,
+            award_levels=award_levels,
+            school_names=school_names,
         )
         await session.commit()
         return result

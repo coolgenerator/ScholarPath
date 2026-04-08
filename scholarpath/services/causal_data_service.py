@@ -5,11 +5,14 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
+from difflib import SequenceMatcher
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import uuid
 from typing import Any
+from urllib.parse import urlparse
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +27,7 @@ from scholarpath.db.models import (
     EvidenceArtifact,
     FactLineage,
     FactQuarantine,
+    Program,
     School,
     SchoolExternalId,
     Student,
@@ -47,6 +51,22 @@ from scholarpath.search.sources.school_official_profile import SchoolOfficialPro
 from scholarpath.search.trends.common_app import CommonAppTrendSource
 
 logger = logging.getLogger(__name__)
+_MAP_NON_WORD_RE = re.compile(r"[^a-z0-9]+")
+_MAP_FUZZY_STOPWORDS = {
+    "the",
+    "of",
+    "and",
+    "at",
+    "for",
+    "university",
+    "college",
+    "school",
+    "state",
+    "campus",
+    "community",
+    "institute",
+    "system",
+}
 
 _ADMISSION_STAGE_TO_VALUE: dict[str, float | None] = {
     "submitted": None,
@@ -348,9 +368,15 @@ async def ingest_ipeds_school_pool(
     years: int = 5,
     selection_metric: str = "applicants_total",
 ) -> dict[str, Any]:
+    dataset_path = (settings.IPEDS_DATASET_PATH or "").strip() or (
+        settings.IPEDS_INSTITUTION_DATASET_PATH or ""
+    ).strip()
+    dataset_url = (settings.IPEDS_DATASET_URL or "").strip() or (
+        settings.IPEDS_INSTITUTION_DATASET_URL or ""
+    ).strip()
     source = IPEDSCollegeNavigatorSource(
-        dataset_url=settings.IPEDS_DATASET_URL,
-        dataset_path=settings.IPEDS_DATASET_PATH,
+        dataset_url=dataset_url,
+        dataset_path=dataset_path,
     )
     records = await source.list_top_schools(
         top_n=top_schools,
@@ -435,6 +461,512 @@ async def ingest_ipeds_school_pool(
         "schools_upserted": schools_upserted,
         "external_ids_upserted": ids_upserted,
         "school_names": sorted(set(school_names)),
+    }
+
+
+async def ingest_ipeds_program_facts(
+    session: AsyncSession,
+    *,
+    run_id: str,
+    years: int = 3,
+    min_completions: int = 5,
+    award_levels: list[str] | None = None,
+    school_names: list[str] | None = None,
+) -> dict[str, Any]:
+    completions_url = (settings.IPEDS_COMPLETIONS_DATASET_URL or "").strip()
+    completions_path = (settings.IPEDS_COMPLETIONS_DATASET_PATH or "").strip()
+    institution_url = (settings.IPEDS_INSTITUTION_DATASET_URL or "").strip()
+    institution_path = (settings.IPEDS_INSTITUTION_DATASET_PATH or "").strip()
+    legacy_url = (settings.IPEDS_DATASET_URL or "").strip()
+    legacy_path = (settings.IPEDS_DATASET_PATH or "").strip()
+
+    source = IPEDSCollegeNavigatorSource(
+        dataset_url=legacy_url,
+        dataset_path=legacy_path,
+        completions_dataset_url=completions_url,
+        completions_dataset_path=completions_path,
+        institution_dataset_url=institution_url,
+        institution_dataset_path=institution_path,
+    )
+    rows = await source.list_program_completions(
+        years=years,
+        min_completions=min_completions,
+        award_levels={str(item).strip() for item in (award_levels or []) if str(item).strip()},
+    )
+    if not rows:
+        return {
+            "status": "ok",
+            "run_id": run_id,
+            "rows_read": 0,
+            "rows_matched_school": 0,
+            "rows_unmatched_school": 0,
+            "programs_inserted": 0,
+            "programs_updated": 0,
+            "schools_with_program_updates": 0,
+            "school_scope_size": len(school_names or []),
+        }
+
+    scoped_names = {str(name).strip().lower() for name in (school_names or []) if str(name).strip()}
+    filtered_rows = rows
+    if scoped_names:
+        filtered_rows = [
+            item
+            for item in rows
+            if str(item.get("school_name") or "").strip().lower() in scoped_names
+        ]
+
+    external_ids = sorted(
+        {
+            str(item.get("external_id") or "").strip()
+            for item in filtered_rows
+            if str(item.get("external_id") or "").strip()
+        }
+    )
+    if not external_ids:
+        return {
+            "status": "ok",
+            "run_id": run_id,
+            "rows_read": len(filtered_rows),
+            "rows_matched_school": 0,
+            "rows_unmatched_school": len(filtered_rows),
+            "programs_inserted": 0,
+            "programs_updated": 0,
+            "schools_with_program_updates": 0,
+            "school_scope_size": len(scoped_names),
+            "reason": "no_external_id_in_rows",
+        }
+
+    mappings = (
+        await session.execute(
+            select(SchoolExternalId).where(
+                and_(
+                    SchoolExternalId.provider == "ipeds",
+                    SchoolExternalId.external_id.in_(external_ids),
+                )
+            )
+        )
+    ).scalars().all()
+    school_id_by_external = {str(row.external_id): row.school_id for row in mappings}
+
+    matched_rows = [
+        item for item in filtered_rows if str(item.get("external_id") or "").strip() in school_id_by_external
+    ]
+    if not matched_rows:
+        return {
+            "status": "ok",
+            "run_id": run_id,
+            "rows_read": len(filtered_rows),
+            "rows_matched_school": 0,
+            "rows_unmatched_school": len(filtered_rows),
+            "programs_inserted": 0,
+            "programs_updated": 0,
+            "schools_with_program_updates": 0,
+            "school_scope_size": len(scoped_names),
+            "reason": "no_school_external_id_mapping",
+        }
+
+    target_school_ids = list({school_id_by_external[str(item["external_id"])] for item in matched_rows})
+    existing_program_rows = (
+        await session.execute(select(Program).where(Program.school_id.in_(target_school_ids)))
+    ).scalars().all()
+    existing_by_key: dict[tuple[uuid.UUID, str, str], Program] = {}
+    for row in existing_program_rows:
+        metadata = _parse_program_metadata(row.description)
+        cip_code = str(metadata.get("cip_code") or "").strip()
+        award_level = str(metadata.get("award_level") or "unknown").strip().lower() or "unknown"
+        if not cip_code:
+            continue
+        existing_by_key[(row.school_id, cip_code, award_level)] = row
+
+    grouped_rows: dict[tuple[uuid.UUID, str, str], dict[str, Any]] = {}
+    for item in matched_rows:
+        external_id = str(item.get("external_id") or "").strip()
+        school_id = school_id_by_external.get(external_id)
+        if school_id is None:
+            continue
+        cip_code = str(item.get("cip_code") or "").strip()
+        award_level = str(item.get("award_level") or "unknown").strip().lower() or "unknown"
+        key = (school_id, cip_code, award_level)
+        current = grouped_rows.get(key)
+        if current is None:
+            grouped_rows[key] = dict(item)
+            continue
+        current_year = int(current.get("year") or 0)
+        next_year = int(item.get("year") or 0)
+        current_comp = int(current.get("completions") or 0)
+        next_comp = int(item.get("completions") or 0)
+        if next_year > current_year or (next_year == current_year and next_comp > current_comp):
+            grouped_rows[key] = dict(item)
+
+    inserted = 0
+    updated = 0
+    touched_school_ids: set[uuid.UUID] = set()
+    for (school_id, cip_code, award_level), payload in grouped_rows.items():
+        cip_title = str(payload.get("cip_title") or "").strip() or f"CIP {cip_code}"
+        completions = int(payload.get("completions") or 0)
+        year = int(payload.get("year") or datetime.now(timezone.utc).year)
+        department = _infer_program_department(cip_code=cip_code, cip_title=cip_title)
+        metadata = {
+            "source": "ipeds_program_completion",
+            "run_id": run_id,
+            "cip_code": cip_code,
+            "cip_title": cip_title,
+            "award_level": award_level,
+            "completions": completions,
+            "year": year,
+            "external_id": str(payload.get("external_id") or "").strip(),
+        }
+        existing = existing_by_key.get((school_id, cip_code, award_level))
+        if existing is None:
+            row = Program(
+                school_id=school_id,
+                name=cip_title[:300],
+                department=department[:200],
+                us_news_rank=None,
+                avg_class_size=None,
+                has_research_opps=False,
+                has_coop=False,
+                description=json.dumps(metadata, ensure_ascii=True, sort_keys=True),
+            )
+            session.add(row)
+            inserted += 1
+            touched_school_ids.add(school_id)
+            continue
+
+        existing_meta = _parse_program_metadata(existing.description)
+        existing_year = int(existing_meta.get("year") or 0)
+        existing_comp = int(existing_meta.get("completions") or 0)
+        should_update = year > existing_year or (year == existing_year and completions > existing_comp)
+        if should_update:
+            existing.name = cip_title[:300]
+            existing.department = department[:200]
+            existing.description = json.dumps(metadata, ensure_ascii=True, sort_keys=True)
+            updated += 1
+            touched_school_ids.add(school_id)
+
+    await session.flush()
+    return {
+        "status": "ok",
+        "run_id": run_id,
+        "rows_read": len(filtered_rows),
+        "rows_matched_school": len(matched_rows),
+        "rows_unmatched_school": len(filtered_rows) - len(matched_rows),
+        "programs_inserted": inserted,
+        "programs_updated": updated,
+        "schools_with_program_updates": len(touched_school_ids),
+        "school_scope_size": len(scoped_names),
+    }
+
+
+async def map_ipeds_external_ids(
+    session: AsyncSession,
+    *,
+    run_id: str,
+    dry_run: bool = True,
+    fuzzy_threshold: float = 0.88,
+    school_names: list[str] | None = None,
+    max_samples: int = 200,
+) -> dict[str, Any]:
+    """Map missing SchoolExternalId(provider=ipeds) rows from IPEDS institution dataset."""
+    threshold = max(0.0, min(1.0, float(fuzzy_threshold)))
+    max_samples = max(10, int(max_samples))
+    scoped_names = {str(item).strip().lower() for item in (school_names or []) if str(item).strip()}
+
+    source = IPEDSCollegeNavigatorSource(
+        institution_dataset_url=(settings.IPEDS_INSTITUTION_DATASET_URL or "").strip(),
+        institution_dataset_path=(settings.IPEDS_INSTITUTION_DATASET_PATH or "").strip(),
+        dataset_url=(settings.IPEDS_DATASET_URL or "").strip(),
+        dataset_path=(settings.IPEDS_DATASET_PATH or "").strip(),
+    )
+    institutions = await source.list_institutions()
+    if not institutions:
+        return {
+            "status": "ok",
+            "run_id": run_id,
+            "dry_run": bool(dry_run),
+            "fuzzy_threshold": threshold,
+            "schools_scanned": 0,
+            "mapped": 0,
+            "skipped_conflict": 0,
+            "skipped_low_confidence": 0,
+            "skipped_existing": 0,
+            "skipped_cross_state": 0,
+            "skipped_no_candidate": 0,
+            "institutions_read": 0,
+            "match_method_counts": {},
+            "samples": {"mapped": [], "skipped": []},
+            "reason": "institution_dataset_empty",
+        }
+
+    by_domain: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    by_name_state: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    by_state: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    by_state_token: dict[str, dict[str, list[dict[str, Any]]]] = defaultdict(lambda: defaultdict(list))
+    for row in institutions:
+        external_id = str(row.get("external_id") or "").strip()
+        school_name = str(row.get("school_name") or "").strip()
+        state = _normalize_map_state(row.get("state"))
+        if not external_id or not school_name:
+            continue
+        normalized = {
+            "external_id": external_id,
+            "school_name": school_name,
+            "state": state,
+            "city": str(row.get("city") or "").strip(),
+            "website_url": str(row.get("website_url") or "").strip(),
+            "name_norm": _normalize_map_name(school_name),
+        }
+        domain = _normalize_map_domain(normalized.get("website_url"))
+        if domain:
+            by_domain[domain].append(normalized)
+        by_name_state[(normalized["name_norm"], state)].append(normalized)
+        if state:
+            by_state[state].append(normalized)
+            for token in _iter_map_tokens(normalized["name_norm"]):
+                by_state_token[state][token].append(normalized)
+
+    if scoped_names:
+        schools = (
+            (
+                await session.execute(
+                    select(School).where(func.lower(School.name).in_(list(scoped_names))),
+                )
+            )
+            .scalars()
+            .all()
+        )
+    else:
+        has_ipeds_mapping = (
+            select(SchoolExternalId.id)
+            .where(
+                and_(
+                    SchoolExternalId.school_id == School.id,
+                    SchoolExternalId.provider == "ipeds",
+                ),
+            )
+            .exists()
+        )
+        schools = (
+            (
+                await session.execute(
+                    select(School).where(~has_ipeds_mapping),
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    skipped_existing = 0
+    if scoped_names:
+        school_ids = [row.id for row in schools]
+        if school_ids:
+            existing_school_ids = set(
+                (
+                    await session.execute(
+                        select(SchoolExternalId.school_id).where(
+                            and_(
+                                SchoolExternalId.provider == "ipeds",
+                                SchoolExternalId.school_id.in_(school_ids),
+                            )
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        else:
+            existing_school_ids = set()
+    else:
+        existing_school_ids = set()
+
+    mapped = 0
+    skipped_conflict = 0
+    skipped_low_confidence = 0
+    skipped_cross_state = 0
+    skipped_no_candidate = 0
+    match_method_counts: dict[str, int] = defaultdict(int)
+    mapped_samples: list[dict[str, Any]] = []
+    skipped_samples: list[dict[str, Any]] = []
+
+    for school in schools:
+        if school.id in existing_school_ids:
+            skipped_existing += 1
+            if len(skipped_samples) < max_samples:
+                skipped_samples.append(
+                    {
+                        "school_id": str(school.id),
+                        "school_name": school.name,
+                        "state": school.state,
+                        "reason": "existing_ipeds_mapping",
+                    }
+                )
+            continue
+
+        school_name_norm = _normalize_map_name(school.name)
+        school_state_norm = _normalize_map_state(school.state)
+        school_domain = _normalize_map_domain(school.website_url)
+
+        candidate: dict[str, Any] | None = None
+        method = ""
+        confidence = 0.0
+        reason = ""
+
+        if school_domain:
+            domain_candidates = by_domain.get(school_domain, [])
+            if len(domain_candidates) == 1:
+                candidate = domain_candidates[0]
+                method = "domain_exact"
+                confidence = 0.99
+            elif len(domain_candidates) > 1:
+                reason = "domain_conflict"
+
+        if candidate is None and not reason:
+            exact_candidates = by_name_state.get((school_name_norm, school_state_norm), [])
+            if len(exact_candidates) == 1:
+                candidate = exact_candidates[0]
+                method = "name_state_exact"
+                confidence = 0.97
+            elif len(exact_candidates) > 1:
+                reason = "name_state_conflict"
+
+        if candidate is None and not reason:
+            if not school_state_norm:
+                reason = "missing_school_state"
+            else:
+                same_state_candidates = by_state.get(school_state_norm, [])
+                if not same_state_candidates:
+                    best_any, best_any_score, _ = _best_fuzzy_candidate(
+                        school_name_norm=school_name_norm,
+                        candidates=institutions,
+                    )
+                    if best_any is not None and best_any_score >= threshold:
+                        reason = "cross_state_candidate"
+                    else:
+                        reason = "no_candidate"
+                else:
+                    token_candidates: dict[str, dict[str, Any]] = {}
+                    for token in _iter_map_tokens(school_name_norm):
+                        for row in by_state_token.get(school_state_norm, {}).get(token, []):
+                            token_candidates[str(row.get("external_id") or "")] = row
+                    fuzzy_candidates = list(token_candidates.values())
+                    if not fuzzy_candidates:
+                        reason = "no_candidate"
+                    else:
+                        best, best_score, tie_count = _best_fuzzy_candidate(
+                            school_name_norm=school_name_norm,
+                            candidates=fuzzy_candidates,
+                        )
+                        if best is None:
+                            reason = "no_candidate"
+                        elif best_score < threshold:
+                            reason = "low_confidence"
+                            confidence = best_score
+                        elif tie_count > 1:
+                            reason = "fuzzy_conflict"
+                            confidence = best_score
+                        else:
+                            candidate = best
+                            method = "name_state_fuzzy"
+                            confidence = best_score
+
+        if candidate is None:
+            if reason in {"domain_conflict", "name_state_conflict", "fuzzy_conflict"}:
+                skipped_conflict += 1
+            elif reason in {"low_confidence"}:
+                skipped_low_confidence += 1
+            elif reason in {"cross_state_candidate", "missing_school_state"}:
+                skipped_cross_state += 1
+            else:
+                skipped_no_candidate += 1
+            if len(skipped_samples) < max_samples:
+                skipped_samples.append(
+                    {
+                        "school_id": str(school.id),
+                        "school_name": school.name,
+                        "state": school.state,
+                        "reason": reason or "no_candidate",
+                    }
+                )
+            continue
+
+        if dry_run:
+            mapped += 1
+            match_method_counts[method] += 1
+            if len(mapped_samples) < max_samples:
+                mapped_samples.append(
+                    {
+                        "school_id": str(school.id),
+                        "school_name": school.name,
+                        "state": school.state,
+                        "external_id": str(candidate.get("external_id") or ""),
+                        "match_method": method,
+                        "confidence": round(confidence, 4),
+                    }
+                )
+            continue
+
+        upserted = await _upsert_school_external_id(
+            session,
+            school_id=school.id,
+            provider="ipeds",
+            external_id=str(candidate.get("external_id") or ""),
+            is_primary=(method != "name_state_fuzzy"),
+            match_method=method,
+            confidence=confidence,
+            metadata={
+                "run_id": run_id,
+                "source": "ipeds_institution_mapping_cli",
+                "school_name": candidate.get("school_name"),
+                "state": candidate.get("state"),
+            },
+        )
+        if upserted:
+            mapped += 1
+            match_method_counts[method] += 1
+            if len(mapped_samples) < max_samples:
+                mapped_samples.append(
+                    {
+                        "school_id": str(school.id),
+                        "school_name": school.name,
+                        "state": school.state,
+                        "external_id": str(candidate.get("external_id") or ""),
+                        "match_method": method,
+                        "confidence": round(confidence, 4),
+                    }
+                )
+        else:
+            skipped_conflict += 1
+            if len(skipped_samples) < max_samples:
+                skipped_samples.append(
+                    {
+                        "school_id": str(school.id),
+                        "school_name": school.name,
+                        "state": school.state,
+                        "reason": "external_id_conflict",
+                        "external_id": str(candidate.get("external_id") or ""),
+                    }
+                )
+
+    await session.flush()
+    return {
+        "status": "ok",
+        "run_id": run_id,
+        "dry_run": bool(dry_run),
+        "fuzzy_threshold": threshold,
+        "institutions_read": len(institutions),
+        "schools_scanned": len(schools),
+        "mapped": mapped,
+        "skipped_conflict": skipped_conflict,
+        "skipped_low_confidence": skipped_low_confidence,
+        "skipped_existing": skipped_existing,
+        "skipped_cross_state": skipped_cross_state,
+        "skipped_no_candidate": skipped_no_candidate,
+        "match_method_counts": dict(match_method_counts),
+        "samples": {
+            "mapped": mapped_samples,
+            "skipped": skipped_samples,
+        },
+        "school_scope_size": len(scoped_names),
     }
 
 
@@ -943,6 +1475,59 @@ async def _upsert_school_external_id(
     session.add(row)
     await session.flush()
     return True
+
+
+def _normalize_map_name(value: str | None) -> str:
+    text = str(value or "").strip().lower()
+    return _MAP_NON_WORD_RE.sub(" ", text).strip()
+
+
+def _iter_map_tokens(value: str | None) -> set[str]:
+    tokens: set[str] = set()
+    for token in _normalize_map_name(value).split():
+        if len(token) < 3:
+            continue
+        if token in _MAP_FUZZY_STOPWORDS:
+            continue
+        tokens.add(token)
+    return tokens
+
+
+def _normalize_map_state(value: str | None) -> str:
+    return str(value or "").strip().upper()
+
+
+def _normalize_map_domain(value: str | None) -> str:
+    url = str(value or "").strip().lower()
+    if not url:
+        return ""
+    parsed = urlparse(url if "://" in url else f"https://{url}")
+    host = (parsed.netloc or parsed.path or "").strip().lower()
+    if host.startswith("www."):
+        host = host[4:]
+    return host
+
+
+def _best_fuzzy_candidate(
+    *,
+    school_name_norm: str,
+    candidates: list[dict[str, Any]],
+) -> tuple[dict[str, Any] | None, float, int]:
+    best: dict[str, Any] | None = None
+    best_score = -1.0
+    tie_count = 0
+    for row in candidates:
+        candidate_name = _normalize_map_name(row.get("school_name"))
+        if not candidate_name:
+            continue
+        score = SequenceMatcher(None, school_name_norm, candidate_name).ratio()
+        if score > best_score + 1e-9:
+            best = row
+            best_score = score
+            tie_count = 1
+        elif abs(score - best_score) <= 1e-9:
+            tie_count += 1
+    return best, max(best_score, 0.0), tie_count
 
 
 def _build_official_sources():
@@ -1532,6 +2117,45 @@ async def _to_quarantine(
             metadata_=metadata or {},
         )
     )
+
+
+def _parse_program_metadata(description: str | None) -> dict[str, Any]:
+    raw = (description or "").strip()
+    if not raw:
+        return {}
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _infer_program_department(*, cip_code: str, cip_title: str) -> str:
+    title = str(cip_title or "").strip().lower()
+    prefix = str(cip_code or "").strip().split(".", 1)[0]
+    if any(token in title for token in ("computer", "software", "data science", "informatics", "cyber")):
+        return "Computer Science"
+    if any(token in title for token in ("engineering", "mechanical", "electrical", "civil", "aerospace")):
+        return "Engineering"
+    if any(token in title for token in ("economics", "econometrics", "finance", "business", "accounting")):
+        return "Economics and Business"
+    if any(token in title for token in ("psychology", "counseling", "behavior")):
+        return "Psychology"
+    if any(token in title for token in ("biology", "biological", "biochem", "neuroscience", "health")):
+        return "Biology and Life Sciences"
+    if prefix == "11":
+        return "Computer Science"
+    if prefix == "14":
+        return "Engineering"
+    if prefix in {"45", "52"}:
+        return "Economics and Business"
+    if prefix == "42":
+        return "Psychology"
+    if prefix in {"26", "51"}:
+        return "Biology and Life Sciences"
+    if prefix in {"27", "40"}:
+        return "Math and Physical Sciences"
+    return "General Studies"
 
 
 def _canonical_bucket(value_text: str, value_numeric: float | None) -> str:
