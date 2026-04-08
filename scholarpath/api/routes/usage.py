@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
 from scholarpath.api.deps import SessionDep
@@ -45,11 +45,21 @@ class UsageEntry(BaseModel):
 
 class LLMEndpointWindowStats(BaseModel):
     index: int
+    endpoint_id: str
     key_id: str
     requests_total: int
     errors_total: int
     rate_limit_total: int
     timeout_total: int
+    same_task_retry_triggered: int = 0
+    same_task_retry_success: int = 0
+    same_task_retry_failed: int = 0
+    preferred_route_hits: int = 0
+    policy_applied_counts_by_method: dict[str, int] = Field(default_factory=dict)
+    required_output_missing: int = 0
+    parse_fail: int = 0
+    non_json: int = 0
+    schema_mismatch: int = 0
     requests_window: float
     errors_window: float
     rate_limit_window: float
@@ -60,6 +70,8 @@ class LLMEndpointWindowStats(BaseModel):
 
 class LLMEndpointHealth(BaseModel):
     window_seconds: int
+    active_mode: str | None = None
+    active_policy: str | None = None
     observer_enabled: bool
     observer_error: str | None = None
     endpoints: list[LLMEndpointWindowStats]

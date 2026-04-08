@@ -27,7 +27,7 @@ class TokenUsage(UUIDPrimaryKey, Base):
     provider: Mapped[str] = mapped_column(String(30), default="zai")  # zai / gemini
 
     # What triggered the call
-    caller: Mapped[str] = mapped_column(String(120))  # e.g. "chat.agent", "search.decomposer"
+    caller: Mapped[str] = mapped_column(String(120))  # e.g. "chat.intent_classification", "search.web_extract"
     method: Mapped[str] = mapped_column(String(30))  # complete / complete_json / stream / embed
 
     # Token counts

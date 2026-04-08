@@ -129,7 +129,12 @@ async def run_what_if(
             ),
         },
     ]
-    explanation = await llm.complete(messages, temperature=0.5, max_tokens=768)
+    explanation = await llm.complete(
+        messages,
+        temperature=0.5,
+        max_tokens=768,
+        caller="simulation.what_if.explain",
+    )
 
     logger.info(
         "What-if for student %s / school %s: %d interventions",
@@ -204,7 +209,12 @@ async def compare_scenarios(
             ),
         },
     ]
-    summary = await llm.complete(messages, temperature=0.5, max_tokens=768)
+    summary = await llm.complete(
+        messages,
+        temperature=0.5,
+        max_tokens=768,
+        caller="simulation.compare_scenarios.summary",
+    )
 
     return {
         "scenarios": results,

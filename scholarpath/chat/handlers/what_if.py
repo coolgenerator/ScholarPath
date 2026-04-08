@@ -211,7 +211,12 @@ async def _parse_scenario(
     ]
 
     try:
-        result = await llm.complete_json(messages, temperature=0.1, max_tokens=256)
+        result = await llm.complete_json(
+            messages,
+            temperature=0.1,
+            max_tokens=256,
+            caller="chat.what_if.parse",
+        )
         return result
     except Exception:
         logger.warning("Scenario parsing failed", exc_info=True)

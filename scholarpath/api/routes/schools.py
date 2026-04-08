@@ -249,7 +249,11 @@ async def lookup_school(
     ]
 
     try:
-        data = await llm.complete_json(prompt_messages, temperature=0.2)
+        data = await llm.complete_json(
+            prompt_messages,
+            temperature=0.2,
+            caller="chat.extract_school",
+        )
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

@@ -557,16 +557,25 @@ class TestUsageAPI:
             async def endpoint_health(self, *, window_seconds: int = 60) -> dict:
                 return {
                     "window_seconds": window_seconds,
+                    "active_mode": "beecode",
+                    "active_policy": "default",
                     "observer_enabled": True,
                     "observer_error": None,
                     "endpoints": [
                         {
                             "index": 0,
+                            "endpoint_id": "bee-1",
                             "key_id": "abc123",
                             "requests_total": 42,
                             "errors_total": 2,
                             "rate_limit_total": 1,
                             "timeout_total": 0,
+                            "same_task_retry_triggered": 1,
+                            "same_task_retry_success": 1,
+                            "same_task_retry_failed": 0,
+                            "preferred_route_hits": 8,
+                            "policy_applied_counts_by_method": {"complete_json": 12},
+                            "required_output_missing": 0,
                             "requests_window": 10.0,
                             "errors_window": 1.0,
                             "rate_limit_window": 1.0,
@@ -586,7 +595,11 @@ class TestUsageAPI:
         assert resp.status_code == 200, resp.text
         payload = resp.json()
         assert payload["window_seconds"] == 120
+        assert payload["active_mode"] == "beecode"
+        assert payload["active_policy"] == "default"
         assert payload["observer_enabled"] is True
+        assert payload["endpoints"][0]["endpoint_id"] == "bee-1"
+        assert payload["endpoints"][0]["preferred_route_hits"] == 8
         assert payload["endpoints"][0]["requests_total"] == 42
 
 

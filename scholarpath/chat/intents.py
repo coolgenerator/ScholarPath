@@ -67,7 +67,12 @@ async def classify_intent(
     ]
 
     try:
-        result = await llm.complete_json(messages, temperature=0.1, max_tokens=256)
+        result = await llm.complete_json(
+            messages,
+            temperature=0.1,
+            max_tokens=256,
+            caller="chat.intent_classification",
+        )
         raw_intent = result.get("intent", "general")
         confidence = float(result.get("confidence", 0.5))
 
