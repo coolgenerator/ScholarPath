@@ -1,4 +1,4 @@
-"""CLI for advisor orchestrator gold evaluation."""
+"""CLI for recommendation gold-set live evaluation."""
 
 from __future__ import annotations
 
@@ -6,10 +6,11 @@ import argparse
 import asyncio
 import json
 from pathlib import Path
+from typing import Any
 
-from scholarpath.evals.advisor_orchestrator_live import (
+from scholarpath.evals.recommendation_gold_live import (
     DEFAULT_OUTPUT_DIR,
-    run_advisor_orchestrator_eval,
+    run_recommendation_gold_eval,
 )
 
 
@@ -20,20 +21,10 @@ def _parse_csv(raw: str) -> list[str] | None:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run advisor orchestrator eval (mini/full, optional re-edit, optional judge).",
+        description="Run recommendation gold eval (persona mini set + optional LLM judge).",
     )
-    parser.add_argument("--include-reedit", action="store_true", default=False)
-    parser.add_argument("--sample-size", type=int, default=40)
+    parser.add_argument("--sample-size", type=int, default=30)
     parser.add_argument("--case-ids", default="")
-    parser.add_argument("--reedit-sample-size", type=int, default=None)
-    parser.add_argument("--reedit-case-ids", default="")
-    parser.add_argument(
-        "--execution-lane",
-        choices=["stub", "real", "both"],
-        default="both",
-    )
-    parser.add_argument("--warning-gate", action="store_true", default=True)
-    parser.add_argument("--no-warning-gate", dest="warning_gate", action="store_false")
     parser.add_argument("--judge-enabled", action="store_true", default=False)
     parser.add_argument("--judge-concurrency", type=int, default=2)
     parser.add_argument("--judge-temperature", type=float, default=0.1)
@@ -44,21 +35,16 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-async def _run(args: argparse.Namespace) -> dict:
-    payload = await run_advisor_orchestrator_eval(
-        include_reedit=args.include_reedit,
+async def _run(args: argparse.Namespace) -> dict[str, Any]:
+    payload = await run_recommendation_gold_eval(
+        output_dir=Path(args.output_dir),
         sample_size=args.sample_size,
         case_ids=_parse_csv(args.case_ids),
-        reedit_sample_size=args.reedit_sample_size,
-        reedit_case_ids=_parse_csv(args.reedit_case_ids),
-        execution_lane=args.execution_lane,
-        warning_gate=args.warning_gate,
         judge_enabled=args.judge_enabled,
         judge_concurrency=args.judge_concurrency,
         judge_temperature=args.judge_temperature,
         judge_max_tokens=args.judge_max_tokens,
         max_rpm_total=args.max_rpm_total,
-        output_dir=Path(args.output_dir),
         eval_run_id=args.eval_run_id or None,
     )
     out = payload.to_dict()
@@ -74,3 +60,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

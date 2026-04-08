@@ -127,7 +127,12 @@ async def evaluate_school_fit(
         {"role": "system", "content": SCHOOL_EVALUATION_PROMPT},
         {"role": "user", "content": user_prompt},
     ]
-    reasoning = await llm.complete(messages, temperature=0.5, max_tokens=1024)
+    reasoning = await llm.complete(
+        messages,
+        temperature=0.5,
+        max_tokens=1024,
+        caller="evaluation.school_fit.reasoning",
+    )
 
     # --- Persist ---
     evaluation = SchoolEvaluation(
@@ -292,6 +297,7 @@ async def generate_strategy(
             "timeline": "string",
         },
         temperature=0.4,
+        caller="evaluation.strategy.generate",
     )
 
     logger.info("Generated strategy for student %s", student_id)

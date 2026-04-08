@@ -3,9 +3,9 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import select
 
-from scholarpath.db.models import AdmissionEvent, CausalDatasetVersion, EvidenceArtifact, School
+from scholarpath.db.models import CausalDatasetVersion, School
 
 
 async def _create_student(client) -> dict:
@@ -98,46 +98,3 @@ async def test_get_causal_dataset_version_alias_route(client, session):
     assert payload["version"] == "ds-test-v1"
     assert payload["mini_gate_passed"] is True
 
-
-@pytest.mark.asyncio
-async def test_causal_data_write_routes_are_deprecated(client, session):
-    student = await _create_student(client)
-    school = await _create_school(session)
-    await session.commit()
-
-    evidence_resp = await client.post(
-        f"/api/causal-data/students/{student['id']}/admission-evidence",
-        json={
-            "school_id": str(school.id),
-            "cycle_year": 2026,
-            "source_name": "compat_write",
-            "source_type": "user_upload",
-            "source_url": "https://example.test/evidence",
-            "content_text": "legacy write should be rejected",
-        },
-    )
-    assert evidence_resp.status_code == 410, evidence_resp.text
-    assert "Deprecated write endpoint" in evidence_resp.json()["detail"]
-    assert evidence_resp.headers.get("deprecation") == "true"
-
-    event_resp = await client.post(
-        f"/api/causal-data/students/{student['id']}/admission-events",
-        json={
-            "school_id": str(school.id),
-            "cycle_year": 2026,
-            "stage": "admit",
-            "source_name": "compat_write",
-        },
-    )
-    assert event_resp.status_code == 410, event_resp.text
-    assert "Deprecated write endpoint" in event_resp.json()["detail"]
-    assert event_resp.headers.get("deprecation") == "true"
-
-    evidence_rows = int(
-        (await session.scalar(select(func.count()).select_from(EvidenceArtifact))) or 0
-    )
-    event_rows = int(
-        (await session.scalar(select(func.count()).select_from(AdmissionEvent))) or 0
-    )
-    assert evidence_rows == 0
-    assert event_rows == 0

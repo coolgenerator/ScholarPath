@@ -96,13 +96,16 @@ ScholarPath helps Chinese students navigate US undergraduate admissions through 
 |-------|-----------|
 | Frontend | React 18, Vite, TailwindCSS 4, React Router, react-markdown |
 | Backend | Python 3.12, FastAPI, WebSocket, SQLAlchemy 2.0 (async) |
-| LLM | OpenAI-compatible API (gpt-5.4-mini via xcode.best) |
+| LLM | OpenAI-compatible gateway (policy-driven mode; structured calls via Chat Completions + JSON schema) |
 | Embeddings | Google Gemini `gemini-embedding-001` (3072-dim) |
 | Database | PostgreSQL 16 + pgvector for semantic search |
 | Cache | Redis 7 (chat memory, session state, Celery broker) |
 | Task Queue | Celery (deep_search/conflict + causal_train workers + beat) |
 | Causal Engine | networkx + numpy (DAG, Noisy-OR, do-calculus) |
 | Deploy | Docker Compose (7 services) |
+
+Architecture and gateway design reference:
+- `project/scholarpath_architecture_gateway_v2.md`
 
 ## Key Features
 
@@ -165,13 +168,16 @@ python -m pytest -n auto -q
 Copy `.env.example` to `.env` and fill in:
 
 ```
-ZAI_API_KEY=your-openai-compatible-api-key
-# Optional: load-balance requests across multiple keys
-ZAI_API_KEYS=["key-1","key-2"]
-ZAI_BASE_URL=https://api.xcode.best/v1
-ZAI_MODEL=gpt-5.4-mini
-# Per-key limiter (effective in distributed mode across app/worker)
-LLM_RATE_LIMIT_RPM=100
+LLM_GATEWAY_POLICIES_PATH=scholarpath/data/llm_gateway_policies.json
+LLM_ACTIVE_MODE=beecode
+LLM_ACTIVE_POLICY=default
+LLM_RATE_LIMIT_RPM=200
+LLM_REQUEST_TIMEOUT_SECONDS=4.5
+BEECODE_API_KEY_1=key-1
+BEECODE_API_KEY_2=key-2
+BEECODE_API_KEY_3=key-3
+XCODE_API_KEY_1=xcode-key-1
+XCODE_API_KEY_2=xcode-key-2
 # Optional: enable DeepSearch web source
 WEB_SEARCH_API_URL=
 WEB_SEARCH_API_KEY=
@@ -189,6 +195,11 @@ DEEPSEARCH_SOURCE_HTTP_CONCURRENCY=16
 DEEPSEARCH_SELF_EXTRACT_CONCURRENCY=12
 DEEPSEARCH_INTERNAL_WEBSEARCH_CONCURRENCY=8
 ```
+
+`LLM_GATEWAY_POLICIES_PATH` points to a versioned JSON policy file that defines:
+- endpoint list per mode (`base_url/model/api_key_env/rpm`)
+- caller-to-endpoint preferred routing (`route`)
+- method-level tuning (`call_defaults`, `endpoint_overrides`, `caller_overrides`)
 
 ### Real Admission Pipeline (strict mini-before-full)
 
@@ -213,6 +224,7 @@ The script enforces `Gate0 (docker+alembic+tables) -> mini gate -> full stage4 K
 | Endpoint | Description |
 |----------|-------------|
 | `WS /api/chat/chat/{sessionId}` | Real-time chat via WebSocket |
+| `POST /api/chat/route-turn` | RoutePlan-controlled one-turn execution (`route_plan + skill_id`) |
 | `GET /api/chat/history/{sessionId}` | Load chat history |
 | `GET /api/schools/` | Search & list schools |
 | `GET /api/evaluations/students/{id}/tiers` | Tiered school list |
@@ -225,8 +237,6 @@ The script enforces `Gate0 (docker+alembic+tables) -> mini gate -> full stage4 K
 | `POST /api/students/{id}/admission-evidence` | Write evidence artifact (authoritative) |
 | `POST /api/students/{id}/admission-events` | Write admission event (authoritative) |
 | `GET /api/causal/datasets/{version}` | Read causal dataset version |
-
-`/api/causal-data/*` write routes are deprecated compatibility endpoints and return `410 Gone`.
 
 ## Project Structure
 

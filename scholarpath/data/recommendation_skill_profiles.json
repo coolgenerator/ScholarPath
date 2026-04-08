@@ -1,0 +1,181 @@
+{
+  "version": "v1",
+  "default_skill_id": "recommendation.balanced",
+  "skills": {
+    "recommendation.balanced": {
+      "candidate_pool_size": 100,
+      "top_n": 15,
+      "min_results": 8,
+      "tier_confidence_min_count": 6,
+      "missing_field_trigger_threshold": 0.35,
+      "weights": {
+        "academic": 0.3,
+        "financial": 0.25,
+        "career": 0.25,
+        "life": 0.2
+      },
+      "budget_hard_gate": true,
+      "stretch_slots": 3,
+      "major_boost": 0.08,
+      "geo_boost": 0.08,
+      "risk_mode": "balanced",
+      "risk_min_tier_counts": {
+        "reach": 2,
+        "target": 4,
+        "safety": 3
+      },
+      "major_match_threshold": 0.6,
+      "major_match_min_ratio": 0.35,
+      "geo_match_threshold": 0.7,
+      "geo_match_min_ratio": 0.4,
+      "roi_career_min_mean": 0.55
+    },
+    "recommendation.budget_first": {
+      "candidate_pool_size": 100,
+      "top_n": 15,
+      "min_results": 8,
+      "tier_confidence_min_count": 5,
+      "missing_field_trigger_threshold": 0.3,
+      "weights": {
+        "academic": 0.2,
+        "financial": 0.45,
+        "career": 0.2,
+        "life": 0.15
+      },
+      "budget_hard_gate": true,
+      "stretch_slots": 3,
+      "major_boost": 0.05,
+      "geo_boost": 0.05,
+      "risk_mode": "balanced",
+      "risk_min_tier_counts": {
+        "reach": 1,
+        "target": 4,
+        "safety": 4
+      },
+      "major_match_threshold": 0.6,
+      "major_match_min_ratio": 0.3,
+      "geo_match_threshold": 0.7,
+      "geo_match_min_ratio": 0.3,
+      "roi_career_min_mean": 0.5
+    },
+    "recommendation.risk_first": {
+      "candidate_pool_size": 100,
+      "top_n": 15,
+      "min_results": 6,
+      "tier_confidence_min_count": 7,
+      "missing_field_trigger_threshold": 0.35,
+      "weights": {
+        "academic": 0.35,
+        "financial": 0.25,
+        "career": 0.2,
+        "life": 0.2
+      },
+      "budget_hard_gate": true,
+      "stretch_slots": 3,
+      "major_boost": 0.07,
+      "geo_boost": 0.06,
+      "risk_mode": "safer",
+      "risk_min_tier_counts": {
+        "reach": 1,
+        "target": 3,
+        "safety": 2
+      },
+      "major_match_threshold": 0.6,
+      "major_match_min_ratio": 0.3,
+      "geo_match_threshold": 0.7,
+      "geo_match_min_ratio": 0.3,
+      "roi_career_min_mean": 0.5
+    },
+    "recommendation.major_first": {
+      "candidate_pool_size": 110,
+      "top_n": 15,
+      "min_results": 6,
+      "tier_confidence_min_count": 7,
+      "missing_field_trigger_threshold": 0.25,
+      "weights": {
+        "academic": 0.4,
+        "financial": 0.15,
+        "career": 0.3,
+        "life": 0.15
+      },
+      "budget_hard_gate": true,
+      "stretch_slots": 3,
+      "major_boost": 0.16,
+      "geo_boost": 0.05,
+      "risk_mode": "balanced",
+      "risk_min_tier_counts": {
+        "reach": 2,
+        "target": 4,
+        "safety": 3
+      },
+      "major_match_threshold": 0.5,
+      "major_match_min_ratio": 0.2,
+      "geo_match_threshold": 0.7,
+      "geo_match_min_ratio": 0.3,
+      "roi_career_min_mean": 0.55
+    },
+    "recommendation.geo_first": {
+      "candidate_pool_size": 110,
+      "top_n": 15,
+      "min_results": 6,
+      "tier_confidence_min_count": 7,
+      "missing_field_trigger_threshold": 0.25,
+      "weights": {
+        "academic": 0.25,
+        "financial": 0.2,
+        "career": 0.15,
+        "life": 0.4
+      },
+      "budget_hard_gate": true,
+      "stretch_slots": 3,
+      "major_boost": 0.06,
+      "geo_boost": 0.16,
+      "risk_mode": "balanced",
+      "risk_min_tier_counts": {
+        "reach": 2,
+        "target": 4,
+        "safety": 3
+      },
+      "major_match_threshold": 0.6,
+      "major_match_min_ratio": 0.3,
+      "geo_match_threshold": 0.7,
+      "geo_match_min_ratio": 0.2,
+      "roi_career_min_mean": 0.55
+    },
+    "recommendation.roi_first": {
+      "candidate_pool_size": 120,
+      "top_n": 15,
+      "min_results": 6,
+      "tier_confidence_min_count": 8,
+      "missing_field_trigger_threshold": 0.3,
+      "weights": {
+        "academic": 0.15,
+        "financial": 0.3,
+        "career": 0.45,
+        "life": 0.1
+      },
+      "budget_hard_gate": true,
+      "stretch_slots": 3,
+      "major_boost": 0.08,
+      "geo_boost": 0.06,
+      "risk_mode": "balanced",
+      "risk_min_tier_counts": {
+        "reach": 2,
+        "target": 4,
+        "safety": 3
+      },
+      "major_match_threshold": 0.6,
+      "major_match_min_ratio": 0.35,
+      "geo_match_threshold": 0.7,
+      "geo_match_min_ratio": 0.3,
+      "roi_career_min_mean": 0.45
+    }
+  },
+  "bucket_to_skill": {
+    "budget_first": "recommendation.budget_first",
+    "risk_first": "recommendation.risk_first",
+    "major_first": "recommendation.major_first",
+    "geo_first": "recommendation.geo_first",
+    "roi_first": "recommendation.roi_first"
+  }
+}

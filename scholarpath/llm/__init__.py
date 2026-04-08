@@ -1,6 +1,6 @@
 """ScholarPath LLM integration layer.
 
-Provides a Z.AI / OpenAI-compatible async client and prompt templates
+Provides policy-driven OpenAI-compatible gateway client + embeddings
 for profile extraction, intent classification, query decomposition,
 entity alignment, conflict detection, school evaluation, strategy
 advice, causal narrative, and Go/No-Go reporting.

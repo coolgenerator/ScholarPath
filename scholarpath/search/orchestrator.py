@@ -143,7 +143,10 @@ class DeepSearchOrchestrator:
                     search_api_key=search_api_key,
                 )
 
-        self._internal_web_source = InternalWebSearchSource(self._llm)
+        self._internal_web_source = InternalWebSearchSource(
+            search_api_url=search_api_url,
+            search_api_key=search_api_key,
+        )
         self._aligner = EntityAligner(self._llm)
         self._detector = ConflictDetector(self._llm)
 
@@ -164,6 +167,7 @@ class DeepSearchOrchestrator:
         self._inflight_queries: dict[tuple[str, str, tuple[str, ...], str], asyncio.Task] = {}
         self._source_runtime_stats: dict[str, _SourceRuntimeStats] = {}
         self._source_runtime_lock = asyncio.Lock()
+        self._source_status_codes: dict[str, dict[str, Any]] = {}
         self._source_value_scorer = SourceValueScorer()
         self._last_source_scores: dict[str, float] = {}
         self._source_policy_state: dict[str, dict[str, Any]] = {}
@@ -212,6 +216,7 @@ class DeepSearchOrchestrator:
 
         self._inflight_queries = {}
         self._source_runtime_stats = {}
+        self._source_status_codes = {}
         self._source_policy_state = self._load_source_policy_state()
         effective_sources = {
             name: source
@@ -324,6 +329,8 @@ class DeepSearchOrchestrator:
             metadata["internal_websearch_skipped_reason"] = "source_policy_fused"
 
         metadata["internal_websearch_calls"] = internal_websearch_calls
+        if self._source_status_codes:
+            metadata["source_status_codes"] = dict(self._source_status_codes)
 
         raw_fact_count = len(db_results) + len(wave_b_results) + len(wave_c_results)
         all_results = self._merger.merge(db_results + wave_b_results + wave_c_results)
@@ -499,6 +506,13 @@ class DeepSearchOrchestrator:
                         results = await source.search(plan.school_name, fields=plan.fields)
                 else:
                     results = await source.search(plan.school_name, fields=plan.fields)
+                status_code = getattr(source, "last_status_code", None)
+                if isinstance(status_code, str) and status_code.strip():
+                    status_detail = getattr(source, "last_status_detail", None)
+                    self._source_status_codes[plan.source_name] = {
+                        "status_code": status_code.strip(),
+                        "detail": str(status_detail) if status_detail is not None else None,
+                    }
         except Exception:
             failed = True
             logger.exception(

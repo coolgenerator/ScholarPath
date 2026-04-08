@@ -9,7 +9,7 @@ import logging
 import re
 import time
 from contextvars import ContextVar, Token
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from collections import deque
 from collections.abc import AsyncGenerator
 from typing import Any, Protocol
@@ -22,7 +22,7 @@ from tenacity import (
     wait_exponential,
 )
 
-from scholarpath.config import settings
+from scholarpath.config import LLMGatewayPolicyConfig, ResolvedLLMEndpointConfig, settings
 
 logger = logging.getLogger(__name__)
 
@@ -303,8 +303,8 @@ _RETRY = retry(
         (openai.APIConnectionError, openai.APITimeoutError, openai.RateLimitError,
          openai.InternalServerError),
     ),
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=1, max=10),
+    stop=stop_after_attempt(2),
+    wait=wait_exponential(multiplier=0.2, min=0.2, max=1.0),
     reraise=True,
 )
 
@@ -313,6 +313,18 @@ _RETRIABLE_EXCEPTIONS = (
     openai.APITimeoutError,
     openai.RateLimitError,
     openai.InternalServerError,
+)
+
+_SAME_TASK_RETRY_DELAY_SECONDS = 5.0
+_TIMEOUT_RETRY_DELAY_SECONDS = 0.4
+_PROVIDER_LIMIT_TEXT_HINTS = (
+    "too many pending requests",
+    "request reached limit",
+    "request has reached limit",
+    "request limit reached",
+    "request达到上限",
+    "请求达到上限",
+    "达到上限",
 )
 
 _CALLER_SUFFIX: ContextVar[str | None] = ContextVar(
@@ -324,33 +336,50 @@ _CALLER_SUFFIX: ContextVar[str | None] = ContextVar(
 @dataclass
 class _Endpoint:
     index: int
+    endpoint_id: str
+    model: str
     key_id: str
     client: openai.AsyncOpenAI
     rate_limiter: _AcquireLimiter
+    stream_json_default: bool
+    json_transport_hints_default: bool
     sent_requests: int = 0
     error_requests: int = 0
     rate_limit_errors: int = 0
     timeout_errors: int = 0
     cooldown_until: float = 0.0
+    same_task_retry_triggered: int = 0
+    same_task_retry_success: int = 0
+    same_task_retry_failed: int = 0
+    preferred_route_hits: int = 0
+    required_output_missing: int = 0
+    parse_fail: int = 0
+    non_json: int = 0
+    schema_mismatch: int = 0
+    policy_applied_counts_by_method: dict[str, int] = field(default_factory=dict)
 
 
 class LLMClient:
-    """Z.AI LLM client using OpenAI-compatible API with token usage tracking."""
+    """Policy-driven multi-endpoint LLM gateway client."""
 
     def __init__(
         self,
-        api_key: str,
-        base_url: str,
-        model: str,
-        api_keys: list[str] | None = None,
-        max_rpm: int | None = None,
+        *,
+        mode_name: str,
+        policy_name: str,
+        policy: LLMGatewayPolicyConfig,
+        endpoints: list[ResolvedLLMEndpointConfig],
     ) -> None:
-        self._model = model
-        max_rpm_per_endpoint = max_rpm or settings.LLM_RATE_LIMIT_RPM
-
-        keys = [k for k in (api_keys or [api_key]) if k]
-        if not keys:
-            keys = [api_key]
+        self._mode_name = mode_name
+        self._policy_name = policy_name
+        self._policy = policy
+        self._default_model = endpoints[0].model if endpoints else ""
+        self._request_timeout_seconds = max(
+            1.0,
+            float(getattr(settings, "LLM_REQUEST_TIMEOUT_SECONDS", 4.5) or 4.5),
+        )
+        if not endpoints:
+            raise RuntimeError("No LLM endpoints configured for active mode")
 
         redis_url = (settings.REDIS_URL or "").strip()
         self._observer: _RedisEndpointObserver | None = None
@@ -365,25 +394,52 @@ class LLMClient:
                     exc,
                 )
         self._endpoints: list[_Endpoint] = []
-        for i, key in enumerate(keys):
-            key_id = _api_key_fingerprint(key)
+        for i, endpoint_cfg in enumerate(endpoints):
+            key_id = _api_key_fingerprint(endpoint_cfg.api_key)
+            base_url_lower = endpoint_cfg.base_url.strip().lower()
+            stream_json_default = (
+                "api.xcode.best" in base_url_lower
+                or "beecode.cc" in base_url_lower
+            )
+            json_transport_hints_default = "beecode.cc" not in base_url_lower
+            default_headers: dict[str, str] | None = None
+            if "beecode.cc" in base_url_lower:
+                default_headers = {
+                    "User-Agent": "scholarpath-llm-client/1.0",
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                }
+
+            client_kwargs: dict[str, Any] = {
+                "api_key": endpoint_cfg.api_key,
+                "base_url": endpoint_cfg.base_url,
+            }
+            if default_headers is not None:
+                client_kwargs["default_headers"] = default_headers
             self._endpoints.append(
                 _Endpoint(
                     index=i,
+                    endpoint_id=endpoint_cfg.endpoint_id,
+                    model=endpoint_cfg.model,
                     key_id=key_id,
-                    client=openai.AsyncOpenAI(api_key=key, base_url=base_url),
+                    client=openai.AsyncOpenAI(**client_kwargs),
                     rate_limiter=_SmartRateLimiter(
-                        max_rpm=max_rpm_per_endpoint,
+                        max_rpm=max(int(endpoint_cfg.rpm), 1),
                         redis_url=redis_url,
-                        endpoint_label=f"endpoint[{i}]",
+                        endpoint_label=f"endpoint[{i}]/{endpoint_cfg.endpoint_id}",
                         api_key_fingerprint=key_id,
                     ),
+                    stream_json_default=stream_json_default,
+                    json_transport_hints_default=json_transport_hints_default,
                 ),
             )
         self._rr_cursor = 0
         self._rr_lock = asyncio.Lock()
 
-    async def _ordered_endpoints(self) -> list[_Endpoint]:
+    def _is_strict_json_caller(self, caller: str) -> bool:
+        return caller in self._policy.strict_json_callers
+
+    async def _ordered_endpoints(self, *, caller: str | None = None) -> list[_Endpoint]:
         if not self._endpoints:
             raise RuntimeError("No LLM endpoints configured")
         async with self._rr_lock:
@@ -393,10 +449,47 @@ class LLMClient:
             self._endpoints[(start + i) % len(self._endpoints)]
             for i in range(len(self._endpoints))
         ]
+        preferred_endpoint_id = self._policy.route.get((caller or "").strip())
+        if preferred_endpoint_id:
+            preferred = next(
+                (endpoint for endpoint in ordered if endpoint.endpoint_id == preferred_endpoint_id),
+                None,
+            )
+            if preferred is not None:
+                preferred.preferred_route_hits += 1
+                ordered = [preferred] + [
+                    endpoint
+                    for endpoint in ordered
+                    if endpoint.endpoint_id != preferred_endpoint_id
+                ]
+
         now = time.monotonic()
         ready = [endpoint for endpoint in ordered if endpoint.cooldown_until <= now]
         cooling = [endpoint for endpoint in ordered if endpoint.cooldown_until > now]
         return ready + cooling
+
+    def _resolve_method_policy(
+        self,
+        *,
+        method: str,
+        caller: str,
+        endpoint: _Endpoint,
+    ) -> dict[str, Any]:
+        merged: dict[str, Any] = {}
+        defaults = self._policy.call_defaults.get(method, {})
+        endpoint_overrides = (
+            self._policy.endpoint_overrides.get(endpoint.endpoint_id, {}).get(method, {})
+        )
+        caller_overrides = (
+            self._policy.caller_overrides.get(caller, {}).get(method, {})
+        )
+        _deep_merge_dict(merged, defaults)
+        _deep_merge_dict(merged, endpoint_overrides)
+        _deep_merge_dict(merged, caller_overrides)
+        endpoint.policy_applied_counts_by_method[method] = (
+            endpoint.policy_applied_counts_by_method.get(method, 0) + 1
+        )
+        return merged
 
     @staticmethod
     def _classify_error_kind(exc: Exception) -> str:
@@ -413,6 +506,15 @@ class LLMClient:
         if error_kind == "timeout":
             return 1.0
         return 0.4
+
+    @staticmethod
+    def _is_provider_limit_retry_error(exc: Exception) -> bool:
+        if not isinstance(exc, openai.RateLimitError):
+            return False
+        message = str(exc or "").strip().lower()
+        if not message:
+            return False
+        return any(token in message for token in _PROVIDER_LIMIT_TEXT_HINTS)
 
     async def _record_endpoint_outcome(
         self,
@@ -455,32 +557,26 @@ class LLMClient:
     async def _chat_completion_with_failover(
         self,
         *,
-        messages: list[dict[str, str]],
-        temperature: float,
-        max_tokens: int,
-        response_format: dict[str, Any] | None = None,
-        stream: bool = False,
-    ) -> tuple[_Endpoint, Any]:
+        method: str,
+        caller: str,
+        payload_builder: Any,
+    ) -> tuple[_Endpoint, Any, dict[str, Any], dict[str, Any]]:
         last_exc: Exception | None = None
 
-        for endpoint in await self._ordered_endpoints():
+        for endpoint in await self._ordered_endpoints(caller=caller):
             attempt_t0 = time.monotonic()
+            method_policy = self._resolve_method_policy(
+                method=method,
+                caller=caller,
+                endpoint=endpoint,
+            )
+            payload: dict[str, Any] = payload_builder(endpoint, method_policy)
             try:
                 if endpoint.cooldown_until > time.monotonic():
                     await asyncio.sleep(
                         min(max(endpoint.cooldown_until - time.monotonic(), 0.0), 0.2),
                     )
                 await endpoint.rate_limiter.acquire()
-                payload: dict[str, Any] = {
-                    "model": self._model,
-                    "messages": messages,
-                    "temperature": temperature,
-                    "max_tokens": max_tokens,
-                    "stream": stream,
-                }
-                if response_format is not None:
-                    payload["response_format"] = response_format
-
                 response = await endpoint.client.chat.completions.create(**payload)
                 await self._record_endpoint_outcome(
                     endpoint=endpoint,
@@ -488,8 +584,139 @@ class LLMClient:
                     error_kind=None,
                     latency_ms=int((time.monotonic() - attempt_t0) * 1000),
                 )
-                return endpoint, response
+                return endpoint, response, method_policy, payload
             except _RETRIABLE_EXCEPTIONS as exc:
+                if self._is_provider_limit_retry_error(exc):
+                    endpoint.same_task_retry_triggered += 1
+                    await self._record_endpoint_outcome(
+                        endpoint=endpoint,
+                        ok=False,
+                        error_kind="rate_limit",
+                        latency_ms=int((time.monotonic() - attempt_t0) * 1000),
+                    )
+                    logger.warning(
+                        "same_task_retry_triggered endpoint[%d] key=%s op=chat wait=%.1fs reason=%s",
+                        endpoint.index,
+                        endpoint.key_id,
+                        _SAME_TASK_RETRY_DELAY_SECONDS,
+                        exc,
+                    )
+                    await asyncio.sleep(_SAME_TASK_RETRY_DELAY_SECONDS)
+                    retry_t0 = time.monotonic()
+                    try:
+                        await endpoint.rate_limiter.acquire()
+                        response = await endpoint.client.chat.completions.create(**payload)
+                        endpoint.same_task_retry_success += 1
+                        await self._record_endpoint_outcome(
+                            endpoint=endpoint,
+                            ok=True,
+                            error_kind=None,
+                            latency_ms=int((time.monotonic() - retry_t0) * 1000),
+                        )
+                        logger.info(
+                            "same_task_retry_success endpoint[%d] key=%s op=chat",
+                            endpoint.index,
+                            endpoint.key_id,
+                        )
+                        return endpoint, response, method_policy, payload
+                    except _RETRIABLE_EXCEPTIONS as retry_exc:
+                        endpoint.same_task_retry_failed += 1
+                        last_exc = retry_exc
+                        retry_kind = self._classify_error_kind(retry_exc)
+                        await self._record_endpoint_outcome(
+                            endpoint=endpoint,
+                            ok=False,
+                            error_kind=retry_kind,
+                            latency_ms=int((time.monotonic() - retry_t0) * 1000),
+                        )
+                        logger.warning(
+                            "same_task_retry_failed endpoint[%d] key=%s op=chat kind=%s, trying next endpoint: %s",
+                            endpoint.index,
+                            endpoint.key_id,
+                            retry_kind,
+                            retry_exc,
+                        )
+                        continue
+                    except Exception:
+                        endpoint.same_task_retry_failed += 1
+                        await self._record_endpoint_outcome(
+                            endpoint=endpoint,
+                            ok=False,
+                            error_kind="other",
+                            latency_ms=int((time.monotonic() - retry_t0) * 1000),
+                        )
+                        logger.warning(
+                            "same_task_retry_failed endpoint[%d] key=%s op=chat kind=other",
+                            endpoint.index,
+                            endpoint.key_id,
+                        )
+                        raise
+
+                if isinstance(exc, openai.APITimeoutError):
+                    endpoint.same_task_retry_triggered += 1
+                    await self._record_endpoint_outcome(
+                        endpoint=endpoint,
+                        ok=False,
+                        error_kind="timeout",
+                        latency_ms=int((time.monotonic() - attempt_t0) * 1000),
+                    )
+                    logger.warning(
+                        "same_task_retry_triggered endpoint[%d] key=%s op=chat wait=%.1fs reason=timeout",
+                        endpoint.index,
+                        endpoint.key_id,
+                        _TIMEOUT_RETRY_DELAY_SECONDS,
+                    )
+                    await asyncio.sleep(_TIMEOUT_RETRY_DELAY_SECONDS)
+                    retry_t0 = time.monotonic()
+                    try:
+                        await endpoint.rate_limiter.acquire()
+                        response = await endpoint.client.chat.completions.create(**payload)
+                        endpoint.same_task_retry_success += 1
+                        await self._record_endpoint_outcome(
+                            endpoint=endpoint,
+                            ok=True,
+                            error_kind=None,
+                            latency_ms=int((time.monotonic() - retry_t0) * 1000),
+                        )
+                        logger.info(
+                            "same_task_retry_success endpoint[%d] key=%s op=chat reason=timeout",
+                            endpoint.index,
+                            endpoint.key_id,
+                        )
+                        return endpoint, response, method_policy, payload
+                    except _RETRIABLE_EXCEPTIONS as retry_exc:
+                        endpoint.same_task_retry_failed += 1
+                        last_exc = retry_exc
+                        retry_kind = self._classify_error_kind(retry_exc)
+                        await self._record_endpoint_outcome(
+                            endpoint=endpoint,
+                            ok=False,
+                            error_kind=retry_kind,
+                            latency_ms=int((time.monotonic() - retry_t0) * 1000),
+                        )
+                        logger.warning(
+                            "same_task_retry_failed endpoint[%d] key=%s op=chat reason=timeout kind=%s, trying next endpoint: %s",
+                            endpoint.index,
+                            endpoint.key_id,
+                            retry_kind,
+                            retry_exc,
+                        )
+                        continue
+                    except Exception:
+                        endpoint.same_task_retry_failed += 1
+                        await self._record_endpoint_outcome(
+                            endpoint=endpoint,
+                            ok=False,
+                            error_kind="other",
+                            latency_ms=int((time.monotonic() - retry_t0) * 1000),
+                        )
+                        logger.warning(
+                            "same_task_retry_failed endpoint[%d] key=%s op=chat reason=timeout kind=other",
+                            endpoint.index,
+                            endpoint.key_id,
+                        )
+                        raise
+
                 last_exc = exc
                 error_kind = self._classify_error_kind(exc)
                 await self._record_endpoint_outcome(
@@ -519,76 +746,12 @@ class LLMClient:
             raise last_exc
         raise RuntimeError("No available LLM endpoint")
 
-    async def _responses_with_failover(
-        self,
-        *,
-        input_text: str,
-        tools: list[dict[str, Any]] | None = None,
-        temperature: float = 0.1,
-        max_output_tokens: int = 1024,
-    ) -> tuple[_Endpoint, Any]:
-        last_exc: Exception | None = None
-
-        for endpoint in await self._ordered_endpoints():
-            attempt_t0 = time.monotonic()
-            try:
-                if endpoint.cooldown_until > time.monotonic():
-                    await asyncio.sleep(
-                        min(max(endpoint.cooldown_until - time.monotonic(), 0.0), 0.2),
-                    )
-                await endpoint.rate_limiter.acquire()
-                payload: dict[str, Any] = {
-                    "model": self._model,
-                    "input": input_text,
-                    "max_output_tokens": max_output_tokens,
-                    "temperature": temperature,
-                }
-                if tools is not None:
-                    payload["tools"] = tools
-
-                response = await endpoint.client.responses.create(**payload)
-                await self._record_endpoint_outcome(
-                    endpoint=endpoint,
-                    ok=True,
-                    error_kind=None,
-                    latency_ms=int((time.monotonic() - attempt_t0) * 1000),
-                )
-                return endpoint, response
-            except _RETRIABLE_EXCEPTIONS as exc:
-                last_exc = exc
-                error_kind = self._classify_error_kind(exc)
-                await self._record_endpoint_outcome(
-                    endpoint=endpoint,
-                    ok=False,
-                    error_kind=error_kind,
-                    latency_ms=int((time.monotonic() - attempt_t0) * 1000),
-                )
-                logger.warning(
-                    "LLM responses call failed on endpoint[%d] key=%s kind=%s, trying next endpoint: %s",
-                    endpoint.index,
-                    endpoint.key_id,
-                    error_kind,
-                    exc,
-                )
-                continue
-            except Exception as exc:
-                await self._record_endpoint_outcome(
-                    endpoint=endpoint,
-                    ok=False,
-                    error_kind="other",
-                    latency_ms=int((time.monotonic() - attempt_t0) * 1000),
-                )
-                raise
-
-        if last_exc is not None:
-            raise last_exc
-        raise RuntimeError("No available LLM endpoint")
-
     async def _track(
         self,
         *,
         method: str,
         caller: str,
+        model: str | None,
         usage: Any | None,
         request_id: str | None = None,
         error: str | None = None,
@@ -619,8 +782,8 @@ class LLMClient:
         caller_with_suffix = self._with_caller_suffix(caller)
 
         await record_usage(
-            model=self._model,
-            provider="zai",
+            model=model or self._default_model,
+            provider=self._mode_name,
             caller=caller_with_suffix,
             method=method,
             prompt_tokens=prompt_tokens,
@@ -665,27 +828,41 @@ class LLMClient:
         caller: str = "unknown",
     ) -> str:
         """Return a plain-text completion."""
+        caller = _require_caller(caller=caller, method="complete")
         logger.debug(
             "LLM complete  model=%s  msgs=%d  temp=%.2f  caller=%s",
-            self._model, len(messages), temperature, caller,
+            self._default_model, len(messages), temperature, caller,
         )
         t0 = time.monotonic()
         error_msg = None
         usage = None
         request_id = None
+        model_used: str | None = None
 
         try:
-            endpoint, response = await self._chat_completion_with_failover(
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
+            def _payload_builder(endpoint: _Endpoint, _method_policy: dict[str, Any]) -> dict[str, Any]:
+                return {
+                    "model": endpoint.model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "stream": False,
+                    "timeout": self._request_timeout_seconds,
+                }
+
+            endpoint, response, _method_policy, _payload = await self._chat_completion_with_failover(
+                method="complete",
+                caller=caller,
+                payload_builder=_payload_builder,
             )
             usage = response.usage
             request_id = getattr(response, "id", None)
+            model_used = endpoint.model
             text = response.choices[0].message.content or ""
             logger.debug(
-                "LLM complete  endpoint=%d  tokens=%s",
+                "LLM complete endpoint=%d endpoint_id=%s tokens=%s",
                 endpoint.index,
+                endpoint.endpoint_id,
                 usage,
             )
             return text
@@ -697,6 +874,7 @@ class LLMClient:
             await self._track(
                 method="complete",
                 caller=caller,
+                model=model_used,
                 usage=usage,
                 request_id=request_id,
                 error=error_msg,
@@ -714,38 +892,130 @@ class LLMClient:
         caller: str = "unknown",
     ) -> dict[str, Any]:
         """Return a parsed JSON dict."""
-        if schema is not None:
-            schema_instruction = (
-                "\n\nYou MUST respond with valid JSON matching this schema:\n"
-                f"```json\n{json.dumps(schema, ensure_ascii=False, indent=2)}\n```"
-            )
-            messages = _inject_schema_hint(messages, schema_instruction)
-
+        caller = _require_caller(caller=caller, method="complete_json")
         logger.debug(
             "LLM complete_json  model=%s  msgs=%d  temp=%.2f  caller=%s",
-            self._model, len(messages), temperature, caller,
+            self._default_model, len(messages), temperature, caller,
         )
         t0 = time.monotonic()
         error_msg = None
         usage = None
         request_id = None
+        model_used: str | None = None
+        strict_json_caller = self._is_strict_json_caller(caller)
 
         try:
-            endpoint, response = await self._chat_completion_with_failover(
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                response_format={"type": "json_object"},
+            def _payload_builder(endpoint: _Endpoint, method_policy: dict[str, Any]) -> dict[str, Any]:
+                response_type = _method_policy_response_format_type(method_policy)
+                if strict_json_caller:
+                    response_type = "json_schema"
+                response_format: dict[str, Any] | None = None
+                if response_type == "json_schema":
+                    schema_name = _method_policy_json_schema_name(
+                        method_policy,
+                        default=f"{caller.replace('.', '_')}_json",
+                    )
+                    schema_strict = _method_policy_json_schema_strict(
+                        method_policy,
+                        default=strict_json_caller,
+                    )
+                    if strict_json_caller:
+                        schema_strict = True
+                    response_format = _build_json_schema_response_format(
+                        schema=schema,
+                        name=schema_name,
+                        strict=schema_strict,
+                    )
+                elif response_type == "json_object":
+                    response_format = {"type": "json_object"}
+
+                stream_json_enabled = _method_policy_bool(
+                    method_policy,
+                    "stream_json_enabled",
+                    default=endpoint.stream_json_default,
+                )
+                schema_hint_enabled = _method_policy_bool(
+                    method_policy,
+                    "schema_hint_enabled",
+                    default=True,
+                )
+                json_transport_hints_enabled = _method_policy_bool(
+                    method_policy,
+                    "json_transport_hints_enabled",
+                    default=endpoint.json_transport_hints_default,
+                )
+
+                payload_messages = messages
+                if schema is not None and schema_hint_enabled:
+                    schema_instruction = (
+                        "\n\nYou MUST respond with valid JSON matching this schema:\n"
+                        f"```json\n{json.dumps(schema, ensure_ascii=False, indent=2)}\n```"
+                    )
+                    payload_messages = _inject_schema_hint(messages, schema_instruction)
+
+                payload: dict[str, Any] = {
+                    "model": endpoint.model,
+                    "messages": payload_messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "stream": stream_json_enabled,
+                    "timeout": self._request_timeout_seconds,
+                }
+                if response_format is not None:
+                    payload["response_format"] = response_format
+                if json_transport_hints_enabled:
+                    payload["extra_headers"] = {
+                        "Content-Type": "application/json",
+                        "Accept": "application/json",
+                    }
+                    payload["extra_body"] = {
+                        "response_type": "json",
+                        "content_type": "application/json",
+                    }
+                return payload
+
+            endpoint, response, method_policy, payload = await self._chat_completion_with_failover(
+                method="complete_json",
+                caller=caller,
+                payload_builder=_payload_builder,
             )
-            usage = response.usage
-            request_id = getattr(response, "id", None)
-            raw = response.choices[0].message.content or "{}"
+            model_used = endpoint.model
+
+            if bool(payload.get("stream")):
+                raw = await _collect_stream_text(response)
+            else:
+                usage = getattr(response, "usage", None)
+                request_id = getattr(response, "id", None)
+                raw = response.choices[0].message.content or "{}"
             logger.debug(
-                "LLM complete_json  endpoint=%d  tokens=%s",
+                "LLM complete_json endpoint=%d endpoint_id=%s tokens=%s",
                 endpoint.index,
+                endpoint.endpoint_id,
                 usage,
             )
-            return json.loads(raw)
+            parse_mode = "strict" if strict_json_caller else _method_policy_parse_mode(method_policy)
+            parsed = _parse_json_with_mode(raw, parse_mode=parse_mode)
+            if not parsed and (raw or "").strip():
+                endpoint.non_json += 1
+                endpoint.parse_fail += 1
+                logger.warning(
+                    "LLM complete_json non-JSON payload caller=%s parse_mode=%s",
+                    caller,
+                    parse_mode,
+                )
+                if strict_json_caller:
+                    raise ValueError(
+                        f"Strict JSON caller '{caller}' produced non-JSON output",
+                    )
+            if strict_json_caller:
+                mismatch_reason = _json_schema_mismatch_reason(parsed, schema)
+                if mismatch_reason:
+                    endpoint.schema_mismatch += 1
+                    endpoint.parse_fail += 1
+                    raise ValueError(
+                        f"Strict JSON caller '{caller}' schema mismatch: {mismatch_reason}",
+                    )
+            return parsed
         except Exception as exc:
             error_msg = str(exc)
             raise
@@ -754,6 +1024,7 @@ class LLMClient:
             await self._track(
                 method="complete_json",
                 caller=caller,
+                model=model_used,
                 usage=usage,
                 request_id=request_id,
                 error=error_msg,
@@ -770,30 +1041,39 @@ class LLMClient:
         caller: str = "unknown",
     ) -> AsyncGenerator[str, None]:
         """Yield text chunks via SSE streaming."""
+        caller = _require_caller(caller=caller, method="stream")
         logger.debug(
             "LLM stream  model=%s  msgs=%d  temp=%.2f  caller=%s",
-            self._model, len(messages), temperature, caller,
+            self._default_model, len(messages), temperature, caller,
         )
         t0 = time.monotonic()
         total_chunks = 0
         error_msg = None
         last_exc: Exception | None = None
+        model_used: str | None = None
 
         try:
-            for endpoint in await self._ordered_endpoints():
+            for endpoint in await self._ordered_endpoints(caller=caller):
                 attempt_t0 = time.monotonic()
+                self._resolve_method_policy(
+                    method="stream",
+                    caller=caller,
+                    endpoint=endpoint,
+                )
                 try:
                     if endpoint.cooldown_until > time.monotonic():
                         await asyncio.sleep(
                             min(max(endpoint.cooldown_until - time.monotonic(), 0.0), 0.2),
                         )
                     await endpoint.rate_limiter.acquire()
+                    model_used = endpoint.model
                     response = await endpoint.client.chat.completions.create(
-                        model=self._model,
+                        model=endpoint.model,
                         messages=messages,
                         temperature=temperature,
                         max_tokens=max_tokens,
                         stream=True,
+                        timeout=self._request_timeout_seconds,
                     )
                     async for chunk in response:
                         delta = chunk.choices[0].delta
@@ -844,57 +1124,8 @@ class LLMClient:
             await self._track(
                 method="stream",
                 caller=caller,
+                model=model_used,
                 usage=None,
-                error=error_msg,
-                latency_ms=latency_ms,
-            )
-
-    @_RETRY
-    async def complete_json_with_web_search(
-        self,
-        *,
-        prompt: str,
-        temperature: float = 0.1,
-        max_output_tokens: int = 512,
-        caller: str = "unknown",
-    ) -> dict[str, Any]:
-        """Return parsed JSON using the model's built-in web_search tool."""
-        logger.debug(
-            "LLM complete_json_with_web_search model=%s caller=%s",
-            self._model,
-            caller,
-        )
-        t0 = time.monotonic()
-        error_msg = None
-        usage = None
-        request_id = None
-
-        try:
-            endpoint, response = await self._responses_with_failover(
-                input_text=prompt,
-                tools=[{"type": "web_search"}],
-                temperature=temperature,
-                max_output_tokens=max_output_tokens,
-            )
-            usage = getattr(response, "usage", None)
-            request_id = getattr(response, "id", None)
-            raw_text = _response_output_text(response)
-            logger.debug(
-                "LLM complete_json_with_web_search endpoint=%d usage=%s",
-                endpoint.index,
-                usage,
-            )
-            return _parse_json_object(raw_text)
-        except Exception as exc:
-            error_msg = str(exc)
-            raise
-        finally:
-            latency_ms = int((time.monotonic() - t0) * 1000)
-            await self._track(
-                method="complete_json_with_web_search",
-                caller=caller,
-                usage=usage,
-                request_id=request_id,
                 error=error_msg,
                 latency_ms=latency_ms,
             )
@@ -904,11 +1135,21 @@ class LLMClient:
         return [
             {
                 "index": endpoint.index,
+                "endpoint_id": endpoint.endpoint_id,
                 "key_id": endpoint.key_id,
                 "sent_requests": endpoint.sent_requests,
                 "error_requests": endpoint.error_requests,
                 "rate_limit_errors": endpoint.rate_limit_errors,
                 "timeout_errors": endpoint.timeout_errors,
+                "same_task_retry_triggered": endpoint.same_task_retry_triggered,
+                "same_task_retry_success": endpoint.same_task_retry_success,
+                "same_task_retry_failed": endpoint.same_task_retry_failed,
+                "preferred_route_hits": endpoint.preferred_route_hits,
+                "policy_applied_counts_by_method": dict(endpoint.policy_applied_counts_by_method),
+                "required_output_missing": endpoint.required_output_missing,
+                "parse_fail": endpoint.parse_fail,
+                "non_json": endpoint.non_json,
+                "schema_mismatch": endpoint.schema_mismatch,
                 "cooldown_active": endpoint.cooldown_until > now,
             }
             for endpoint in self._endpoints
@@ -924,11 +1165,21 @@ class LLMClient:
             base_rows.append(
                 {
                     "index": endpoint.index,
+                    "endpoint_id": endpoint.endpoint_id,
                     "key_id": endpoint.key_id,
                     "requests_total": requests_total,
                     "errors_total": int(endpoint.error_requests),
                     "rate_limit_total": int(endpoint.rate_limit_errors),
                     "timeout_total": int(endpoint.timeout_errors),
+                    "same_task_retry_triggered": int(endpoint.same_task_retry_triggered),
+                    "same_task_retry_success": int(endpoint.same_task_retry_success),
+                    "same_task_retry_failed": int(endpoint.same_task_retry_failed),
+                    "preferred_route_hits": int(endpoint.preferred_route_hits),
+                    "policy_applied_counts_by_method": dict(endpoint.policy_applied_counts_by_method),
+                    "required_output_missing": int(endpoint.required_output_missing),
+                    "parse_fail": int(endpoint.parse_fail),
+                    "non_json": int(endpoint.non_json),
+                    "schema_mismatch": int(endpoint.schema_mismatch),
                     "requests_window": 0.0,
                     "errors_window": 0.0,
                     "rate_limit_window": 0.0,
@@ -945,6 +1196,8 @@ class LLMClient:
         if self._observer is None:
             return {
                 "window_seconds": window,
+                "active_mode": self._mode_name,
+                "active_policy": self._policy_name,
                 "observer_enabled": False,
                 "observer_error": self._observer_error,
                 "endpoints": base_rows,
@@ -981,6 +1234,8 @@ class LLMClient:
                 )
             return {
                 "window_seconds": window,
+                "active_mode": self._mode_name,
+                "active_policy": self._policy_name,
                 "observer_enabled": True,
                 "observer_error": None,
                 "endpoints": base_rows,
@@ -988,6 +1243,8 @@ class LLMClient:
         except Exception as exc:  # pragma: no cover - runtime/env specific
             return {
                 "window_seconds": window,
+                "active_mode": self._mode_name,
+                "active_policy": self._policy_name,
                 "observer_enabled": False,
                 "observer_error": str(exc),
                 "endpoints": base_rows,
@@ -1013,28 +1270,85 @@ def _inject_schema_hint(
     return messages
 
 
-def _response_output_text(response: Any) -> str:
-    text = getattr(response, "output_text", None)
-    if text:
-        return str(text)
+def _require_caller(*, caller: str, method: str) -> str:
+    normalized = (caller or "").strip()
+    if not normalized or normalized == "unknown":
+        raise ValueError(
+            f"LLM caller must be explicitly named for {method}. "
+            "Using empty/unknown caller is disallowed.",
+        )
+    return normalized
 
-    output = getattr(response, "output", None)
-    if not output:
-        return "{}"
 
+def _default_json_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "_": {
+                "type": "string",
+                "description": "Optional placeholder. Real output can use any keys.",
+            },
+        },
+        "additionalProperties": True,
+    }
+
+
+def _build_json_schema_response_format(
+    *,
+    schema: dict[str, Any] | None,
+    name: str,
+    strict: bool = False,
+) -> dict[str, Any]:
+    effective_schema = _normalize_json_schema(schema)
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": name,
+            "strict": bool(strict),
+            "schema": effective_schema,
+        },
+    }
+
+
+def _normalize_json_schema(schema: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(schema, dict) or not schema:
+        return _default_json_schema()
+
+    normalized: dict[str, Any] = dict(schema)
+    if normalized.get("type") != "object":
+        logger.warning(
+            "Invalid JSON schema received (type=%r), fallback to default object schema",
+            normalized.get("type"),
+        )
+        return _default_json_schema()
+
+    properties = normalized.get("properties")
+    if not isinstance(properties, dict) or not properties:
+        normalized["properties"] = _default_json_schema().get("properties", {})
+    normalized.setdefault("additionalProperties", True)
+    return normalized
+
+
+async def _collect_stream_text(stream_response: Any) -> str:
     chunks: list[str] = []
-    for item in output:
-        item_type = getattr(item, "type", None)
-        if item_type != "message":
+    async for chunk in stream_response:
+        choices = getattr(chunk, "choices", None) or []
+        if not choices:
             continue
-        content = getattr(item, "content", None) or []
-        for part in content:
-            part_type = getattr(part, "type", None)
-            if part_type in {"output_text", "text"}:
-                value = getattr(part, "text", None)
-                if value:
-                    chunks.append(str(value))
-    return "\n".join(chunks) if chunks else "{}"
+        delta = getattr(choices[0], "delta", None)
+        if delta is None:
+            continue
+        content = getattr(delta, "content", None)
+        if isinstance(content, str):
+            chunks.append(content)
+            continue
+        if isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict):
+                    text = part.get("text")
+                    if isinstance(text, str):
+                        chunks.append(text)
+    return "".join(chunks).strip()
 
 
 def _parse_json_object(text: str) -> dict[str, Any]:
@@ -1063,6 +1377,170 @@ def _parse_json_object(text: str) -> dict[str, Any]:
     return {}
 
 
+def _parse_json_strict(text: str) -> dict[str, Any]:
+    raw = (text or "").strip()
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    if isinstance(data, dict):
+        return data
+    if isinstance(data, list):
+        return {"data": data}
+    return {}
+
+
+def _parse_fenced_json(text: str) -> dict[str, Any]:
+    raw = (text or "").strip()
+    if not raw:
+        return {}
+
+    fenced = re.findall(r"```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```", raw, flags=re.DOTALL | re.IGNORECASE)
+    for snippet in fenced:
+        parsed = _parse_json_strict(snippet)
+        if parsed:
+            return parsed
+    return _parse_json_strict(raw)
+
+
+def _parse_json_with_mode(text: str, *, parse_mode: str) -> dict[str, Any]:
+    mode = (parse_mode or "extract_object").strip().lower()
+    if mode == "strict":
+        return _parse_json_strict(text)
+    if mode == "fenced_json":
+        return _parse_fenced_json(text)
+    return _parse_json_object(text)
+
+
+def _json_schema_mismatch_reason(
+    payload: dict[str, Any],
+    schema: dict[str, Any] | None,
+) -> str | None:
+    if not isinstance(schema, dict) or not schema:
+        return None
+    return _validate_schema_node(payload, schema, path="$")
+
+
+def _validate_schema_node(value: Any, schema: dict[str, Any], *, path: str) -> str | None:
+    expected_type = schema.get("type")
+    if isinstance(expected_type, str):
+        if expected_type == "object":
+            if not isinstance(value, dict):
+                return f"{path}: expected object"
+            required = schema.get("required")
+            if isinstance(required, list):
+                for key in required:
+                    if isinstance(key, str) and key not in value:
+                        return f"{path}: missing required key '{key}'"
+            properties = schema.get("properties")
+            additional = schema.get("additionalProperties", True)
+            if isinstance(properties, dict):
+                for key, sub_schema in properties.items():
+                    if key in value and isinstance(sub_schema, dict):
+                        child_reason = _validate_schema_node(
+                            value[key],
+                            sub_schema,
+                            path=f"{path}.{key}",
+                        )
+                        if child_reason:
+                            return child_reason
+                if additional is False:
+                    for key in value.keys():
+                        if key not in properties:
+                            return f"{path}: unexpected key '{key}'"
+        elif expected_type == "array":
+            if not isinstance(value, list):
+                return f"{path}: expected array"
+            item_schema = schema.get("items")
+            if isinstance(item_schema, dict):
+                for idx, item in enumerate(value):
+                    child_reason = _validate_schema_node(
+                        item,
+                        item_schema,
+                        path=f"{path}[{idx}]",
+                    )
+                    if child_reason:
+                        return child_reason
+        elif expected_type == "string":
+            if not isinstance(value, str):
+                return f"{path}: expected string"
+        elif expected_type == "number":
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                return f"{path}: expected number"
+        elif expected_type == "integer":
+            if not isinstance(value, int) or isinstance(value, bool):
+                return f"{path}: expected integer"
+        elif expected_type == "boolean":
+            if not isinstance(value, bool):
+                return f"{path}: expected boolean"
+        elif expected_type == "null":
+            if value is not None:
+                return f"{path}: expected null"
+    return None
+
+
+def _method_policy_response_format_type(method_policy: dict[str, Any]) -> str:
+    response_format = method_policy.get("response_format")
+    if isinstance(response_format, dict):
+        value = str(response_format.get("type", "")).strip().lower()
+        if value in {"json_schema", "json_object", "none"}:
+            return value
+    return "json_schema"
+
+
+def _method_policy_json_schema_name(method_policy: dict[str, Any], *, default: str) -> str:
+    response_format = method_policy.get("response_format")
+    if not isinstance(response_format, dict):
+        return default
+    payload = response_format.get("json_schema")
+    if not isinstance(payload, dict):
+        return default
+    name = str(payload.get("name", "")).strip()
+    return name or default
+
+
+def _method_policy_json_schema_strict(method_policy: dict[str, Any], *, default: bool) -> bool:
+    response_format = method_policy.get("response_format")
+    if not isinstance(response_format, dict):
+        return default
+    payload = response_format.get("json_schema")
+    if not isinstance(payload, dict):
+        return default
+    value = payload.get("strict")
+    if isinstance(value, bool):
+        return value
+    return default
+
+
+def _method_policy_parse_mode(method_policy: dict[str, Any]) -> str:
+    raw = str(method_policy.get("parse_mode", "extract_object")).strip().lower()
+    if raw in {"strict", "extract_object", "fenced_json"}:
+        return raw
+    return "extract_object"
+
+
+def _method_policy_bool(method_policy: dict[str, Any], key: str, *, default: bool) -> bool:
+    value = method_policy.get(key)
+    if isinstance(value, bool):
+        return value
+    return default
+
+
+def _deep_merge_dict(base: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+    for key, value in incoming.items():
+        if (
+            key in base
+            and isinstance(base[key], dict)
+            and isinstance(value, dict)
+        ):
+            _deep_merge_dict(base[key], value)
+        else:
+            base[key] = value
+    return base
+
+
 def _api_key_fingerprint(api_key: str) -> str:
     raw = (api_key or "").strip()
     if not raw:
@@ -1081,13 +1559,10 @@ def get_llm_client() -> LLMClient:
     """Return a module-level singleton :class:`LLMClient` configured from settings."""
     global _singleton  # noqa: PLW0603
     if _singleton is None:
-        api_keys = settings.zai_api_keys
-        if not api_keys:
-            api_keys = [settings.ZAI_API_KEY]
         _singleton = LLMClient(
-            api_key=api_keys[0] if api_keys else "",
-            api_keys=api_keys,
-            base_url=settings.ZAI_BASE_URL,
-            model=settings.ZAI_MODEL,
+            mode_name=settings.llm_active_mode.name,
+            policy_name=settings.llm_active_policy.name,
+            policy=settings.llm_active_policy,
+            endpoints=list(settings.resolve_active_mode_endpoints()),
         )
     return _singleton

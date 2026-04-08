@@ -171,7 +171,12 @@ async def generate_go_no_go(
         {"role": "system", "content": GO_NO_GO_PROMPT},
         {"role": "user", "content": user_prompt},
     ]
-    narrative = await llm.complete(messages, temperature=0.5, max_tokens=2048)
+    narrative = await llm.complete(
+        messages,
+        temperature=0.5,
+        max_tokens=2048,
+        caller="report.go_no_go.narrative",
+    )
 
     # --- Step 7: Persist ---
     report = GoNoGoReport(

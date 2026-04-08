@@ -30,6 +30,7 @@ PREFERENCE_CANONICAL_KEYS = {
 
 _PREFERENCE_ALIAS_KEYS: dict[str, str] = {
     "location_preference": "location",
+    "preferred_region": "location",
     "school_size_preference": "size",
     "campus_culture": "culture",
 }
@@ -54,6 +55,7 @@ _NON_NULLABLE_GROUP_FIELDS = {
 }
 
 _FINANCIAL_AID_TYPES = {"need_based", "merit", "both", "no"}
+_ED_PREFERENCE_CANONICAL = {"ed", "ea", "rea", "scea", "rd", "rolling"}
 
 
 def _to_string_list(value: Any) -> list[str] | None:
@@ -88,6 +90,35 @@ def _normalize_preference_value(key: str, value: Any) -> Any:
         return stripped or None
 
     return value
+
+
+def _normalize_ed_preference(value: Any) -> str | None:
+    """Normalize ED preference to a compact canonical value that fits schema."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return None
+    text = value.strip().lower()
+    if not text:
+        return None
+
+    if text in _ED_PREFERENCE_CANONICAL:
+        return text
+
+    if "single choice early action" in text:
+        return "scea"
+    if "restrictive early action" in text:
+        return "rea"
+    if "early decision" in text:
+        return "ed"
+    if "early action" in text:
+        return "ea"
+    if "regular decision" in text:
+        return "rd"
+    if "rolling" in text:
+        return "rolling"
+
+    return None
 
 
 def canonicalize_preferences(preferences: dict[str, Any] | None) -> dict[str, Any]:
@@ -258,6 +289,8 @@ async def apply_portfolio_patch(
     ):
         for key, value in fields.items():
             _assert_clearable(group_name, key, value)
+            if group_name == "strategy" and key == "ed_preference":
+                value = _normalize_ed_preference(value)
             update_data[key] = value
 
     prefs_patch = data.get("preferences")

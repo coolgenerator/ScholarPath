@@ -1,0 +1,125 @@
+{
+  "modes": {
+    "beecode": {
+      "endpoints": [
+        {
+          "id": "bee-1",
+          "base_url": "https://beecode.cc/v1",
+          "model": "gpt-5.4-mini",
+          "api_key_env": "BEECODE_API_KEY_1",
+          "rpm": 66
+        },
+        {
+          "id": "bee-2",
+          "base_url": "https://beecode.cc/v1",
+          "model": "gpt-5.4-mini",
+          "api_key_env": "BEECODE_API_KEY_2",
+          "rpm": 66
+        },
+        {
+          "id": "bee-3",
+          "base_url": "https://beecode.cc/v1",
+          "model": "gpt-5.4-mini",
+          "api_key_env": "BEECODE_API_KEY_3",
+          "rpm": 66
+        }
+      ]
+    },
+    "xcode": {
+      "endpoints": [
+        {
+          "id": "xcode-1",
+          "base_url": "https://api.xcode.best/v1",
+          "model": "gpt-5.4-mini",
+          "api_key_env": "XCODE_API_KEY_1",
+          "rpm": 100
+        },
+        {
+          "id": "xcode-2",
+          "base_url": "https://api.xcode.best/v1",
+          "model": "gpt-5.4-mini",
+          "api_key_env": "XCODE_API_KEY_2",
+          "rpm": 100
+        }
+      ]
+    }
+  },
+  "policies": {
+    "default": {
+      "route": {},
+      "call_defaults": {
+        "complete": {},
+        "stream": {},
+        "complete_json": {
+          "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+              "name": "scholarpath_complete_json",
+              "strict": false
+            }
+          },
+          "stream_json_enabled": true,
+          "schema_hint_enabled": true,
+          "parse_mode": "extract_object",
+          "json_transport_hints_enabled": true
+        }
+      },
+      "endpoint_overrides": {
+        "bee-1": {
+          "complete_json": {
+            "json_transport_hints_enabled": false
+          }
+        },
+        "bee-2": {
+          "complete_json": {
+            "json_transport_hints_enabled": false
+          }
+        },
+        "bee-3": {
+          "complete_json": {
+            "json_transport_hints_enabled": false
+          }
+        }
+      },
+      "caller_overrides": {
+        "chat.intent_classification": {
+          "complete_json": {
+            "response_format": {
+              "type": "json_schema",
+              "json_schema": {
+                "name": "chat_intent_classification",
+                "strict": true
+              }
+            }
+          }
+        },
+        "eval.recommendation_judge": {
+          "complete_json": {
+            "response_format": {
+              "type": "json_schema",
+              "json_schema": {
+                "name": "recommendation_judge",
+                "strict": true
+              }
+            }
+          }
+        }
+      },
+      "strict_json_callers": [
+        "chat.intent_classification",
+        "chat.extract_school",
+        "chat.what_if.parse",
+        "evaluation.strategy.generate",
+        "eval.recommendation_judge",
+        "search.entity_align",
+        "search.conflict_assess",
+        "search.web_extract",
+        "search.internal_web_search",
+        "search.cds_extract",
+        "search.cds_direct_extract",
+        "search.official_profile_extract",
+        "search.official_profile_direct_extract"
+      ]
+    }
+  }
+}

@@ -107,7 +107,10 @@ async def _run_conflict_detection_async(
 
                 try:
                     assessment = await llm.complete_json(
-                        messages, temperature=0.2, max_tokens=256
+                        messages,
+                        temperature=0.2,
+                        max_tokens=256,
+                        caller="tasks.conflict_pipeline.assess",
                     )
                 except Exception:
                     logger.warning(

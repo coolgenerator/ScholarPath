@@ -185,7 +185,12 @@ async def compare_offers(
             ),
         },
     ]
-    recommendation = await llm.complete(messages, temperature=0.5, max_tokens=1024)
+    recommendation = await llm.complete(
+        messages,
+        temperature=0.5,
+        max_tokens=1024,
+        caller="offer.compare_offers.recommendation",
+    )
 
     return {
         "offers": offer_summaries,

@@ -10,6 +10,39 @@ from typing import Any
 from scholarpath.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
+_WORKER_EVENT_LOOP: asyncio.AbstractEventLoop | None = None
+
+
+class StudentNotFoundError(ValueError):
+    """Raised when DeepSearch target student does not exist."""
+
+
+def _reset_worker_event_loop() -> None:
+    """Reset cached worker loop (called on worker process init/fork)."""
+    global _WORKER_EVENT_LOOP
+    loop = _WORKER_EVENT_LOOP
+    _WORKER_EVENT_LOOP = None
+    if loop is None:
+        return
+    if loop.is_running():
+        return
+    try:
+        loop.close()
+    except Exception:
+        return
+
+
+def _get_worker_event_loop() -> asyncio.AbstractEventLoop:
+    global _WORKER_EVENT_LOOP
+    if _WORKER_EVENT_LOOP is None or _WORKER_EVENT_LOOP.is_closed():
+        _WORKER_EVENT_LOOP = asyncio.new_event_loop()
+    return _WORKER_EVENT_LOOP
+
+
+def _run_on_worker_loop(coro: Any) -> Any:
+    """Run coroutine on a process-local loop to avoid cross-loop pool reuse."""
+    loop = _get_worker_event_loop()
+    return loop.run_until_complete(coro)
 
 
 def _require_scorecard_api_key(raw_key: str | None) -> str:
@@ -66,7 +99,7 @@ def run_deep_search(
     scorecard_api_key = _require_scorecard_api_key(settings.SCORECARD_API_KEY)
 
     try:
-        result = asyncio.run(
+        result = _run_on_worker_loop(
             _run_deep_search_async(
                 uuid.UUID(student_id),
                 school_names,
@@ -79,6 +112,22 @@ def run_deep_search(
             )
         )
         return result
+    except StudentNotFoundError as exc:
+        logger.warning("Deep search skipped (non-retryable): %s", exc)
+        return {
+            "student_id": str(student_id),
+            "schools_searched": list(school_names),
+            "schools_returned": 0,
+            "conflicts_found": 0,
+            "coverage_score": 0.0,
+            "required_fields": required_fields or [],
+            "freshness_days": freshness_days,
+            "max_internal_websearch_calls_per_school": max_internal_websearch_calls_per_school,
+            "budget_mode": budget_mode,
+            "eval_run_id": eval_run_id,
+            "errors": [{"error": "student_not_found", "detail": str(exc)}],
+            "non_retryable_error": "student_not_found",
+        }
     except Exception as exc:
         logger.exception("Deep search failed for student %s", student_id)
         raise self.retry(exc=exc)
@@ -96,7 +145,7 @@ async def _run_deep_search_async(
 ) -> dict[str, Any]:
     """Async implementation of the deep search task."""
     from scholarpath.config import settings
-    from scholarpath.db.session import async_session_factory
+    from scholarpath.db.session import async_session_factory, engine
     from scholarpath.db.models import Student
     from scholarpath.llm.client import get_llm_client
     from scholarpath.search import DeepSearchOrchestrator
@@ -106,10 +155,14 @@ async def _run_deep_search_async(
         scorecard_api_key or settings.SCORECARD_API_KEY,
     )
 
+    # Celery prefork + asyncio.run creates one event loop per task call.
+    # Disposing pooled connections here prevents cross-loop reuse by asyncpg.
+    await engine.dispose()
+
     async with async_session_factory() as session:
         student = await session.get(Student, student_id)
         if student is None:
-            raise ValueError(f"Student {student_id} not found")
+            raise StudentNotFoundError(f"Student {student_id} not found")
 
         student_profile = {
             "gpa": student.gpa,

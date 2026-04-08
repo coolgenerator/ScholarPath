@@ -19,9 +19,13 @@
 
 ## Important Operating Rules
 - Keep all LLM usage under the project RPM policy:
-  - two xcode endpoints, 100 RPM each
+  - gateway policy file controls endpoint-by-endpoint RPM
+  - default beecode profile: three endpoints, ~66 RPM each
   - total <= 200 RPM
   - prefer smooth, low-spike execution
+- LLM gateway is config-driven:
+  - `.env` chooses `LLM_ACTIVE_MODE` + `LLM_ACTIVE_POLICY`
+  - `scholarpath/data/llm_gateway_policies.json` defines endpoint routing and method policies
 - Clean surrounding technical debt when replacing business logic.
 - Keep UI copy Chinese-first unless a product reason says otherwise.
 - Prefer canonical contracts over one-off fields.

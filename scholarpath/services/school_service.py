@@ -237,6 +237,7 @@ async def generate_school_list(
             ]
         },
         temperature=0.4,
+        caller="school.generate_school_list",
     )
 
     schools_raw: list[dict] = result.get("schools", [])

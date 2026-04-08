@@ -46,3 +46,19 @@ def test_run_deep_search_passes_configured_scorecard_key(monkeypatch) -> None:
     )
     assert payload == {"ok": True}
     assert observed["scorecard_api_key"] == "scorecard-key"
+
+
+def test_run_deep_search_returns_non_retryable_for_missing_student(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "SCORECARD_API_KEY", "scorecard-key")
+
+    async def _missing_student(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise deep_search_task.StudentNotFoundError("Student 000 not found")
+
+    monkeypatch.setattr(deep_search_task, "_run_deep_search_async", _missing_student)
+
+    payload = deep_search_task.run_deep_search.run(  # type: ignore[misc]
+        student_id=str(uuid.uuid4()),
+        school_names=["MIT"],
+        required_fields=["acceptance_rate"],
+    )
+    assert payload["non_retryable_error"] == "student_not_found"

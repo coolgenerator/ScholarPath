@@ -195,6 +195,31 @@ async def test_portfolio_patch_writes_canonical_preferences(client) -> None:
 
 
 @pytest.mark.asyncio
+async def test_portfolio_read_maps_preferred_region_alias(client) -> None:
+    payload = {
+        "name": "Preferred Region Alias Student",
+        "gpa": 3.8,
+        "gpa_scale": "4.0",
+        "sat_total": 1450,
+        "curriculum_type": "AP",
+        "intended_majors": ["CS"],
+        "budget_usd": 60000,
+        "target_year": 2028,
+        "preferences": {
+            "preferred_region": "West Coast",
+        },
+    }
+    created = await client.post("/api/students/", json=payload)
+    assert created.status_code == 201
+    student_id = created.json()["id"]
+
+    resp = await client.get(f"/api/students/{student_id}/portfolio")
+    assert resp.status_code == 200
+    prefs = resp.json()["preferences"]
+    assert prefs["location"] == ["West Coast"]
+
+
+@pytest.mark.asyncio
 async def test_portfolio_patch_nullable_clear_and_non_nullable_reject(client) -> None:
     payload = {
         "name": "Clear Field Student",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from celery import Celery
 from celery.schedules import crontab
+from celery.signals import worker_process_init
 
 from scholarpath.config import settings
 
@@ -33,6 +34,7 @@ celery_app.conf.update(
         "scholarpath.tasks.conflict_pipeline.run_conflict_detection": {"queue": "conflict"},
         "scholarpath.tasks.causal_model.causal_ingest_official_facts": {"queue": "celery"},
         "scholarpath.tasks.causal_model.causal_ingest_ipeds_college_navigator": {"queue": "celery"},
+        "scholarpath.tasks.causal_model.causal_ingest_ipeds_program_facts": {"queue": "celery"},
         "scholarpath.tasks.causal_model.causal_ingest_common_app_trends": {"queue": "celery"},
         "scholarpath.tasks.causal_model.causal_ingest_admission_events": {"queue": "celery"},
         "scholarpath.tasks.causal_model.causal_clean_and_judge_facts": {"queue": "celery"},
@@ -60,3 +62,23 @@ celery_app.conf.update(
         },
     },
 )
+
+
+@worker_process_init.connect
+def _reset_db_pools_after_fork(**_: object) -> None:
+    """Avoid inheriting parent asyncpg pool state in prefork workers."""
+    try:
+        from scholarpath.db.session import engine
+
+        engine.sync_engine.dispose(close=False)
+    except Exception:
+        # Best-effort guard; worker can still function with default behavior.
+        pass
+
+    try:
+        from scholarpath.tasks.deep_search import _reset_worker_event_loop
+
+        _reset_worker_event_loop()
+    except Exception:
+        # Best-effort guard; deep-search task can still start its own loop lazily.
+        return
