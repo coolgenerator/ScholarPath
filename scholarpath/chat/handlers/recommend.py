@@ -24,6 +24,9 @@ async def handle_recommendation(
     session_id: str,
     student_id: uuid.UUID,
     message: str,
+    *,
+    skill_id: str | None = None,
+    route_bucket: str | None = None,
 ) -> str:
     """Generate and format school recommendations as a chat response.
 
@@ -59,6 +62,9 @@ async def handle_recommendation(
             llm,
             student_id,
             response_language=response_lang,
+            skill_id=skill_id,
+            user_message=message,
+            route_bucket=route_bucket,
         )
     except Exception:
         logger.exception("Recommendation generation failed for student %s", student_id)
@@ -116,7 +122,16 @@ async def handle_recommendation(
             "overall_score": s["overall_score"],
             "admission_probability": s.get("admission_probability", 0),
             "acceptance_rate": info.get("acceptance_rate"),
+            "acceptance_rate_effective": s.get("acceptance_rate_effective"),
+            "acceptance_rate_capped": s.get("acceptance_rate_capped"),
             "net_price": info.get("avg_net_price"),
+            "major_match": s.get("major_match"),
+            "geo_match": s.get("geo_match"),
+            "major_match_evidence": s.get("major_match_evidence"),
+            "tier_cap_triggered": s.get("tier_cap_triggered"),
+            "sat_scale_mode": s.get("sat_scale_mode"),
+            "prefilter_tag": s.get("prefilter_tag"),
+            "is_stretch": bool(s.get("is_stretch")),
             "key_reasons": s.get("key_reasons", []),
             "sub_scores": sub_scores,
         })
@@ -139,6 +154,19 @@ async def handle_recommendation(
         "ed_recommendation": ed_rec["school"] if ed_rec else None,
         "ea_recommendations": [r["school"] for r in ea_recs],
         "strategy_summary": strategy_summary,
+        "prefilter_meta": results.get("prefilter_meta"),
+        "top_n_used": results.get("top_n_used"),
+        "skill_id_used": results.get("skill_id_used"),
+        "scenario_validation": results.get("scenario_validation"),
+        "constraint_status": results.get("constraint_status"),
+        "constraint_fail_reasons": results.get("constraint_fail_reasons", []),
+        "next_steps": results.get("next_steps", []),
+        "deepsearch_pending": bool(results.get("deepsearch_pending")),
+        "deepsearch_fallback_triggered": bool(results.get("deepsearch_fallback_triggered")),
+        "deepsearch_fallback_reasons": results.get("deepsearch_fallback_reasons", []),
+        "deepsearch_fallback_task_id": results.get("deepsearch_fallback_task_id"),
+        "deepsearch_debounced": bool(results.get("deepsearch_debounced")),
+        "deepsearch_enqueue_error": results.get("deepsearch_enqueue_error"),
     }
 
     # Short text summary + structured data marker
