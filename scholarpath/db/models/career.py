@@ -20,6 +20,8 @@ class OutcomeType(str, enum.Enum):
     BIG_TECH = "big_tech"
     STARTUP = "startup"
     GRAD_SCHOOL = "grad_school"
+    FINANCE_BIZ = "finance_biz"
+    PUBLIC_SERVICE = "public_service"
 
 
 class CareerOutcomeProxy(UUIDPrimaryKey, Base):

@@ -5,6 +5,9 @@ export const sessionsApi = {
   list(studentId: string) {
     return api.get<ChatSessionResponse[]>(`/sessions/student/${studentId}`);
   },
+  listRecent() {
+    return api.get<ChatSessionResponse[]>('/sessions/recent');
+  },
   create(payload: { student_id: string; session_id: string; title?: string }) {
     return api.post<ChatSessionResponse>('/sessions/', payload);
   },

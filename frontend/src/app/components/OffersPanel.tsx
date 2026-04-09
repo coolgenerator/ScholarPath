@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useApp } from '../../context/AppContext';
 import { useOffers } from '../../hooks/useOffers';
@@ -6,6 +6,7 @@ import { useEvaluations } from '../../hooks/useEvaluations';
 import { useReports } from '../../hooks/useReports';
 import { normalizeOfferComparison } from '../../lib/chatRichContent';
 import type { EvaluationWithSchool, GoNoGoReport } from '../../lib/types';
+import { schoolsApi } from '../../lib/api/schools';
 import type { OfferResponse } from '../../lib/api/offers';
 import { OfferCompareCard } from './StructuredMessageCards';
 import {
@@ -130,63 +131,50 @@ function AddOfferForm({ evaluations, onSubmit, onCancel, t }: {
   t: Record<string, any>;
 }) {
   const [schoolId, setSchoolId] = useState('');
+  const [schoolQuery, setSchoolQuery] = useState('');
+  const [matchedSchoolName, setMatchedSchoolName] = useState('');
+  const [isLookingUp, setIsLookingUp] = useState(false);
+  const [lookupError, setLookupError] = useState('');
+  const lookupTimerRef = useRef<number | null>(null);
+  const [program, setProgram] = useState('');
   const [status, setStatus] = useState('admitted');
-  // Cost of Attendance
-  const [tuition, setTuition] = useState('');
-  const [roomAndBoard, setRoomAndBoard] = useState('');
-  const [booksSupplies, setBooksSupplies] = useState('');
-  const [personalExpenses, setPersonalExpenses] = useState('');
-  const [transportation, setTransportation] = useState('');
-  // Financial Aid
   const [meritScholarship, setMeritScholarship] = useState('');
-  const [needBasedGrant, setNeedBasedGrant] = useState('');
-  const [loanOffered, setLoanOffered] = useState('');
-  const [workStudy, setWorkStudy] = useState('');
-  const [honorsProgram, setHonorsProgram] = useState(false);
   const [notes, setNotes] = useState('');
 
-  const costTotal =
-    (Number(tuition) || 0) +
-    (Number(roomAndBoard) || 0) +
-    (Number(booksSupplies) || 0) +
-    (Number(personalExpenses) || 0) +
-    (Number(transportation) || 0);
-  const aidTotal =
-    (Number(meritScholarship) || 0) +
-    (Number(needBasedGrant) || 0) +
-    (Number(loanOffered) || 0) +
-    (Number(workStudy) || 0);
-  const netCost = costTotal - aidTotal;
   const statusOptions = ['admitted', 'waitlisted', 'denied', 'deferred'] as const;
-  const costFields = [
-    { key: 'tuition', labelKey: 'off_tuition_fees' as const, value: tuition, set: setTuition, placeholder: 'e.g. 36000' },
-    { key: 'room', labelKey: 'off_room_board' as const, value: roomAndBoard, set: setRoomAndBoard, placeholder: 'e.g. 12500' },
-    { key: 'books', labelKey: 'off_books_supplies' as const, value: booksSupplies, set: setBooksSupplies, placeholder: 'e.g. 1200' },
-    { key: 'personal', labelKey: 'off_personal_expenses' as const, value: personalExpenses, set: setPersonalExpenses, placeholder: 'e.g. 2400' },
-    { key: 'transport', labelKey: 'off_transportation' as const, value: transportation, set: setTransportation, placeholder: 'e.g. 1500' },
-  ] as const;
-  const aidFields = [
-    { key: 'merit', labelKey: 'off_merit_scholarship' as const, value: meritScholarship, set: setMeritScholarship },
-    { key: 'need', labelKey: 'off_need_based_grant' as const, value: needBasedGrant, set: setNeedBasedGrant },
-    { key: 'loan', labelKey: 'off_loan_offered' as const, value: loanOffered, set: setLoanOffered },
-    { key: 'work', labelKey: 'off_work_study' as const, value: workStudy, set: setWorkStudy },
-  ] as const;
+
+  const handleSchoolInput = (value: string) => {
+    setSchoolQuery(value);
+    setSchoolId('');
+    setMatchedSchoolName('');
+    setLookupError('');
+
+    if (lookupTimerRef.current) window.clearTimeout(lookupTimerRef.current);
+
+    if (value.trim().length < 2) return;
+
+    lookupTimerRef.current = window.setTimeout(async () => {
+      setIsLookingUp(true);
+      setLookupError('');
+      try {
+        const result = await schoolsApi.lookup(value.trim());
+        setSchoolId(result.id);
+        setMatchedSchoolName(result.name + (result.name_cn ? ` (${result.name_cn})` : ''));
+      } catch {
+        setLookupError(t.off_school_not_found ?? '未找到匹配学校，请尝试更完整的名称');
+      } finally {
+        setIsLookingUp(false);
+      }
+    }, 600);
+  };
 
   const handleSubmit = () => {
     if (!schoolId) return;
     onSubmit({
       school_id: schoolId,
       status,
-      tuition: Number(tuition) || undefined,
-      room_and_board: Number(roomAndBoard) || undefined,
-      books_supplies: Number(booksSupplies) || undefined,
-      personal_expenses: Number(personalExpenses) || undefined,
-      transportation: Number(transportation) || undefined,
+      program: program || undefined,
       merit_scholarship: Number(meritScholarship) || 0,
-      need_based_grant: Number(needBasedGrant) || 0,
-      loan_offered: Number(loanOffered) || 0,
-      work_study: Number(workStudy) || 0,
-      honors_program: honorsProgram,
       notes: notes || undefined,
     });
   };
@@ -201,29 +189,44 @@ function AddOfferForm({ evaluations, onSubmit, onCancel, t }: {
           </button>
         </div>
         <div className="p-6 space-y-6">
-          {/* School select */}
+          {/* School input with auto-lookup */}
           <div>
             <DashboardFieldLabel>{t.off_school}</DashboardFieldLabel>
-            <DashboardSelect
-              value={schoolId || undefined}
-              onValueChange={(value) => {
-                setSchoolId(value === DASHBOARD_SELECT_EMPTY_VALUE ? '' : value);
-              }}
-            >
-              <DashboardSelectTrigger>
-                <DashboardSelectValue placeholder={t.off_select_school} />
-              </DashboardSelectTrigger>
-              <DashboardSelectContent>
-                <DashboardSelectItem value={DASHBOARD_SELECT_EMPTY_VALUE}>
-                  {t.off_select_school}
-                </DashboardSelectItem>
-                {evaluations.map((ev) => (
-                  <DashboardSelectItem key={ev.school_id} value={ev.school_id}>
-                    {ev.school?.name ?? ev.school_id}
-                  </DashboardSelectItem>
-                ))}
-              </DashboardSelectContent>
-            </DashboardSelect>
+            <div className="relative">
+              <DashboardInput
+                type="text"
+                className="px-3 py-2"
+                placeholder={t.off_school_placeholder ?? '输入学校名称，如 MIT、北大...'}
+                value={schoolQuery}
+                onChange={(e) => handleSchoolInput(e.target.value)}
+              />
+              {isLookingUp && (
+                <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                  <span className="material-symbols-outlined animate-spin text-sm text-on-surface-variant/40">progress_activity</span>
+                </div>
+              )}
+            </div>
+            {matchedSchoolName && (
+              <div className="mt-1.5 flex items-center gap-1.5 text-xs text-tertiary">
+                <span className="material-symbols-outlined text-sm">check_circle</span>
+                {matchedSchoolName}
+              </div>
+            )}
+            {lookupError && (
+              <div className="mt-1.5 text-xs text-error">{lookupError}</div>
+            )}
+          </div>
+
+          {/* Program / Major */}
+          <div>
+            <DashboardFieldLabel>{t.off_program}</DashboardFieldLabel>
+            <DashboardInput
+              type="text"
+              className="px-3 py-2"
+              placeholder={t.off_program_placeholder}
+              value={program}
+              onChange={(e) => setProgram(e.target.value)}
+            />
           </div>
 
           {/* Status */}
@@ -249,74 +252,17 @@ function AddOfferForm({ evaluations, onSubmit, onCancel, t }: {
             </DashboardSegmentedGroup>
           </div>
 
-          {/* Cost of Attendance */}
+          {/* Scholarship */}
           <div>
-            <div className="flex items-center gap-2 mb-3">
-              <span className="material-symbols-outlined text-error/70 text-base">payments</span>
-              <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">{t.off_cost_of_attendance}</span>
-            </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              {costFields.map(({ key, labelKey, value, set, placeholder }) => (
-                <div key={key}>
-                  <DashboardFieldLabel className="text-[9px] text-on-surface-variant/70">{t[labelKey]}</DashboardFieldLabel>
-                  <DashboardInput
-                    type="number"
-                    className="px-3 py-2"
-                    placeholder={placeholder}
-                    value={value}
-                    onChange={(e) => set(e.target.value)}
-                  />
-                </div>
-              ))}
-            </div>
+            <DashboardFieldLabel>{t.off_merit_scholarship}</DashboardFieldLabel>
+            <DashboardInput
+              type="number"
+              className="px-3 py-2"
+              placeholder="$0"
+              value={meritScholarship}
+              onChange={(e) => setMeritScholarship(e.target.value)}
+            />
           </div>
-
-          {/* Financial Aid */}
-          <div>
-            <div className="flex items-center gap-2 mb-3">
-              <span className="material-symbols-outlined text-tertiary text-base">savings</span>
-              <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">{t.off_financial_aid_package}</span>
-            </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {aidFields.map(({ key, labelKey, value, set }) => (
-                <div key={key}>
-                  <DashboardFieldLabel className="text-[9px] text-on-surface-variant/70">{t[labelKey]}</DashboardFieldLabel>
-                  <DashboardInput
-                    type="number"
-                    className="px-3 py-2"
-                    placeholder="$0"
-                    value={value}
-                    onChange={(e) => set(e.target.value)}
-                  />
-                </div>
-              ))}
-            </div>
-            <div className="mt-3">
-              <DashboardCheckboxField
-                checked={honorsProgram}
-                onCheckedChange={(checked) => setHonorsProgram(Boolean(checked))}
-                label={<span className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">{t.off_honors_program}</span>}
-              />
-            </div>
-          </div>
-
-          {/* Live net cost preview */}
-          {costTotal > 0 && (
-            <div className="bg-surface-container-lowest rounded-2xl p-4 border border-outline-variant/10">
-              <div className="flex justify-between items-center text-sm">
-                <span className="text-on-surface-variant">{t.off_total_cost}</span>
-                <span className="font-black text-on-surface">{formatCurrency(costTotal)}</span>
-              </div>
-              <div className="flex justify-between items-center text-sm mt-1">
-                <span className="text-on-surface-variant">{t.off_total_aid}</span>
-                <span className="font-black text-tertiary">−{formatCurrency(aidTotal)}</span>
-              </div>
-              <div className="border-t border-outline-variant/10 mt-2 pt-2 flex justify-between items-center">
-                <span className="text-xs font-bold text-on-surface-variant uppercase tracking-widest">{t.off_est_net_cost_year}</span>
-                <span className={`text-lg font-black ${netCost > 0 ? 'text-on-surface' : 'text-tertiary'}`}>{formatCurrency(netCost)}</span>
-              </div>
-            </div>
-          )}
 
           {/* Notes */}
           <div>
@@ -363,11 +309,15 @@ function OfferCard({
   const isActionable = offer.status === 'admitted' || offer.status === 'committed';
 
   return (
-    <div className="dashboard-surface dashboard-hover-lift p-5 sm:p-6">
-      <div className="mb-4 flex items-start justify-between gap-4">
-        <div>
-          <h3 className="font-headline text-base font-bold text-on-surface">{offer.school_name ?? t.common_school}</h3>
-          <div className="flex items-center gap-2 mt-1">
+    <div className="dashboard-surface dashboard-hover-lift flex h-full flex-col p-5 sm:p-6">
+      {/* Header: school name + net cost */}
+      <div className="mb-3 flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h3 className="font-headline text-base font-bold text-on-surface truncate">{offer.school_name ?? t.common_school}</h3>
+          {offer.program && (
+            <div className="text-xs text-on-surface-variant/70 mt-0.5 truncate">{offer.program}</div>
+          )}
+          <div className="flex items-center gap-2 mt-1.5">
             <span className={`inline-block px-2 py-0.5 ${statusStyle.bg} ${statusStyle.text} text-[9px] font-black uppercase tracking-widest rounded-md`}>
               {getOfferStatusLabel(offer.status, t)}
             </span>
@@ -376,81 +326,78 @@ function OfferCard({
             )}
           </div>
         </div>
-        <div className="text-right">
+        <div className="text-right shrink-0">
           <div className="text-2xl font-black text-on-surface">{formatCurrency(offer.net_cost)}</div>
           <div className="text-[8px] font-bold text-on-surface-variant/50 uppercase tracking-widest">{t.off_net_cost}</div>
         </div>
       </div>
 
-      {/* Cost breakdown */}
-      <div className="grid grid-cols-2 gap-x-4 gap-y-1 mb-3">
-        {offer.tuition != null && (
-          <div className="flex justify-between text-xs">
-            <span className="text-on-surface-variant/60">{t.off_tuition_fees}</span>
-            <span className="font-bold text-on-surface">{formatK(offer.tuition)}</span>
-          </div>
-        )}
-        {offer.room_and_board != null && (
-          <div className="flex justify-between text-xs">
-            <span className="text-on-surface-variant/60">{t.off_room_board}</span>
-            <span className="font-bold text-on-surface">{formatK(offer.room_and_board)}</span>
-          </div>
-        )}
-        {offer.total_cost != null && (
-          <div className="flex justify-between text-xs col-span-2 border-t border-outline-variant/10 pt-1 mt-1">
-            <span className="text-on-surface-variant/80 font-bold">{t.off_total_cost}</span>
-            <span className="font-black text-on-surface">{formatCurrency(offer.total_cost)}</span>
-          </div>
-        )}
+      {/* Cost breakdown — always show rows for consistency */}
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1 mb-3 text-xs">
+        <div className="flex justify-between">
+          <span className="text-on-surface-variant/60">{t.off_tuition_fees}</span>
+          <span className="font-bold text-on-surface">{offer.tuition != null ? formatK(offer.tuition) : '—'}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-on-surface-variant/60">{t.off_room_board}</span>
+          <span className="font-bold text-on-surface">{offer.room_and_board != null ? formatK(offer.room_and_board) : '—'}</span>
+        </div>
+        <div className="flex justify-between col-span-2 border-t border-outline-variant/10 pt-1 mt-1">
+          <span className="text-on-surface-variant/80 font-bold">{t.off_total_cost}</span>
+          <span className="font-black text-on-surface">{offer.total_cost != null ? formatCurrency(offer.total_cost) : '—'}</span>
+        </div>
       </div>
 
       {/* Aid breakdown */}
-      <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
-        <div className="bg-surface-container-low/40 px-2.5 py-2 rounded-xl border border-outline-variant/5">
+      <div className="grid grid-cols-4 gap-1.5">
+        <div className="bg-surface-container-low/40 px-2 py-1.5 rounded-lg border border-outline-variant/5">
           <div className="text-[7px] text-on-surface-variant font-bold uppercase tracking-widest">{t.off_scholarships}</div>
           <div className="text-sm font-black text-tertiary">{formatCurrency(offer.merit_scholarship)}</div>
         </div>
-        <div className="bg-surface-container-low/40 px-2.5 py-2 rounded-xl border border-outline-variant/5">
+        <div className="bg-surface-container-low/40 px-2 py-1.5 rounded-lg border border-outline-variant/5">
           <div className="text-[7px] text-on-surface-variant font-bold uppercase tracking-widest">{t.off_grants}</div>
           <div className="text-sm font-black text-on-surface">{formatCurrency(offer.need_based_grant)}</div>
         </div>
-        <div className="bg-surface-container-low/40 px-2.5 py-2 rounded-xl border border-outline-variant/5">
+        <div className="bg-surface-container-low/40 px-2 py-1.5 rounded-lg border border-outline-variant/5">
           <div className="text-[7px] text-on-surface-variant font-bold uppercase tracking-widest">{t.off_loans}</div>
           <div className="text-sm font-black text-error/70">{formatCurrency(offer.loan_offered)}</div>
         </div>
-        <div className="bg-surface-container-low/40 px-2.5 py-2 rounded-xl border border-outline-variant/5">
+        <div className="bg-surface-container-low/40 px-2 py-1.5 rounded-lg border border-outline-variant/5">
           <div className="text-[7px] text-on-surface-variant font-bold uppercase tracking-widest">{t.off_work_study}</div>
           <div className="text-sm font-black text-primary">{formatCurrency(offer.work_study)}</div>
         </div>
       </div>
 
-      {/* Deadline + notes */}
-      <div className="mt-3 flex items-center gap-3">
+      {/* Bottom section — pushed down with mt-auto for uniform card height */}
+      <div className="mt-auto pt-3">
+        {/* Deadline */}
         {hasDeadline && (
-          <span className="text-[10px] font-bold text-on-surface-variant/60 flex items-center gap-1">
+          <span className="text-[10px] font-bold text-on-surface-variant/60 flex items-center gap-1 mb-1.5">
             <span className="material-symbols-outlined text-xs">calendar_today</span>
             {t.off_deadline}: {new Date(offer.decision_deadline!).toLocaleDateString()}
           </span>
         )}
-      </div>
-      {offer.notes && (
-        <p className="text-xs text-on-surface-variant/60 mt-2 line-clamp-2">{offer.notes}</p>
-      )}
 
-      {isActionable && onOpenReport && reportLabel && (
-        <div className="mt-4 border-t border-outline-variant/10 pt-4">
-          <button
-            onClick={onOpenReport}
-            disabled={reportLoading}
-            className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-primary/15 bg-primary/5 px-4 py-2 text-xs font-bold text-primary transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
-          >
-            <span className="material-symbols-outlined text-sm">
-              {reportLabel === t.off_report_view ? 'analytics' : 'description'}
-            </span>
-            {reportLoading ? t.off_report_loading : reportLabel}
-          </button>
-        </div>
-      )}
+        {/* Notes — fixed 2 lines */}
+        <p className="text-xs text-on-surface-variant/60 line-clamp-2 min-h-[2.5em]">
+          {offer.notes || '\u00A0'}
+        </p>
+
+        {isActionable && onOpenReport && reportLabel && (
+          <div className="mt-3 border-t border-outline-variant/10 pt-3">
+            <button
+              onClick={onOpenReport}
+              disabled={reportLoading}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-primary/15 bg-primary/5 px-4 py-2 text-xs font-bold text-primary transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+            >
+              <span className="material-symbols-outlined text-sm">
+                {reportLabel === t.off_report_view ? 'analytics' : 'description'}
+              </span>
+              {reportLoading ? t.off_report_loading : reportLabel}
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

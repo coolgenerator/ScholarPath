@@ -170,7 +170,7 @@ export function ExecutionTracePanel({
     if (!activeTrace) return null;
     return {
       waveCount: Number(activeTrace.usage?.wave_count ?? 0) || 0,
-      toolSteps: Number(activeTrace.usage?.tool_steps_used ?? 0) || 0,
+      toolSteps: Number(activeTrace.usage?.tool_steps_used ?? activeTrace.usage?.tool_calls ?? 0) || 0,
       lockReject: Boolean(activeTrace.usage?.rejected_by_lock),
       degradedCount: Number(activeTrace.usage?.best_effort_degraded_count ?? 0) || 0,
       duration: formatDuration(activeTrace.started_at, activeTrace.ended_at),
@@ -201,44 +201,31 @@ export function ExecutionTracePanel({
     onTracePanelModeChange?.('user_pinned', activeTrace.trace_id);
   };
 
+  const isRunning = activeTrace.status === 'running';
+  const statusIcon = isRunning ? 'pending' : activeTrace.status === 'ok' ? 'check_circle' : 'error';
+  const statusColor = isRunning ? 'text-primary' : activeTrace.status === 'ok' ? 'text-emerald-600' : 'text-error';
+
   return (
     <div className="flex w-full justify-start">
-      <div className="w-full max-w-2xl rounded-2xl border border-outline-variant/15 bg-white/90 p-3 shadow-[0_12px_30px_rgba(15,23,42,0.08)]">
+      <div className={`rounded-xl border border-outline-variant/10 bg-surface-container-lowest/80 backdrop-blur transition-all ${expanded ? 'w-full max-w-2xl p-3' : 'px-3 py-1.5'}`}>
         <button
           onClick={handlePanelToggle}
-          className="flex w-full items-center justify-between gap-3 text-left"
+          className="flex w-full items-center justify-between gap-2 text-left"
         >
-          <div className="min-w-0">
-            <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-on-surface-variant/65">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className={`material-symbols-outlined text-[14px] ${statusColor}`}>{statusIcon}</span>
+            <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-on-surface-variant/60">
               {t.chat_trace_title}
-            </div>
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-on-surface-variant/80">
-              <span className="rounded-full border border-outline-variant/20 px-2 py-0.5">
-                {statusLabel(activeTrace.status, t)}
-              </span>
-              <span>{t.chat_trace_wave_count(traceSummary?.waveCount ?? 0)}</span>
-              <span>{t.chat_trace_tool_count(traceSummary?.toolSteps ?? 0)}</span>
-              <span>{t.chat_trace_duration(traceSummary?.duration ?? t.common_na)}</span>
-              {(traceSummary?.degradedCount ?? 0) > 0 && (
-                <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-amber-800">
-                  {t.chat_trace_degraded_count(traceSummary?.degradedCount ?? 0)}
-                </span>
-              )}
-              {traceSummary?.lockReject && (
-                <span className="rounded-full border border-error/30 bg-error/10 px-2 py-0.5 text-error">
-                  {t.chat_trace_lock_reject}
-                </span>
-              )}
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            {isTraceLoading && (
-              <span className="text-[11px] text-on-surface-variant/60">{t.chat_trace_syncing}</span>
-            )}
-            <span className="material-symbols-outlined text-base text-on-surface-variant/70">
-              {expanded ? 'expand_less' : 'expand_more'}
             </span>
+            {!expanded && (
+              <span className="text-[10px] text-on-surface-variant/50">
+                {traceSummary?.toolSteps ? `${traceSummary.toolSteps} tools` : ''} {traceSummary?.duration && traceSummary.duration !== '—' ? `· ${traceSummary.duration}` : ''}
+              </span>
+            )}
           </div>
+          <span className="material-symbols-outlined text-[14px] text-on-surface-variant/50">
+            {expanded ? 'expand_less' : 'expand_more'}
+          </span>
         </button>
 
         {expanded && (

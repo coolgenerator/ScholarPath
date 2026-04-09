@@ -16,9 +16,11 @@ from scholarpath.api.routes.usage import router as usage_router
 from scholarpath.api.routes.sessions import router as sessions_router
 from scholarpath.api.routes.causal import router as causal_router
 from scholarpath.api.routes.enrich import router as enrich_router
+from scholarpath.api.routes.auth import router as auth_router
 
 router = APIRouter()
 
+router.include_router(auth_router)
 router.include_router(students_router)
 router.include_router(schools_router)
 router.include_router(evaluations_router)

@@ -291,6 +291,9 @@ function mapWireBlockToRich(block: ChatBlockWire): RichMessageBlock | null {
         : [];
     return { type: 'guidedQuestions', data: questions };
   }
+  if (block.kind === 'disambiguation') {
+    return { type: 'disambiguation', data: block.payload as any };
+  }
   if (block.kind === 'profile_snapshot') {
     return { type: 'profileSnapshot', data: block.payload as any };
   }
@@ -423,6 +426,7 @@ export function useChat(
   const traceStoreRef = useRef<Map<string, TurnTraceView>>(new Map());
   const traceViewStoreRef = useRef<Map<string, 'compact' | 'full'>>(new Map());
   const lastSendRef = useRef<{ sessionId: string | null; content: string; at: number } | null>(null);
+  const messageCountRef = useRef(0);
   const messageSeqRef = useRef(0);
 
   const buildMessageId = useCallback((entry: ChatEntry) => {
@@ -451,6 +455,21 @@ export function useChat(
       order: [...prev.order, id],
     }));
   }, [buildMessageId]);
+
+  const truncateMessagesAfter = useCallback((messageId: string) => {
+    setMessageStore((prev) => {
+      const idx = prev.order.indexOf(messageId);
+      if (idx === -1) return prev;
+      const keptOrder = prev.order.slice(0, idx);
+      const keptById: Record<string, ChatEntry> = {};
+      keptOrder.forEach((id) => { keptById[id] = prev.byId[id]; });
+      return { byId: keptById, order: keptOrder };
+    });
+  }, []);
+
+  useEffect(() => {
+    messageCountRef.current = messageStore.order.length;
+  }, [messageStore]);
 
   const refreshPendingSendCount = useCallback((sid: string | null = activeSessionRef.current) => {
     if (!sid) {
@@ -541,9 +560,12 @@ export function useChat(
   useEffect(() => {
     if (!sessionId || historyLoadedRef.current === sessionId) return;
 
+    const targetSid = sessionId;
     setIsTraceLoading(true);
-    api.get<ChatHistoryEntry[]>(`/chat/history/${sessionId}`)
+    api.get<ChatHistoryEntry[]>(`/chat/history/${targetSid}`)
       .then((history) => {
+        // Guard: discard results if the session changed while the request was in-flight
+        if (activeSessionRef.current !== targetSid) return;
         if (history.length > 0) {
           const restored = history.map((entry) => parseHistoryEntry(entry));
           replaceMessages(restored);
@@ -554,17 +576,24 @@ export function useChat(
             setActiveTraceId(latestTrace.trace_id);
           }
         }
-        historyLoadedRef.current = sessionId;
+        historyLoadedRef.current = targetSid;
       })
       .catch(() => {
-        historyLoadedRef.current = sessionId;
+        if (activeSessionRef.current === targetSid) {
+          historyLoadedRef.current = targetSid;
+        }
       })
       .finally(() => {
-        api.get<SessionTraceListResponse>(`/chat/traces/session/${sessionId}`, {
+        if (activeSessionRef.current !== targetSid) {
+          setIsTraceLoading(false);
+          return;
+        }
+        api.get<SessionTraceListResponse>(`/chat/traces/session/${targetSid}`, {
           limit: 50,
           view: 'compact',
         })
           .then((response) => {
+            if (activeSessionRef.current !== targetSid) return;
             setTraceStore((prev) => {
               const next = new Map(prev);
               response.items.forEach((summary) => {
@@ -865,6 +894,12 @@ export function useChat(
       const normalizedContent = content.trim();
       if (!normalizedContent) return;
       let sid = activeSessionRef.current;
+      // If there are no messages yet (welcome screen), force a fresh session
+      // to avoid reusing a stale session ID loaded from localStorage.
+      if (sid && messageCountRef.current === 0) {
+        sid = null;
+        activeSessionRef.current = null;
+      }
       const now = Date.now();
       if (
         lastSendRef.current
@@ -937,6 +972,19 @@ export function useChat(
     [studentId, connectWs, enqueueOutbound, flushPendingMessages, onSessionCreated, activeTraceId, appendMessage],
   );
 
+  const editMessage = useCallback(
+    (messageId: string, newContent: string) => {
+      const trimmed = newContent.trim();
+      if (!trimmed) return;
+      truncateMessagesAfter(messageId);
+      // Small delay to let state update, then send as new message
+      setTimeout(() => sendMessage(trimmed), 0);
+    },
+    [truncateMessagesAfter, sendMessage],
+  );
+
+  const messageOrder = messageStore.order;
+
   const messages = useMemo(
     () => messageStore.order.map((id) => messageStore.byId[id]).filter(Boolean),
     [messageStore],
@@ -964,7 +1012,9 @@ export function useChat(
 
   return {
     messages,
+    messageOrder,
     sendMessage,
+    editMessage,
     isConnected,
     isTyping,
     turnState,

@@ -179,11 +179,14 @@ export function Sidebar({ mobileOpen, onMobileOpenChange }: SidebarProps) {
   }, [clearSession, setActiveNav, isMobile, onMobileOpenChange]);
 
   const handleNavigate = useCallback((nav: string) => {
+    if (nav === 'advisor') {
+      clearSession();
+    }
     setActiveNav(nav);
     if (isMobile) {
       onMobileOpenChange(false);
     }
-  }, [isMobile, onMobileOpenChange, setActiveNav]);
+  }, [isMobile, onMobileOpenChange, setActiveNav, clearSession]);
 
   if (isMobile) {
     return (

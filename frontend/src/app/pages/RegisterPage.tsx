@@ -19,6 +19,9 @@ const GPA_SCALE_OPTIONS = ['4.0', '100', '5.0'] as const;
 const TARGET_YEAR_OPTIONS = ['2026', '2027', '2028', '2029'] as const;
 const MAJOR_PRESETS = ['计算机科学', '经济学', '商科', '生物/Pre-Med', '工程', '社会科学'] as const;
 
+type OnboardingPhase = 'application' | 'decision';
+type DegreeLevel = 'undergraduate' | 'masters' | 'phd';
+
 function FormField({
   label,
   hint,
@@ -44,6 +47,8 @@ function FormField({
 export function RegisterPage() {
   const navigate = useNavigate();
   const { createStudent, isLoading, error } = useStudent();
+  const [phase, setPhase] = useState<OnboardingPhase>('application');
+  const [degreeLevel, setDegreeLevel] = useState<DegreeLevel>('undergraduate');
   const [form, setForm] = useState({
     name: '',
     gpa: '3.8',
@@ -52,9 +57,13 @@ export function RegisterPage() {
     major: '计算机科学',
     targetYear: '2027',
     curriculumType: 'AP',
+    citizenship: 'CN',
+    residencyState: '',
     budgetUsd: '70000',
     needFinancialAid: 'yes',
   });
+  const isDecision = phase === 'decision';
+  const isUndergrad = degreeLevel === 'undergraduate';
 
   const resumePath = useMemo(() => {
     const snapshot = readWorkspaceSnapshot();
@@ -66,11 +75,13 @@ export function RegisterPage() {
     document.documentElement.lang = 'zh-CN';
   }, []);
 
-  const canSubmit =
-    form.name.trim().length > 0 &&
-    form.major.trim().length > 0 &&
-    Number(form.gpa) >= 0 &&
-    Number(form.targetYear) >= 2024;
+  function handleSkip() {
+    navigate(buildWorkspacePath(null, 'advisor'));
+  }
+
+  const canSubmit = isDecision
+    ? form.name.trim().length > 0 && form.major.trim().length > 0
+    : form.name.trim().length > 0 && form.major.trim().length > 0 && Number(form.gpa) >= 0 && Number(form.targetYear) >= 2024;
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -78,23 +89,27 @@ export function RegisterPage() {
 
     const payload: StudentCreate = {
       name: form.name.trim(),
-      gpa: Number(form.gpa),
-      gpa_scale: form.gpaScale,
-      sat_total: form.satTotal ? Number(form.satTotal) : null,
+      gpa: isDecision ? null : Number(form.gpa),
+      gpa_scale: isDecision ? null : form.gpaScale,
+      sat_total: isDecision ? null : (form.satTotal ? Number(form.satTotal) : null),
       act_composite: null,
       toefl_total: null,
-      curriculum_type: form.curriculumType,
+      curriculum_type: isDecision ? null : form.curriculumType,
       ap_courses: [],
       extracurriculars: [],
       awards: [],
       intended_majors: [form.major.trim()],
+      citizenship: form.citizenship || null,
+      residency_state: form.citizenship === 'US' ? (form.residencyState || null) : null,
       budget_usd: form.budgetUsd ? Number(form.budgetUsd) : null,
       need_financial_aid: form.needFinancialAid === 'yes',
+      degree_level: degreeLevel,
       preferences: {
         ui_preference_tags: ['landing-signup'],
+        onboarding_phase: phase,
       },
       ed_preference: null,
-      target_year: Number(form.targetYear),
+      target_year: isDecision ? null : Number(form.targetYear),
     };
 
     const created = await createStudent(payload);
@@ -151,64 +166,64 @@ export function RegisterPage() {
             </div>
           </header>
 
-          <main className="grid flex-1 gap-8 py-8 lg:grid-cols-[minmax(0,0.68fr)_minmax(420px,0.96fr)] lg:items-center">
-            <MarketingStagger mode="immediate" className="space-y-7" delay={0.04} stagger={0.08}>
-              <MarketingStaggerItem>
-                <div className="inline-flex items-center gap-2 rounded-full border border-[#17304b]/10 bg-white/74 px-4 py-2 text-[11px] font-bold uppercase tracking-[0.18em] text-[#17304b] shadow-[0_12px_24px_rgba(15,23,42,0.06)] backdrop-blur">
-                  <span className="material-symbols-outlined text-[16px]">article</span>
-                  1 分钟完成首版档案
-                </div>
-              </MarketingStaggerItem>
-
-              <MarketingStaggerItem className="space-y-4">
-                <h1 className="font-headline text-5xl font-black leading-[0.95] tracking-[-0.05em] text-[#10253d] sm:text-6xl">
-                  先把你的约束写清楚，
-                  <span className="block text-[#17304b]">下一步就直接进入 workspace。</span>
-                </h1>
-                <p className="max-w-xl text-base leading-8 text-[#17304b]/74">
-                  这里只收集 Advisor 真正需要的基础信息。提交之后不会停在空白页，而是直接进入推荐、筛校和决策界面。
-                </p>
-              </MarketingStaggerItem>
-
-              <MarketingStaggerItem>
-                <div className="overflow-hidden rounded-[2rem] border border-white/72 bg-[linear-gradient(180deg,rgba(255,255,255,0.95),rgba(244,238,228,0.9))] p-5 shadow-[0_24px_58px_rgba(15,23,42,0.08)]">
-                  <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#17304b]/50">进入后会得到</div>
-                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                    {[
-                      {
-                        title: '首轮结构',
-                        body: '直接看到 Reach / Match / Safety 的第一版框架。',
-                      },
-                      {
-                        title: '继续决策',
-                        body: '后续能无缝进入 offer compare 与择校分析。',
-                      },
-                    ].map((item) => (
-                      <div
-                        key={item.title}
-                        className="rounded-[1.35rem] border border-[#17304b]/8 bg-white/84 px-4 py-4 shadow-[0_12px_28px_rgba(15,23,42,0.04)]"
-                      >
-                        <div className="text-xs font-black uppercase tracking-[0.14em] text-[#17304b]/54">{item.title}</div>
-                        <div className="mt-2 text-sm leading-7 text-[#17304b]/78">{item.body}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </MarketingStaggerItem>
-            </MarketingStagger>
-
+          <main className="flex flex-1 items-center justify-center py-8">
             <MarketingReveal
               mode="immediate"
               amount={26}
               scale={0.988}
-              className="rounded-[2.15rem] border border-white/78 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(244,238,228,0.9))] p-6 shadow-[0_30px_72px_rgba(15,23,42,0.1)] sm:p-8"
+              className="w-full max-w-2xl rounded-[2.15rem] border border-white/78 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(244,238,228,0.9))] p-6 shadow-[0_30px_72px_rgba(15,23,42,0.1)] sm:p-8"
             >
               <div className="mb-6">
                 <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#17304b]/54">创建档案</div>
-                <h2 className="mt-3 font-headline text-3xl font-black tracking-tight text-[#10253d]">创建你的首版申请档案</h2>
+                <h2 className="mt-3 font-headline text-3xl font-black tracking-tight text-[#10253d]">
+                  {isDecision ? '录取后选校工作台' : '创建你的首版申请档案'}
+                </h2>
                 <p className="mt-2 text-sm leading-7 text-[#17304b]/66">
-                  现在只填最关键的信息。更多活动、奖项和偏好，可以进 workspace 后再继续补。
+                  {isDecision
+                    ? '已拿到 offer？填写基本信息后，进入 workspace 录入 offer 进行对比分析。'
+                    : '现在只填最关键的信息。更多活动、奖项和偏好，可以进 workspace 后再继续补。'
+                  }
                 </p>
+                <div className="mt-4">
+                  <DashboardSegmentedGroup
+                    type="single"
+                    value={phase}
+                    onValueChange={(value) => value && setPhase(value as OnboardingPhase)}
+                    className="grid grid-cols-2 gap-2"
+                    size="compact"
+                    accent="marketing"
+                  >
+                    <DashboardSegmentedItem value="application" className="justify-center">
+                      🎯 准备申请
+                    </DashboardSegmentedItem>
+                    <DashboardSegmentedItem value="decision" className="justify-center">
+                      🎓 已拿 Offer，选校中
+                    </DashboardSegmentedItem>
+                  </DashboardSegmentedGroup>
+                </div>
+                <div className="mt-3">
+                  <DashboardFieldLabel className="text-[10px] tracking-[0.14em] text-[#17304b]/62 mb-2">
+                    申请阶段
+                  </DashboardFieldLabel>
+                  <DashboardSegmentedGroup
+                    type="single"
+                    value={degreeLevel}
+                    onValueChange={(value) => value && setDegreeLevel(value as DegreeLevel)}
+                    className="grid grid-cols-3 gap-2"
+                    size="compact"
+                    accent="marketing"
+                  >
+                    <DashboardSegmentedItem value="undergraduate" className="justify-center">
+                      本科
+                    </DashboardSegmentedItem>
+                    <DashboardSegmentedItem value="masters" className="justify-center">
+                      硕士
+                    </DashboardSegmentedItem>
+                    <DashboardSegmentedItem value="phd" className="justify-center">
+                      博士
+                    </DashboardSegmentedItem>
+                  </DashboardSegmentedGroup>
+                </div>
               </div>
 
               <form className="space-y-5" onSubmit={handleSubmit}>
@@ -224,25 +239,28 @@ export function RegisterPage() {
                         />
                       </FormField>
 
-                      <FormField label="目标入学年份">
-                        <DashboardSegmentedGroup
-                          type="single"
-                          value={form.targetYear}
-                          onValueChange={(value) => value && setForm((prev) => ({ ...prev, targetYear: value }))}
-                          className="grid grid-cols-2 gap-2"
-                          size="compact"
-                          accent="marketing"
-                        >
-                          {TARGET_YEAR_OPTIONS.map((year) => (
-                            <DashboardSegmentedItem key={year} value={year} className="justify-center">
-                              {year}
-                            </DashboardSegmentedItem>
-                          ))}
-                        </DashboardSegmentedGroup>
-                      </FormField>
+                      {!isDecision && (
+                        <FormField label="目标入学年份">
+                          <DashboardSegmentedGroup
+                            type="single"
+                            value={form.targetYear}
+                            onValueChange={(value) => value && setForm((prev) => ({ ...prev, targetYear: value }))}
+                            className="grid grid-cols-2 gap-2"
+                            size="compact"
+                            accent="marketing"
+                          >
+                            {TARGET_YEAR_OPTIONS.map((year) => (
+                              <DashboardSegmentedItem key={year} value={year} className="justify-center">
+                                {year}
+                              </DashboardSegmentedItem>
+                            ))}
+                          </DashboardSegmentedGroup>
+                        </FormField>
+                      )}
                     </div>
                   </MarketingStaggerItem>
 
+                  {!isDecision && (
                   <MarketingStaggerItem>
                     <div className="grid gap-5 sm:grid-cols-2">
                       <FormField label="GPA" htmlFor="register-gpa">
@@ -274,6 +292,7 @@ export function RegisterPage() {
                       </FormField>
                     </div>
                   </MarketingStaggerItem>
+                  )}
 
                   <MarketingStaggerItem>
                     <FormField label="意向专业" htmlFor="register-major">
@@ -304,6 +323,7 @@ export function RegisterPage() {
                     </FormField>
                   </MarketingStaggerItem>
 
+                  {!isDecision && isUndergrad && (
                   <MarketingStaggerItem>
                     <div className="grid gap-5 sm:grid-cols-2">
                       <FormField label="课程体系">
@@ -332,6 +352,32 @@ export function RegisterPage() {
                           placeholder="例如：1520"
                         />
                       </FormField>
+                    </div>
+                  </MarketingStaggerItem>
+                  )}
+
+                  <MarketingStaggerItem>
+                    <div className="grid gap-5 sm:grid-cols-2">
+                      <FormField label="国籍" htmlFor="register-citizenship" hint="用于判断学费档位（国际生/州内/州外）">
+                        <DashboardInput
+                          id="register-citizenship"
+                          value={form.citizenship}
+                          onChange={(event) => setForm((prev) => ({ ...prev, citizenship: event.target.value.toUpperCase() }))}
+                          placeholder="国家代码，如 CN、US、IN"
+                          maxLength={2}
+                        />
+                      </FormField>
+                      {form.citizenship === 'US' && (
+                        <FormField label="居住州" htmlFor="register-state" hint="用于计算州内学费">
+                          <DashboardInput
+                            id="register-state"
+                            value={form.residencyState}
+                            onChange={(event) => setForm((prev) => ({ ...prev, residencyState: event.target.value.toUpperCase() }))}
+                            placeholder="如 CA、NY、TX"
+                            maxLength={2}
+                          />
+                        </FormField>
+                      )}
                     </div>
                   </MarketingStaggerItem>
 
@@ -375,9 +421,13 @@ export function RegisterPage() {
                 )}
 
                 <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="max-w-md text-xs leading-6 text-[#17304b]/62">
-                    提交后会直接进入你的 ScholarPath workspace，并自动保存这份学生档案。
-                  </p>
+                  <button
+                    type="button"
+                    onClick={handleSkip}
+                    className="text-sm font-semibold text-[#17304b]/55 transition hover:text-[#17304b]/80"
+                  >
+                    跳过，直接和顾问对话 →
+                  </button>
                   <button
                     type="submit"
                     disabled={!canSubmit || isLoading}

@@ -17,6 +17,7 @@ from scholarpath.api.models.school import (
     SchoolResponse,
     SchoolSearchParams,
 )
+from scholarpath.db.models.community_review import SchoolCommunityReport
 from scholarpath.db.models.school import School
 from scholarpath.db.models.student import Student
 
@@ -50,13 +51,17 @@ async def list_schools(
     base = _apply_filters(base, params)
 
     # Total count
-    count_stmt = select(func.count()).select_from(base.subquery())
+    count_stmt = select(func.count()).select_from(
+        select(School.id).where(*[c for c in (base.whereclause,) if c is not None]).subquery()
+    ) if base.whereclause is not None else select(func.count(School.id))
     total = (await session.execute(count_stmt)).scalar_one()
 
-    # Paginated results
+    # Paginated results — build fresh to avoid stale joins
     offset = (params.page - 1) * params.per_page
+    data_stmt = _apply_filters(select(School), params)
     data_stmt = (
-        base.options(selectinload(School.programs))
+        data_stmt
+        .options(selectinload(School.programs))
         .order_by(School.us_news_rank.asc().nulls_last(), School.name)
         .offset(offset)
         .limit(params.per_page)
@@ -245,20 +250,70 @@ async def lookup_school(
     and the system either returns the existing record or creates a new
     one with AI-generated data.
     """
-    # 1. Try exact match
-    result = await session.execute(
-        select(School).where(
-            func.lower(School.name) == request.name.strip().lower()
+    query = request.name.strip()
+
+    # Common abbreviation map
+    ABBREVIATIONS: dict[str, str] = {
+        "MIT": "Massachusetts Institute of Technology",
+        "Caltech": "California Institute of Technology",
+        "CMU": "Carnegie Mellon University",
+        "UCLA": "University of California, Los Angeles",
+        "UCSD": "University of California, San Diego",
+        "UCSB": "University of California, Santa Barbara",
+        "UPenn": "University of Pennsylvania",
+        "UVA": "University of Virginia",
+        "UNC": "University of North Carolina at Chapel Hill",
+        "UIUC": "University of Illinois Urbana-Champaign",
+        "NYU": "New York University",
+        "USC": "University of Southern California",
+        "GaTech": "Georgia Institute of Technology",
+        "Georgia Tech": "Georgia Institute of Technology",
+        "WashU": "Washington University in St. Louis",
+        "RPI": "Rensselaer Polytechnic Institute",
+        "WPI": "Worcester Polytechnic Institute",
+        "SMU": "Southern Methodist University",
+        "BU": "Boston University",
+        "BC": "Boston College",
+        "UMich": "University of Michigan, Ann Arbor",
+        "UT Austin": "University of Texas at Austin",
+        "Penn State": "Penn State University Park",
+        "UCB": "University of California, Berkeley",
+        "Cal": "University of California, Berkeley",
+        "Berkeley": "University of California, Berkeley",
+    }
+
+    _base = select(School).options(selectinload(School.programs))
+
+    # 1. Check abbreviation map
+    expanded = ABBREVIATIONS.get(query) or ABBREVIATIONS.get(query.upper())
+    if expanded:
+        result = await session.execute(
+            _base.where(func.lower(School.name) == expanded.lower())
         )
+        school = result.scalar_one_or_none()
+        if school is not None:
+            return school
+
+    # 2. Try exact match
+    result = await session.execute(
+        _base.where(func.lower(School.name) == query.lower())
     )
     school = result.scalar_one_or_none()
     if school is not None:
         return school
 
-    # 2. Try fuzzy match (ILIKE)
+    # 3. Try Chinese name match
     result = await session.execute(
-        select(School).where(
-            School.name.ilike(f"%{request.name.strip()}%")
+        _base.where(func.lower(School.name_cn) == query.lower()).limit(1)
+    )
+    school = result.scalar_one_or_none()
+    if school is not None:
+        return school
+
+    # 4. Try fuzzy match (ILIKE on name and name_cn)
+    result = await session.execute(
+        _base.where(
+            School.name.ilike(f"%{query}%") | School.name_cn.ilike(f"%{query}%")
         ).limit(1)
     )
     school = result.scalar_one_or_none()
@@ -360,3 +415,98 @@ async def lookup_school(
         pass  # Best effort
 
     return school
+
+
+@router.get("/{school_id}/community-reviews")
+async def get_community_reviews(
+    school_id: uuid.UUID,
+    session: SessionDep,
+) -> dict:
+    """Return raw community review posts for a school (no LLM processing)."""
+    from scholarpath.db.models.community_review import CommunityReview
+
+    result = await session.execute(
+        select(CommunityReview)
+        .where(CommunityReview.school_id == school_id)
+        .order_by(CommunityReview.post_score.desc())
+        .limit(30)
+    )
+    reviews = list(result.scalars().all())
+    return {
+        "school_id": str(school_id),
+        "count": len(reviews),
+        "reviews": [
+            {
+                "source": r.subreddit,
+                "title": r.post_title,
+                "body": (r.post_body or "")[:300],
+                "score": r.post_score,
+                "url": r.post_url,
+                "comments": (r.top_comments or [])[:3],
+            }
+            for r in reviews
+        ],
+    }
+
+
+@router.get("/{school_id}/community-report")
+async def get_community_report(
+    school_id: uuid.UUID,
+    session: SessionDep,
+    llm: AppLLMDep,
+) -> dict:
+    """Return the community sentiment report for a school.
+
+    If no report exists or it's stale, triggers real-time collection from
+    Reddit + Xiaohongshu and LLM summarization on demand.
+    """
+    from scholarpath.services.community_review_service import get_or_generate_report
+
+    school = await session.get(School, school_id)
+    if school is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "School not found")
+
+    report = await get_or_generate_report(session, llm, school)
+
+    if report is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No community reviews found for {school.name}",
+        )
+    return {
+        "school_id": str(report.school_id),
+        "review_count": report.review_count,
+        "dimensions": report.dimensions,
+        "overall_score": report.overall_score,
+        "overall_summary": report.overall_summary,
+        "generated_at": report.generated_at.isoformat() if report.generated_at else None,
+        "model_version": report.model_version,
+    }
+
+
+@router.get("/{school_id}/claims-graph")
+async def get_claims_graph(
+    school_id: uuid.UUID,
+    session: SessionDep,
+    llm: AppLLMDep,
+) -> dict:
+    """Return the claims/argument graph for a school.
+
+    Extracts claims from community reviews, builds an argument graph
+    with support/contradiction relationships, and uses belief propagation
+    for opposing viewpoint analysis.  Results are cached for 7 days.
+    """
+    from scholarpath.services.claims_graph_service import get_or_generate_claims_graph
+
+    school = await session.get(School, school_id)
+    if school is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "School not found")
+
+    payload = await get_or_generate_claims_graph(session, llm, school)
+
+    if payload is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No community reviews found for {school.name}; cannot generate claims graph",
+        )
+    return payload

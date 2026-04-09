@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { AnimatePresence, motion } from 'motion/react';
 import { useEvaluations } from '../../hooks/useEvaluations';
 import { useSchools } from '../../hooks/useSchools';
+import { useOffers } from '../../hooks/useOffers';
 import { useApp } from '../../context/AppContext';
 import { evaluationsApi } from '../../lib/api/evaluations';
 import { schoolsApi } from '../../lib/api/schools';
@@ -10,16 +11,7 @@ import type {
   EvaluationWithSchool,
   GenerateSchoolListResponse,
   RecommendationScenarioPack,
-  SchoolResponse,
 } from '../../lib/types';
-import {
-  DASHBOARD_SELECT_EMPTY_VALUE,
-  DashboardSelect,
-  DashboardSelectContent,
-  DashboardSelectItem,
-  DashboardSelectTrigger,
-  DashboardSelectValue,
-} from './ui/dashboard-select';
 import { DashboardInput } from './ui/dashboard-input';
 import { DashboardSegmentedGroup, DashboardSegmentedItem } from './ui/dashboard-segmented';
 import { AnimatedWorkspacePage, MotionItem, MotionSection, MotionStagger, MotionSurface } from './WorkspaceMotion';
@@ -110,18 +102,22 @@ function TierSummary({ tieredCounts, total, avgScore, t }: { tieredCounts: Recor
 
 // ─── Expandable School Row ───
 
-function SchoolRow({ ev, isFavorite, isBlacklisted, onToggleFavorite, onToggleBlacklist, t }: {
+function SchoolRow({ ev, isFavorite, isBlacklisted, onToggleFavorite, onToggleBlacklist, showRestore, t }: {
   ev: EvaluationWithSchool;
   isFavorite: boolean;
   isBlacklisted: boolean;
   onToggleFavorite: () => void;
   onToggleBlacklist: () => void;
+  showRestore?: boolean;
   t: Record<string, any>;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const confirmTimerRef = useRef<number | null>(null);
   const tier = TIER_CFG[ev.tier] ?? TIER_CFG.target;
 
-  if (isBlacklisted) return null;
+  // In removed tab, show all blacklisted; in other tabs, hide blacklisted
+  if (isBlacklisted && !showRestore) return null;
 
   return (
     <motion.div layout className={`dashboard-hover-lift bg-surface-container-lowest rounded-2xl border transition-all ${
@@ -183,13 +179,42 @@ function SchoolRow({ ev, isFavorite, isBlacklisted, onToggleFavorite, onToggleBl
           <div className="text-[8px] text-on-surface-variant/50 font-bold">{t.sl_admit}</div>
         </div>
 
-        {/* Remove button */}
-        <button
-          onClick={(e) => { e.stopPropagation(); onToggleBlacklist(); }}
-          className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-error/5 text-on-surface-variant/20 hover:text-error transition-colors shrink-0"
-        >
-          <span className="material-symbols-outlined text-base">close</span>
-        </button>
+        {/* Remove / Restore button */}
+        {showRestore ? (
+          <button
+            onClick={(e) => { e.stopPropagation(); onToggleBlacklist(); }}
+            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-tertiary/10 text-tertiary text-xs font-bold hover:bg-tertiary/20 transition-colors shrink-0"
+          >
+            <span className="material-symbols-outlined text-sm">undo</span>
+            {t.sl_restore}
+          </button>
+        ) : confirmRemove ? (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setConfirmRemove(false);
+              if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
+              onToggleBlacklist();
+            }}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-error/10 text-error text-[11px] font-bold hover:bg-error/20 transition-colors shrink-0 animate-pulse"
+          >
+            <span className="material-symbols-outlined text-sm">delete</span>
+            {t.sl_remove_confirm}
+          </button>
+        ) : (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setConfirmRemove(true);
+              // Auto-dismiss after 3 seconds
+              if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
+              confirmTimerRef.current = window.setTimeout(() => setConfirmRemove(false), 3000);
+            }}
+            className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-error/5 text-on-surface-variant/20 hover:text-error transition-colors shrink-0"
+          >
+            <span className="material-symbols-outlined text-base">close</span>
+          </button>
+        )}
 
         {/* Expand chevron */}
         <span className={`material-symbols-outlined text-on-surface-variant/30 text-lg transition-transform ${expanded ? 'rotate-180' : ''}`}>
@@ -646,13 +671,139 @@ function AIPreferencesPanel({ studentId, onGenerated, t }: {
 
 // ─── Main Panel ───
 
+// ─── Region / Rank filter constants ───
+
+const REGION_STATES: Record<string, string[]> = {
+  east: ['CT','DC','DE','FL','GA','MA','MD','ME','NC','NH','NJ','NY','PA','RI','SC','VA','VT','WV'],
+  west: ['AK','AZ','CA','CO','HI','ID','MT','NM','NV','OR','UT','WA','WY'],
+  central: ['IA','IL','IN','KS','MI','MN','MO','ND','NE','OH','OK','SD','WI'],
+  south: ['AL','AR','KY','LA','MS','OK','TN','TX'],
+};
+
+const REGION_CHIPS = [
+  { id: 'east', labelKey: 'sl_region_east' as const },
+  { id: 'west', labelKey: 'sl_region_west' as const },
+  { id: 'central', labelKey: 'sl_region_central' as const },
+  { id: 'south', labelKey: 'sl_region_south' as const },
+] as const;
+
+const RANK_CHIPS = [
+  { id: 'top20', max: 20, labelKey: 'sl_rank_top20' as const },
+  { id: 'top50', max: 50, labelKey: 'sl_rank_top50' as const },
+  { id: 'top100', max: 100, labelKey: 'sl_rank_top100' as const },
+] as const;
+
+const TIER_ORDER = ['reach', 'target', 'safety', 'likely'] as const;
+const TIER_ICONS: Record<string, string> = { reach: '\u{1F3AF}', target: '\u2705', safety: '\u{1F6E1}\uFE0F', likely: '\u{1F4CB}' };
+const DEFAULT_VISIBLE_PER_TIER = 5;
+
+// ─── Collapsible Tier Section ───
+
+function TierSection({
+  tier,
+  evals,
+  favoriteSchoolIds,
+  blacklistedSchoolIds,
+  toggleFavorite,
+  toggleBlacklist,
+  listVersion,
+  total,
+  t,
+}: {
+  tier: string;
+  evals: EvaluationWithSchool[];
+  favoriteSchoolIds: Set<string>;
+  blacklistedSchoolIds: Set<string>;
+  toggleFavorite: (id: string) => void;
+  toggleBlacklist: (id: string) => void;
+  listVersion: number;
+  total: number;
+  t: Record<string, any>;
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  const cfg = TIER_CFG[tier] ?? TIER_CFG.target;
+  const icon = TIER_ICONS[tier] ?? '';
+  const visible = showAll ? evals : evals.slice(0, DEFAULT_VISIBLE_PER_TIER);
+  const hasMore = evals.length > DEFAULT_VISIBLE_PER_TIER;
+
+  if (evals.length === 0) return null;
+
+  return (
+    <div className="space-y-2">
+      {/* Section header */}
+      <button
+        onClick={() => setCollapsed(!collapsed)}
+        className="w-full flex items-center gap-3 py-2 px-1 group"
+      >
+        <span className="text-base">{icon}</span>
+        <span className={`text-xs font-black uppercase tracking-widest ${cfg.text}`}>
+          {t[cfg.labelKey]}
+        </span>
+        <span className="text-[10px] font-bold text-on-surface-variant/50 bg-surface-container-high/40 px-2 py-0.5 rounded-full">
+          {evals.length}
+        </span>
+        <div className="flex-1" />
+        <span className={`material-symbols-outlined text-on-surface-variant/30 text-lg transition-transform ${collapsed ? '-rotate-90' : ''}`}>
+          expand_more
+        </span>
+      </button>
+
+      {/* Section content */}
+      <AnimatePresence initial={false}>
+        {!collapsed && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+            className="overflow-hidden"
+          >
+            <MotionStagger className="space-y-2" delay={0.04} stagger={0.03} role="surface" key={`tier-${tier}-${listVersion}-${total}`}>
+              {visible.map((ev) => (
+                <MotionItem key={ev.id} role="surface">
+                  <SchoolRow
+                    ev={ev}
+                    isFavorite={favoriteSchoolIds.has(ev.school_id)}
+                    isBlacklisted={blacklistedSchoolIds.has(ev.school_id)}
+                    onToggleFavorite={() => toggleFavorite(ev.school_id)}
+                    onToggleBlacklist={() => toggleBlacklist(ev.school_id)}
+                    t={t}
+                  />
+                </MotionItem>
+              ))}
+            </MotionStagger>
+            {hasMore && (
+              <div className="flex justify-center pt-2">
+                <button
+                  onClick={() => setShowAll(!showAll)}
+                  className="text-xs font-bold text-primary hover:text-primary/80 transition-colors flex items-center gap-1"
+                >
+                  <span className="material-symbols-outlined text-sm">{showAll ? 'expand_less' : 'expand_more'}</span>
+                  {showAll ? t.sl_show_less : `${t.sl_show_more} (${evals.length - DEFAULT_VISIBLE_PER_TIER})`}
+                </button>
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// ─── Main Panel ───
+
 export function SchoolListPanel({ studentId }: SchoolListPanelProps) {
   const { tieredList, evaluations, isLoading, refetch } = useEvaluations(studentId);
-  const { favoriteSchoolIds, toggleFavorite, blacklistedSchoolIds, toggleBlacklist, t } = useApp();
+  const { favoriteSchoolIds, toggleFavorite, blacklistedSchoolIds, toggleBlacklist, setActiveNav, t } = useApp();
+  const { offers } = useOffers(studentId ?? null);
+  const hasOffers = offers.some((o) => o.status === 'admitted');
   const [showAddModal, setShowAddModal] = useState(false);
   const [showPrefs, setShowPrefs] = useState(false);
   const [sortBy, setSortBy] = useState<'score' | 'tier' | 'favorite'>('score');
-  const [tierFilter, setTierFilter] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'favorites' | 'all' | 'removed'>('all');
+  const [regionFilter, setRegionFilter] = useState<string | null>(null);
+  const [rankFilter, setRankFilter] = useState<number | null>(null);
   const [listVersion, setListVersion] = useState(0);
   const [scenarioPack, setScenarioPack] = useState<RecommendationScenarioPack | null>(null);
   const [activeScenarioId, setActiveScenarioId] = useState<string>('baseline');
@@ -685,29 +836,73 @@ export function SchoolListPanel({ studentId }: SchoolListPanelProps) {
     return [...best.values()];
   }, [tieredList]);
 
-  const visibleEvals = useMemo(() => {
-    let list = tierFilter ? allEvals.filter((ev) => ev.tier === tierFilter) : allEvals;
+  // Apply quick filters (region + rank) to a list of evals
+  const applyQuickFilters = useCallback((list: EvaluationWithSchool[]) => {
+    let filtered = list;
+    if (regionFilter) {
+      const states = new Set(REGION_STATES[regionFilter] ?? []);
+      filtered = filtered.filter((ev) => ev.school?.state && states.has(ev.school.state));
+    }
+    if (rankFilter) {
+      filtered = filtered.filter((ev) => ev.school?.us_news_rank != null && ev.school.us_news_rank <= rankFilter);
+    }
+    return filtered;
+  }, [regionFilter, rankFilter]);
+
+  // Sort helper
+  const applySorting = useCallback((list: EvaluationWithSchool[]) => {
     if (sortBy === 'favorite') {
-      list = [...list].sort((a, b) => {
+      return [...list].sort((a, b) => {
         const af = favoriteSchoolIds.has(a.school_id) ? 1 : 0;
         const bf = favoriteSchoolIds.has(b.school_id) ? 1 : 0;
         return bf - af || b.overall_score - a.overall_score;
       });
     } else if (sortBy === 'score') {
-      list = [...list].sort((a, b) => b.overall_score - a.overall_score);
+      return [...list].sort((a, b) => b.overall_score - a.overall_score);
     }
     return list;
-  }, [allEvals, tierFilter, sortBy, favoriteSchoolIds]);
+  }, [sortBy, favoriteSchoolIds]);
+
+  // Non-blacklisted evals (used for "all" and "favorites" tabs)
+  const activeEvals = useMemo(() => {
+    return allEvals.filter((ev) => !blacklistedSchoolIds.has(ev.school_id));
+  }, [allEvals, blacklistedSchoolIds]);
+
+  // Favorites tab data
+  const favoriteEvals = useMemo(() => {
+    const favs = activeEvals.filter((ev) => favoriteSchoolIds.has(ev.school_id));
+    return applySorting(applyQuickFilters(favs));
+  }, [activeEvals, favoriteSchoolIds, applyQuickFilters, applySorting]);
+
+  // Removed tab data
+  const removedEvals = useMemo(() => {
+    return allEvals.filter((ev) => blacklistedSchoolIds.has(ev.school_id));
+  }, [allEvals, blacklistedSchoolIds]);
+
+  // "All" tab: group by tier, applying filters + sorting within each tier
+  const tieredGroups = useMemo(() => {
+    const groups: Record<string, EvaluationWithSchool[]> = { reach: [], target: [], safety: [], likely: [] };
+    for (const ev of activeEvals) {
+      const tier = ev.tier && groups[ev.tier] ? ev.tier : 'target';
+      groups[tier].push(ev);
+    }
+    // Apply quick filters and sorting within each tier
+    for (const tier of TIER_ORDER) {
+      groups[tier] = applySorting(applyQuickFilters(groups[tier]));
+    }
+    return groups;
+  }, [activeEvals, applyQuickFilters, applySorting]);
 
   const tieredCounts = useMemo(() => ({
-    reach: tieredList?.reach.length ?? 0,
-    target: tieredList?.target.length ?? 0,
-    safety: tieredList?.safety.length ?? 0,
-    likely: tieredList?.likely.length ?? 0,
-  }), [tieredList]);
+    reach: tieredGroups.reach.length,
+    target: tieredGroups.target.length,
+    safety: tieredGroups.safety.length,
+    likely: tieredGroups.likely.length,
+  }), [tieredGroups]);
 
-  const total = allEvals.length;
-  const avgScore = total > 0 ? allEvals.reduce((s, e) => s + e.overall_score, 0) / total : 0;
+  const total = activeEvals.length;
+  const avgScore = total > 0 ? activeEvals.reduce((s, e) => s + e.overall_score, 0) / total : 0;
+
   const scenarioTabs = useMemo(() => {
     if (!scenarioPack) return [];
     const tabs: Array<{ id: string; label: string; schools: any[] }> = [
@@ -726,52 +921,25 @@ export function SchoolListPanel({ studentId }: SchoolListPanelProps) {
     setListVersion((v) => v + 1);
   }, [refetch]);
 
+  const toggleRegion = useCallback((id: string) => {
+    setRegionFilter((prev) => prev === id ? null : id);
+  }, []);
+
+  const toggleRank = useCallback((max: number) => {
+    setRankFilter((prev) => prev === max ? null : max);
+  }, []);
+
   return (
     <AnimatedWorkspacePage className="w-full bg-background font-body">
       <section className="flex h-full w-full flex-col overflow-hidden">
         <header className="sticky top-0 z-20 border-b border-outline-variant/10 bg-background/90 px-4 py-3 backdrop-blur-md sm:px-6 lg:px-8">
           <MotionSection role="toolbar" className="space-y-3">
-            <div className="flex flex-col gap-1">
-              <h1 className="font-headline text-lg font-black tracking-tight text-on-surface">{t.sl_title}</h1>
-              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-on-surface-variant/60">{t.sl_subtitle}</p>
-            </div>
-
-            <div className="dashboard-toolbar-rail">
-              <div className="dashboard-scroll-rail sm:flex sm:flex-wrap sm:items-center sm:gap-2 sm:overflow-visible sm:pb-0">
-                <DashboardSelect
-                  value={sortBy}
-                  onValueChange={(value) => setSortBy(value as 'score' | 'tier' | 'favorite')}
-                >
-                  <DashboardSelectTrigger size="toolbar" className="shrink-0">
-                    <DashboardSelectValue placeholder={t.sl_sort_score} />
-                  </DashboardSelectTrigger>
-                  <DashboardSelectContent>
-                    <DashboardSelectItem value="score">{t.sl_sort_score}</DashboardSelectItem>
-                    <DashboardSelectItem value="tier">{t.sl_sort_tier}</DashboardSelectItem>
-                    <DashboardSelectItem value="favorite">{t.sl_sort_fav}</DashboardSelectItem>
-                  </DashboardSelectContent>
-                </DashboardSelect>
-
-                <DashboardSelect
-                  value={tierFilter || undefined}
-                  onValueChange={(value) => {
-                    setTierFilter(value === DASHBOARD_SELECT_EMPTY_VALUE ? null : value);
-                  }}
-                >
-                  <DashboardSelectTrigger size="toolbar" className="shrink-0">
-                    <DashboardSelectValue placeholder={t.sl_all_tiers} />
-                  </DashboardSelectTrigger>
-                  <DashboardSelectContent>
-                    <DashboardSelectItem value={DASHBOARD_SELECT_EMPTY_VALUE}>
-                      {t.sl_all_tiers}
-                    </DashboardSelectItem>
-                    <DashboardSelectItem value="reach">{t.sl_tier_reach}</DashboardSelectItem>
-                    <DashboardSelectItem value="target">{t.sl_tier_target}</DashboardSelectItem>
-                    <DashboardSelectItem value="safety">{t.sl_tier_safety}</DashboardSelectItem>
-                    <DashboardSelectItem value="likely">{t.sl_tier_likely}</DashboardSelectItem>
-                  </DashboardSelectContent>
-                </DashboardSelect>
-
+            <div className="flex items-center justify-between">
+              <div className="flex flex-col gap-1">
+                <h1 className="font-headline text-lg font-black tracking-tight text-on-surface">{t.sl_title}</h1>
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-on-surface-variant/60">{t.sl_subtitle}</p>
+              </div>
+              <div className="flex items-center gap-2">
                 <button
                   onClick={handleRefresh}
                   className="dashboard-hover-lift flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-on-surface-variant transition-colors hover:bg-surface-container-high"
@@ -779,7 +947,6 @@ export function SchoolListPanel({ studentId }: SchoolListPanelProps) {
                 >
                   <span className="material-symbols-outlined text-[20px]">refresh</span>
                 </button>
-
                 <button
                   onClick={() => setShowAddModal(true)}
                   className="dashboard-hover-lift inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-primary/15 bg-primary/5 px-4 py-2 text-xs font-bold uppercase tracking-widest text-primary transition-colors hover:bg-primary/10"
@@ -787,7 +954,6 @@ export function SchoolListPanel({ studentId }: SchoolListPanelProps) {
                   <span className="material-symbols-outlined text-sm">add</span>
                   {t.sl_add_school}
                 </button>
-
                 <button
                   onClick={() => setShowPrefs(!showPrefs)}
                   className="dashboard-hover-lift inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-on-primary shadow-md transition-all hover:brightness-110"
@@ -797,6 +963,68 @@ export function SchoolListPanel({ studentId }: SchoolListPanelProps) {
                 </button>
               </div>
             </div>
+
+            {/* Tab navigation */}
+            <DashboardSegmentedGroup
+              type="single"
+              value={activeTab}
+              onValueChange={(value) => { if (value) setActiveTab(value as 'favorites' | 'all' | 'removed'); }}
+            >
+              <DashboardSegmentedItem value="favorites" accent="primary" size="compact">
+                <span className="material-symbols-outlined text-sm" style={{ fontVariationSettings: "'FILL' 1" }}>star</span>
+                {t.sl_tab_favorites}
+                {favoriteSchoolIds.size > 0 && (
+                  <span className="ml-1 text-[9px] bg-primary/10 text-primary px-1.5 py-0.5 rounded-full font-black">{favoriteSchoolIds.size}</span>
+                )}
+              </DashboardSegmentedItem>
+              <DashboardSegmentedItem value="all" accent="primary" size="compact">
+                <span className="material-symbols-outlined text-sm">list</span>
+                {t.sl_tab_all}
+                {total > 0 && (
+                  <span className="ml-1 text-[9px] bg-surface-container-high/60 text-on-surface-variant px-1.5 py-0.5 rounded-full font-black">{total}</span>
+                )}
+              </DashboardSegmentedItem>
+              <DashboardSegmentedItem value="removed" accent="primary" size="compact">
+                <span className="material-symbols-outlined text-sm">delete_outline</span>
+                {t.sl_tab_removed}
+                {blacklistedSchoolIds.size > 0 && (
+                  <span className="ml-1 text-[9px] bg-error/10 text-error px-1.5 py-0.5 rounded-full font-black">{blacklistedSchoolIds.size}</span>
+                )}
+              </DashboardSegmentedItem>
+            </DashboardSegmentedGroup>
+
+            {/* Quick filter bar (shown for favorites + all tabs) */}
+            {activeTab !== 'removed' && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {REGION_CHIPS.map((chip) => (
+                  <button
+                    key={chip.id}
+                    onClick={() => toggleRegion(chip.id)}
+                    className={`px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider transition-colors border ${
+                      regionFilter === chip.id
+                        ? 'bg-primary text-on-primary border-primary'
+                        : 'bg-surface-container-lowest text-on-surface-variant/70 border-outline-variant/15 hover:bg-surface-container-high/50'
+                    }`}
+                  >
+                    {t[chip.labelKey]}
+                  </button>
+                ))}
+                <div className="w-px h-5 bg-outline-variant/15 mx-1" />
+                {RANK_CHIPS.map((chip) => (
+                  <button
+                    key={chip.id}
+                    onClick={() => toggleRank(chip.max)}
+                    className={`px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider transition-colors border ${
+                      rankFilter === chip.max
+                        ? 'bg-secondary text-on-secondary border-secondary'
+                        : 'bg-surface-container-lowest text-on-surface-variant/70 border-outline-variant/15 hover:bg-surface-container-high/50'
+                    }`}
+                  >
+                    {t[chip.labelKey]}
+                  </button>
+                ))}
+              </div>
+            )}
           </MotionSection>
         </header>
 
@@ -900,7 +1128,7 @@ export function SchoolListPanel({ studentId }: SchoolListPanelProps) {
         )}
 
         {/* Empty state */}
-        {!isLoading && total === 0 && !showPrefs && (
+        {!isLoading && total === 0 && activeTab !== 'removed' && !showPrefs && (
           <MotionSurface className="flex flex-col items-center justify-center py-24 text-center">
             <div className="w-20 h-20 rounded-3xl bg-surface-container-high/40 flex items-center justify-center mb-6">
               <span className="material-symbols-outlined text-4xl text-on-surface-variant/50">school</span>
@@ -924,48 +1152,116 @@ export function SchoolListPanel({ studentId }: SchoolListPanelProps) {
           </MotionSurface>
         )}
 
-        {/* Personalization banner + Tier Summary */}
-        {!isLoading && total > 0 && (
-          <MotionStagger className="space-y-4" delay={0.04} role="metric">
-            <MotionItem role="surface">
-              <div className="dashboard-surface-soft flex items-start gap-3 border-primary/10 bg-primary/3 p-4">
-                <span className="material-symbols-outlined mt-0.5 text-lg text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>person_pin</span>
-                <div className="flex-1">
-                  <p className="text-xs leading-relaxed text-on-surface/70">{t.sl_personalized_banner}</p>
-                  <p className="mt-1 text-[10px] font-bold text-primary/60">{t.sl_personalized_chat_tip}</p>
-                </div>
-              </div>
-            </MotionItem>
-            <MotionItem role="metric">
-              <MotionSurface className="p-0">
-                <TierSummary tieredCounts={tieredCounts} total={total} avgScore={avgScore} t={t} />
+        {/* ═══════ FAVORITES TAB ═══════ */}
+        {!isLoading && activeTab === 'favorites' && (
+          <>
+            {favoriteEvals.length === 0 && total > 0 && (
+              <MotionSurface className="flex flex-col items-center justify-center py-16 text-center">
+                <span className="material-symbols-outlined text-4xl text-on-surface-variant/30 mb-4" style={{ fontVariationSettings: "'FILL' 1" }}>star</span>
+                <p className="text-sm text-on-surface-variant/60">{t.sl_no_favorites}</p>
               </MotionSurface>
-            </MotionItem>
-          </MotionStagger>
+            )}
+            {favoriteEvals.length > 0 && (
+              <MotionStagger className="space-y-2" delay={0.08} stagger={0.05} role="surface" key={`fav-list-${listVersion}-${favoriteEvals.length}`}>
+                {favoriteEvals.map((ev) => (
+                  <MotionItem key={ev.id} role="surface">
+                    <SchoolRow
+                      ev={ev}
+                      isFavorite={true}
+                      isBlacklisted={false}
+                      onToggleFavorite={() => toggleFavorite(ev.school_id)}
+                      onToggleBlacklist={() => toggleBlacklist(ev.school_id)}
+                      t={t}
+                    />
+                  </MotionItem>
+                ))}
+              </MotionStagger>
+            )}
+          </>
         )}
 
-        {/* School Rows */}
-        {!isLoading && visibleEvals.length > 0 && (
-          <MotionStagger className="space-y-2" delay={0.08} stagger={0.05} role="surface" key={`school-list-${listVersion}-${total}`}>
-            {visibleEvals.map((ev) => (
-              <MotionItem key={ev.id} role="surface">
-                <SchoolRow
-                  ev={ev}
-                  isFavorite={favoriteSchoolIds.has(ev.school_id)}
-                  isBlacklisted={blacklistedSchoolIds.has(ev.school_id)}
-                  onToggleFavorite={() => toggleFavorite(ev.school_id)}
-                  onToggleBlacklist={() => toggleBlacklist(ev.school_id)}
-                  t={t}
-                />
+        {/* ═══════ ALL TAB (tier-grouped) ═══════ */}
+        {!isLoading && activeTab === 'all' && total > 0 && (
+          <>
+            {/* Offers nudge banner */}
+            {hasOffers && (
+              <MotionSection delay={0.02}>
+                <div className="dashboard-surface-soft flex items-center gap-3 border-tertiary/15 bg-tertiary/5 p-4">
+                  <span className="material-symbols-outlined text-lg text-tertiary" style={{ fontVariationSettings: "'FILL' 1" }}>verified</span>
+                  <span className="flex-1 text-xs leading-relaxed text-on-surface/70">{t.sl_offers_banner}</span>
+                  <button
+                    onClick={() => setActiveNav('decisions')}
+                    className="shrink-0 rounded-xl bg-tertiary/10 px-4 py-2 text-xs font-bold text-tertiary transition-colors hover:bg-tertiary/20"
+                  >
+                    {t.sl_offers_banner_cta}
+                  </button>
+                </div>
+              </MotionSection>
+            )}
+
+            {/* Personalization banner + Tier Summary */}
+            <MotionStagger className="space-y-4" delay={0.04} role="metric">
+              <MotionItem role="surface">
+                <div className="dashboard-surface-soft flex items-start gap-3 border-primary/10 bg-primary/3 p-4">
+                  <span className="material-symbols-outlined mt-0.5 text-lg text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>person_pin</span>
+                  <div className="flex-1">
+                    <p className="text-xs leading-relaxed text-on-surface/70">{t.sl_personalized_banner}</p>
+                    <p className="mt-1 text-[10px] font-bold text-primary/60">{t.sl_personalized_chat_tip}</p>
+                  </div>
+                </div>
               </MotionItem>
+              <MotionItem role="metric">
+                <MotionSurface className="p-0">
+                  <TierSummary tieredCounts={tieredCounts} total={total} avgScore={avgScore} t={t} />
+                </MotionSurface>
+              </MotionItem>
+            </MotionStagger>
+
+            {/* Tier sections */}
+            {TIER_ORDER.map((tier) => (
+              <TierSection
+                key={tier}
+                tier={tier}
+                evals={tieredGroups[tier]}
+                favoriteSchoolIds={favoriteSchoolIds}
+                blacklistedSchoolIds={blacklistedSchoolIds}
+                toggleFavorite={toggleFavorite}
+                toggleBlacklist={toggleBlacklist}
+                listVersion={listVersion}
+                total={total}
+                t={t}
+              />
             ))}
-          </MotionStagger>
+          </>
         )}
 
-        {!isLoading && blacklistedSchoolIds.size > 0 && (
-          <div className="text-center text-xs text-on-surface-variant/40 py-4">
-            {t.sl_hidden_schools(blacklistedSchoolIds.size)}
-          </div>
+        {/* ═══════ REMOVED TAB ═══════ */}
+        {!isLoading && activeTab === 'removed' && (
+          <>
+            {removedEvals.length === 0 && (
+              <MotionSurface className="flex flex-col items-center justify-center py-16 text-center">
+                <span className="material-symbols-outlined text-4xl text-on-surface-variant/30 mb-4">delete_outline</span>
+                <p className="text-sm text-on-surface-variant/60">{t.sl_no_removed}</p>
+              </MotionSurface>
+            )}
+            {removedEvals.length > 0 && (
+              <MotionStagger className="space-y-2" delay={0.08} stagger={0.05} role="surface" key={`removed-list-${listVersion}-${removedEvals.length}`}>
+                {removedEvals.map((ev) => (
+                  <MotionItem key={ev.id} role="surface">
+                    <SchoolRow
+                      ev={ev}
+                      isFavorite={favoriteSchoolIds.has(ev.school_id)}
+                      isBlacklisted={true}
+                      showRestore
+                      onToggleFavorite={() => toggleFavorite(ev.school_id)}
+                      onToggleBlacklist={() => toggleBlacklist(ev.school_id)}
+                      t={t}
+                    />
+                  </MotionItem>
+                ))}
+              </MotionStagger>
+            )}
+          </>
         )}
 
         <div className="h-12" />

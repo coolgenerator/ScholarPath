@@ -79,6 +79,20 @@ async def search_schools(
     if (max_np := filters.get("max_net_price")) is not None:
         stmt = stmt.where(School.avg_net_price <= max_np)
 
+    # Program/major filter — only return schools that have a matching program
+    if program_q := filters.get("program"):
+        pattern = f"%{program_q}%"
+        stmt = stmt.where(
+            School.id.in_(
+                select(Program.school_id).where(
+                    or_(
+                        Program.name.ilike(pattern),
+                        Program.department.ilike(pattern),
+                    )
+                )
+            )
+        )
+
     # Pagination
     offset = max(int(filters.get("offset", 0)), 0)
     limit = min(max(int(filters.get("limit", 20)), 1), 100)

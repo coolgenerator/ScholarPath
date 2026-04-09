@@ -513,6 +513,7 @@ class LLMClient:
         response_format: dict[str, Any] | None = None,
         json_transport_hints: bool = False,
         stream: bool = False,
+        tools: list[dict[str, Any]] | None = None,
     ) -> tuple[_Endpoint, Any]:
         last_exc: Exception | None = None
 
@@ -532,6 +533,8 @@ class LLMClient:
                     "stream": stream,
                     "timeout": self._request_timeout_seconds,
                 }
+                if tools is not None:
+                    payload["tools"] = tools
                 if response_format is not None:
                     payload["response_format"] = response_format
                 if json_transport_hints:
@@ -1031,6 +1034,49 @@ class LLMClient:
             )
 
     @_RETRY
+    async def complete_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]],
+        temperature: float = 0.4,
+        max_tokens: int = 4096,
+        caller: str = "unknown",
+    ) -> Any:
+        """Return a ChatCompletion response that may contain tool_calls."""
+        logger.debug(
+            "LLM complete_with_tools model=%s msgs=%d tools=%d caller=%s",
+            self._model, len(messages), len(tools), caller,
+        )
+        t0 = time.monotonic()
+        error_msg = None
+        usage = None
+        request_id = None
+        try:
+            endpoint, response = await self._chat_completion_with_failover(
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                tools=tools,
+            )
+            usage = response.usage
+            request_id = getattr(response, "id", None)
+            return response
+        except Exception as exc:
+            error_msg = str(exc)
+            raise
+        finally:
+            latency_ms = int((time.monotonic() - t0) * 1000)
+            await self._track(
+                method="complete_with_tools",
+                caller=caller,
+                usage=usage,
+                request_id=request_id,
+                error=error_msg,
+                latency_ms=latency_ms,
+            )
+
+    @_RETRY
     async def complete_json(
         self,
         messages: list[dict[str, str]],
@@ -1474,16 +1520,39 @@ def _parse_json_object(text: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         pass
 
-    match = re.search(r"\{.*\}", raw, flags=re.DOTALL)
-    if match:
-        try:
-            parsed = json.loads(match.group(0))
-            if isinstance(parsed, dict):
-                return parsed
-            if isinstance(parsed, list):
-                return {"data": parsed}
-        except json.JSONDecodeError:
-            return {}
+    # Extract the first valid JSON object by finding balanced braces
+    start = raw.find("{")
+    if start == -1:
+        return {}
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(raw)):
+        ch = raw[i]
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"' and not escape:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                candidate = raw[start:i + 1]
+                try:
+                    parsed = json.loads(candidate)
+                    if isinstance(parsed, dict):
+                        return parsed
+                except json.JSONDecodeError:
+                    pass
+                break
     return {}
 
 

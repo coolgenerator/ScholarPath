@@ -206,6 +206,7 @@ def _build_portfolio_dict(
         "student_id": student.id,
         "identity": {
             "name": student.name,
+            "degree_level": getattr(student, "degree_level", "undergraduate"),
             "target_year": student.target_year,
         },
         "academics": {

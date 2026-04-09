@@ -33,6 +33,7 @@ class Offer(UUIDPrimaryKey, TimestampMixin, Base):
     school_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("schools.id"))
 
     status: Mapped[str] = mapped_column(String(20))  # OfferStatus value
+    program: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
 
     # ── Cost of Attendance (user-reported per offer) ──
     tuition: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)

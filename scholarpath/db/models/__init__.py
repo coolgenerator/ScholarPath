@@ -17,15 +17,19 @@ from .causal_data import (
     FactQuarantine,
     SchoolExternalId,
 )
+from .metro_area import MetroAreaProfile
 from .conflict import Conflict, ResolutionStatus, Severity
 from .data_point import DataPoint, SourceType
 from .evaluation import SchoolEvaluation, Tier
 from .offer import Offer, OfferStatus
 from .report import GoNoGoReport, Recommendation
 from .school import Program, School, SchoolType
-from .student import CurriculumType, Student
+from .student import CurriculumType, DegreeLevel, Student
 from .token_usage import TokenUsage
+from .user import User
 from .chat_session import ChatSession
+from .community_review import CommunityReview, SchoolCommunityReport
+from .school_claims import SchoolClaims
 from .admission_pipeline import (
     DocumentChunk,
     Institution,
@@ -42,12 +46,16 @@ __all__ = [
     "Base",
     "TimestampMixin",
     "UUIDPrimaryKey",
+    # Auth
+    "User",
     # Core entities
     "Student",
     "CurriculumType",
+    "DegreeLevel",
     "School",
     "SchoolType",
     "Program",
+    "MetroAreaProfile",
     # Data layer
     "DataPoint",
     "SourceType",
@@ -92,4 +100,9 @@ __all__ = [
     "DocumentChunk",
     "PolicyFact",
     "PolicyFactAudit",
+    # Community reviews
+    "CommunityReview",
+    "SchoolCommunityReport",
+    # Claims graph
+    "SchoolClaims",
 ]

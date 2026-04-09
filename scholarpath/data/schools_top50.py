@@ -1,8 +1,62 @@
-"""Top 50 US universities data for seeding.
+"""Top 50+ US universities data for seeding.
 
-Data approximated from US News 2025 rankings and College Scorecard.
-This supplements the original 10 schools in seed.py.
+Data approximated from US News 2025, QS World 2025, Forbes 2024 rankings
+and College Scorecard. This supplements the original 10 schools in seed.py.
 """
+
+# Approximate QS World and Forbes rankings keyed by school name.
+_RANKINGS: dict[str, dict[str, int]] = {
+    "Harvard University":                    {"qs_world_rank": 4, "forbes_rank": 1},
+    "Princeton University":                  {"qs_world_rank": 11, "forbes_rank": 5},
+    "Yale University":                       {"qs_world_rank": 23, "forbes_rank": 3},
+    "Columbia University":                   {"qs_world_rank": 34, "forbes_rank": 14},
+    "University of Pennsylvania":            {"qs_world_rank": 19, "forbes_rank": 6},
+    "Cornell University":                    {"qs_world_rank": 16, "forbes_rank": 11},
+    "Brown University":                      {"qs_world_rank": 73, "forbes_rank": 7},
+    "Dartmouth College":                     {"qs_world_rank": 237, "forbes_rank": 12},
+    "Duke University":                       {"qs_world_rank": 57, "forbes_rank": 8},
+    "Northwestern University":               {"qs_world_rank": 47, "forbes_rank": 15},
+    "Johns Hopkins University":              {"qs_world_rank": 28, "forbes_rank": 19},
+    "California Institute of Technology":    {"qs_world_rank": 10, "forbes_rank": 9},
+    "University of Chicago":                 {"qs_world_rank": 21, "forbes_rank": 4},
+    "Rice University":                       {"qs_world_rank": 103, "forbes_rank": 17},
+    "Vanderbilt University":                 {"qs_world_rank": 183, "forbes_rank": 18},
+    "Washington University in St. Louis":    {"qs_world_rank": 154, "forbes_rank": 25},
+    "Emory University":                      {"qs_world_rank": 170, "forbes_rank": 24},
+    "University of Notre Dame":              {"qs_world_rank": 245, "forbes_rank": 20},
+    "Georgetown University":                 {"qs_world_rank": 267, "forbes_rank": 22},
+    "University of Southern California":     {"qs_world_rank": 116, "forbes_rank": 30},
+    "Carnegie Mellon University":            {"qs_world_rank": 58, "forbes_rank": 26},
+    "University of Virginia":                {"qs_world_rank": 268, "forbes_rank": 28},
+    "University of Michigan":                {"qs_world_rank": 33, "forbes_rank": 10},
+    "University of North Carolina at Chapel Hill": {"qs_world_rank": 92, "forbes_rank": 23},
+    "New York University":                   {"qs_world_rank": 38, "forbes_rank": 29},
+    "University of Florida":                 {"qs_world_rank": 162, "forbes_rank": 32},
+    "University of Texas at Austin":         {"qs_world_rank": 58, "forbes_rank": 31},
+    "Georgia Institute of Technology":       {"qs_world_rank": 85, "forbes_rank": 35},
+    "University of California, Los Angeles": {"qs_world_rank": 29, "forbes_rank": 2},
+    "University of California, Berkeley":    {"qs_world_rank": 12, "forbes_rank": 13},
+    "Stanford University":                   {"qs_world_rank": 2, "forbes_rank": 16},
+    "Massachusetts Institute of Technology": {"qs_world_rank": 1, "forbes_rank": 21},
+    "University of Wisconsin-Madison":       {"qs_world_rank": 83, "forbes_rank": 40},
+    "University of Illinois Urbana-Champaign": {"qs_world_rank": 75, "forbes_rank": 42},
+    "Purdue University":                     {"qs_world_rank": 99, "forbes_rank": 55},
+    "Ohio State University":                 {"qs_world_rank": 120, "forbes_rank": 48},
+    "Penn State University":                 {"qs_world_rank": 101, "forbes_rank": 52},
+    "Pennsylvania State University":         {"qs_world_rank": 101, "forbes_rank": 52},
+    "Arizona State University":              {"qs_world_rank": 219, "forbes_rank": 100},
+    "University of Washington":              {"qs_world_rank": 63, "forbes_rank": 38},
+    "Boston University":                     {"qs_world_rank": 93, "forbes_rank": 43},
+    "Tufts University":                      {"qs_world_rank": 253, "forbes_rank": 33},
+    "Wake Forest University":                {"qs_world_rank": 438, "forbes_rank": 50},
+    "University of Rochester":               {"qs_world_rank": 176, "forbes_rank": 46},
+    "Northeastern University":               {"qs_world_rank": 345, "forbes_rank": 60},
+    "University of California, San Diego":   {"qs_world_rank": 53, "forbes_rank": 34},
+    "University of California, Davis":       {"qs_world_rank": 90, "forbes_rank": 47},
+    "University of California, Santa Barbara": {"qs_world_rank": 140, "forbes_rank": 36},
+    "Texas A&M University":                  {"qs_world_rank": 134, "forbes_rank": 65},
+    "University of Minnesota":               {"qs_world_rank": 155, "forbes_rank": 58},
+}
 
 EXTRA_SCHOOLS: list[dict] = [
     # Ivies
@@ -65,3 +119,9 @@ EXTRA_SCHOOLS: list[dict] = [
     {"name": "Stevens Institute of Technology", "name_cn": "史蒂文斯理工学院", "city": "Hoboken", "state": "NJ", "school_type": "technical", "size_category": "small", "us_news_rank": 76, "acceptance_rate": 0.56, "sat_25": 1330, "sat_75": 1490, "tuition_oos": 58000, "avg_net_price": 35000, "intl_student_pct": 0.11, "student_faculty_ratio": 10.0, "graduation_rate_4yr": 0.55, "campus_setting": "urban", "website_url": "https://www.stevens.edu"},
     {"name": "San Jose State University", "name_cn": "圣何塞州立大学", "city": "San Jose", "state": "CA", "school_type": "university", "size_category": "large", "us_news_rank": 150, "acceptance_rate": 0.72, "sat_25": 1020, "sat_75": 1250, "tuition_oos": 20000, "avg_net_price": 13500, "intl_student_pct": 0.12, "student_faculty_ratio": 24.0, "graduation_rate_4yr": 0.23, "campus_setting": "urban", "website_url": "https://www.sjsu.edu"},
 ]
+
+# Enrich with QS World and Forbes rankings where available
+for _school in EXTRA_SCHOOLS:
+    _extra = _RANKINGS.get(_school["name"])
+    if _extra:
+        _school.update(_extra)

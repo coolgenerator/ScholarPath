@@ -17,11 +17,17 @@ function withQuery(path: string, query?: QueryParams): string {
   return `${url.pathname}${url.search}`;
 }
 
+function authHeaders(): Record<string, string> {
+  const token = localStorage.getItem('sp_auth_token');
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 async function request<T>(path: string, init?: RequestInit, query?: QueryParams): Promise<T> {
   const response = await fetch(withQuery(path, query), {
     credentials: 'same-origin',
     headers: {
       'Content-Type': 'application/json',
+      ...authHeaders(),
       ...(init?.headers ?? {}),
     },
     ...init,

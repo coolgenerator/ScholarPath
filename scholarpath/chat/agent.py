@@ -1,4 +1,4 @@
-"""Advisor chat runtime entrypoint built on Orchestrator V2."""
+"""Advisor chat runtime entrypoint using the ReAct tool-use agent."""
 
 from __future__ import annotations
 
@@ -11,14 +11,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from scholarpath.api.models.chat import RoutePlan, TurnEvent, TurnResult
 from scholarpath.chat.memory import ChatMemory
-from scholarpath.chat.orchestrator_v2 import AdvisorOrchestratorV2
+from scholarpath.chat.react_advisor import ReactAdvisor
 from scholarpath.llm.client import LLMClient
 
 logger = logging.getLogger(__name__)
 
 
 class ChatAgent:
-    """Conversational agent built on top of the V2 orchestrator."""
+    """Conversational agent backed by a ReAct async-generator loop.
+
+    The advisor yields ``TurnEvent`` objects for progress and a final
+    ``TurnResult``.  ``run_turn`` forwards each event through the
+    ``emit_event`` callback so callers (WebSocket handler, HTTP endpoint)
+    can stream them to the client in real time.
+    """
 
     def __init__(
         self,
@@ -35,7 +41,7 @@ class ChatAgent:
             if redis is None:
                 raise ValueError("Either redis or memory must be provided")
             self._memory = ChatMemory(redis)
-        self._orchestrator = AdvisorOrchestratorV2(
+        self._advisor = ReactAdvisor(
             llm=llm,
             session=session,
             memory=self._memory,
@@ -50,16 +56,32 @@ class ChatAgent:
         route_plan: RoutePlan | None = None,
         emit_event: Callable[[TurnEvent], Awaitable[None]],
     ) -> TurnResult:
-        """Execute one user turn and return the final orchestrated result."""
+        """Execute one user turn, streaming events via *emit_event*."""
         try:
             await self._memory.save_message(session_id, "user", message)
-            result = await self._orchestrator.run_turn(
+
+            result: TurnResult | None = None
+
+            async for item in self._advisor.run_turn(
                 session_id=session_id,
                 student_id=student_id,
                 message=message,
-                route_plan=route_plan,
-                emit_event=emit_event,
-            )
+            ):
+                if isinstance(item, TurnEvent):
+                    await emit_event(item)
+                elif isinstance(item, TurnResult):
+                    result = item
+
+            if result is None:
+                result = TurnResult(
+                    trace_id=str(uuid.uuid4()),
+                    status="error",
+                    content="No result produced. Please try again.",
+                    blocks=[],
+                    actions=[],
+                    usage={},
+                )
+
             await self._memory.save_assistant_turn(
                 session_id,
                 content=result.content,
@@ -70,6 +92,7 @@ class ChatAgent:
                 execution_digest=result.execution_digest,
             )
             return result
+
         except Exception:
             logger.exception("ChatAgent.run_turn failed for session %s", session_id)
             try:

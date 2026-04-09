@@ -6,7 +6,7 @@ import enum
 import uuid
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Float, ForeignKey, JSON, String, Text
+from sqlalchemy import Float, ForeignKey, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, TimestampMixin, UUIDPrimaryKey
@@ -25,6 +25,9 @@ class Tier(str, enum.Enum):
 
 class SchoolEvaluation(UUIDPrimaryKey, TimestampMixin, Base):
     __tablename__ = "school_evaluations"
+    __table_args__ = (
+        UniqueConstraint("student_id", "school_id", name="uq_eval_student_school"),
+    )
 
     student_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("students.id"))
     school_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("schools.id"))

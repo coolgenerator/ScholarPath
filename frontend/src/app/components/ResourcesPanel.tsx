@@ -314,10 +314,26 @@ function SchoolCard({ school, isOnList, studentId, onAdded, t }: {
             </div>
           </div>
         </div>
-        {school.us_news_rank && (
-          <div className="text-right">
-            <div className="text-2xl font-headline font-black text-primary">#{school.us_news_rank}</div>
-            <div className="text-[8px] font-bold text-on-surface-variant/60 uppercase tracking-widest">{t.disc_us_news_rank}</div>
+        {(school.us_news_rank || school.qs_world_rank || school.forbes_rank) && (
+          <div className="flex items-center gap-2">
+            {school.us_news_rank && (
+              <div className="text-center px-2.5 py-1.5 rounded-lg bg-primary/8 border border-primary/12">
+                <div className="text-base font-headline font-black text-primary leading-tight">#{school.us_news_rank}</div>
+                <div className="text-[7px] font-bold text-primary/60 uppercase tracking-widest">{t.disc_us_news_rank}</div>
+              </div>
+            )}
+            {school.qs_world_rank && (
+              <div className="text-center px-2.5 py-1.5 rounded-lg bg-secondary/8 border border-secondary/12">
+                <div className="text-base font-headline font-black text-secondary leading-tight">#{school.qs_world_rank}</div>
+                <div className="text-[7px] font-bold text-secondary/60 uppercase tracking-widest">{t.disc_qs_world_rank}</div>
+              </div>
+            )}
+            {school.forbes_rank && (
+              <div className="text-center px-2.5 py-1.5 rounded-lg bg-tertiary/8 border border-tertiary/12">
+                <div className="text-base font-headline font-black text-tertiary leading-tight">#{school.forbes_rank}</div>
+                <div className="text-[7px] font-bold text-tertiary/60 uppercase tracking-widest">{t.disc_forbes_rank}</div>
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -13,21 +13,24 @@ class StudentCreate(BaseModel):
     """Schema for creating a new student profile."""
 
     name: str = Field(..., min_length=1, max_length=200)
-    gpa: float = Field(..., ge=0)
-    gpa_scale: str = Field(..., max_length=20, examples=["4.0", "5.0", "100"])
+    gpa: float | None = Field(None, ge=0)
+    gpa_scale: str | None = Field(None, max_length=20, examples=["4.0", "5.0", "100"])
     sat_total: int | None = Field(None, ge=400, le=1600)
     act_composite: int | None = Field(None, ge=1, le=36)
     toefl_total: int | None = Field(None, ge=0, le=120)
-    curriculum_type: str = Field(..., max_length=20, examples=["AP", "IB", "A-Level", "other"])
+    curriculum_type: str | None = Field(None, max_length=20, examples=["AP", "IB", "A-Level", "other"])
     ap_courses: list[str] | None = None
     extracurriculars: list[Any] | dict[str, Any] | None = None
     awards: list[Any] | dict[str, Any] | None = None
     intended_majors: list[str] = Field(..., min_length=1)
+    citizenship: str | None = Field(None, description="ISO country code", examples=["CN", "US", "IN", "KR"])
+    residency_state: str | None = Field(None, max_length=10, examples=["CA", "NY"])
     budget_usd: int | None = Field(None, ge=0)
     need_financial_aid: bool | None = None
     preferences: dict[str, Any] | None = None
     ed_preference: str | None = Field(None, max_length=20, examples=["ed", "ea", "rea", "rd"])
-    target_year: int = Field(..., ge=2024, le=2035)
+    degree_level: str | None = Field(None, pattern="^(undergraduate|masters|phd)$")
+    target_year: int | None = Field(None, ge=2024, le=2035)
 
 
 class StudentUpdate(BaseModel):
@@ -44,9 +47,12 @@ class StudentUpdate(BaseModel):
     extracurriculars: list[Any] | dict[str, Any] | None = None
     awards: list[Any] | dict[str, Any] | None = None
     intended_majors: list[str] | None = None
+    citizenship: str | None = Field(None, description="ISO country code", examples=["CN", "US", "IN", "KR"])
+    residency_state: str | None = Field(None, max_length=10)
     budget_usd: int | None = Field(None, ge=0)
     need_financial_aid: bool | None = None
     preferences: dict[str, Any] | None = None
+    degree_level: str | None = Field(None, pattern="^(undergraduate|masters|phd)$")
     ed_preference: str | None = Field(None, max_length=20)
     target_year: int | None = Field(None, ge=2024, le=2035)
 
@@ -69,9 +75,12 @@ class StudentResponse(BaseModel):
     extracurriculars: list[Any] | dict[str, Any] | None = None
     awards: list[Any] | dict[str, Any] | None = None
     intended_majors: list[str] | None = None
+    citizenship: str | None = None
+    residency_state: str | None = None
     budget_usd: int
     need_financial_aid: bool
     preferences: dict[str, Any] | None = None
+    degree_level: str = "undergraduate"
     ed_preference: str | None = None
     target_year: int
     profile_completed: bool
@@ -83,6 +92,7 @@ class PortfolioIdentityPatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(None, min_length=1, max_length=200)
+    degree_level: str | None = Field(None, pattern="^(undergraduate|masters|phd)$")
     target_year: int | None = Field(None, ge=2024, le=2035)
 
 
@@ -115,6 +125,8 @@ class PortfolioFinancePatch(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    citizenship: str | None = Field(None, description="ISO country code", examples=["CN", "US", "IN", "KR"])
+    residency_state: str | None = Field(None, max_length=10)
     budget_usd: int | None = Field(None, ge=0)
     need_financial_aid: bool | None = None
 
@@ -143,6 +155,8 @@ class PortfolioPreferencesPatch(BaseModel):
     target_schools: list[str] | None = None
     financial_aid_type: str | None = None
     ui_preference_tags: list[str] | None = None
+    application_level: str | None = None      # undergrad / graduate
+    application_stage: str | None = None       # researching / applying / admitted
 
 
 class StudentPortfolioPatch(BaseModel):
@@ -162,6 +176,7 @@ class PortfolioIdentity(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str
+    degree_level: str = "undergraduate"
     target_year: int
 
 
@@ -188,6 +203,8 @@ class PortfolioActivities(BaseModel):
 class PortfolioFinance(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    citizenship: str | None = None
+    residency_state: str | None = None
     budget_usd: int
     need_financial_aid: bool
 
@@ -212,6 +229,8 @@ class PortfolioPreferences(BaseModel):
     target_schools: list[str] | None = None
     financial_aid_type: str | None = None
     ui_preference_tags: list[str] | None = None
+    application_level: str | None = None      # undergrad / graduate
+    application_stage: str | None = None       # researching / applying / admitted
 
 
 class PortfolioCompletion(BaseModel):

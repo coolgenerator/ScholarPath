@@ -8,8 +8,8 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from scholarpath.data.schools_top50 import EXTRA_SCHOOLS
-from scholarpath.db.models import Offer, School, SchoolEvaluation, Student
+from scholarpath.data.schools_top50 import EXTRA_SCHOOLS, _RANKINGS
+from scholarpath.db.models import Offer, Program, School, SchoolEvaluation, Student
 from scholarpath.db.session import get_session
 from scholarpath.llm.embeddings import get_embedding_service
 
@@ -211,6 +211,12 @@ SCHOOLS_DATA: list[dict] = [
         "website_url": "https://www.asu.edu",
     },
 ]
+
+# Enrich with QS World and Forbes rankings
+for _s in SCHOOLS_DATA:
+    _extra = _RANKINGS.get(_s["name"])
+    if _extra:
+        _s.update(_extra)
 
 # Map school name to tier for the demo student
 _SCHOOL_TIERS: dict[str, str] = {
@@ -464,6 +470,7 @@ _DEMO_OFFERS: list[dict] = [
     {
         "school_name": "University of Illinois Urbana-Champaign",
         "status": "admitted",
+        "program": "Computer Science (Grainger Engineering)",
         "tuition": 36000,
         "room_and_board": 12500,
         "books_supplies": 1200,
@@ -480,6 +487,7 @@ _DEMO_OFFERS: list[dict] = [
     {
         "school_name": "Purdue University",
         "status": "admitted",
+        "program": "Computer Science",
         "tuition": 28000,
         "room_and_board": 11200,
         "books_supplies": 1100,
@@ -496,6 +504,7 @@ _DEMO_OFFERS: list[dict] = [
     {
         "school_name": "University of Wisconsin-Madison",
         "status": "admitted",
+        "program": "Computer Science (Letters & Science)",
         "tuition": 39000,
         "room_and_board": 13000,
         "books_supplies": 1100,
@@ -512,6 +521,7 @@ _DEMO_OFFERS: list[dict] = [
     {
         "school_name": "Georgia Institute of Technology",
         "status": "waitlisted",
+        "program": "Computer Science",
         "tuition": 33000,
         "room_and_board": 12800,
         "books_supplies": 1000,
@@ -527,6 +537,7 @@ _DEMO_OFFERS: list[dict] = [
     {
         "school_name": "Carnegie Mellon University",
         "status": "deferred",
+        "program": "Computer Science (SCS)",
         "tuition": 62000,
         "room_and_board": 17000,
         "books_supplies": 1200,
@@ -542,6 +553,7 @@ _DEMO_OFFERS: list[dict] = [
     {
         "school_name": "Arizona State University",
         "status": "admitted",
+        "program": "Computer Science (Fulton Engineering)",
         "tuition": 32000,
         "room_and_board": 13500,
         "books_supplies": 1000,
@@ -558,6 +570,7 @@ _DEMO_OFFERS: list[dict] = [
     {
         "school_name": "Pennsylvania State University",
         "status": "admitted",
+        "program": "Computer Science (College of Engineering)",
         "tuition": 36000,
         "room_and_board": 12800,
         "books_supplies": 1100,
@@ -635,6 +648,7 @@ async def seed_demo_offers(session: AsyncSession = Depends(get_session)):
             student_id=student.id,
             school_id=school.id,
             status=offer_data["status"],
+            program=offer_data.get("program"),
             tuition=offer_data.get("tuition"),
             room_and_board=offer_data.get("room_and_board"),
             books_supplies=offer_data.get("books_supplies"),
@@ -655,3 +669,56 @@ async def seed_demo_offers(session: AsyncSession = Depends(get_session)):
         created.append(school_name)
 
     return {"created": created, "count": len(created)}
+
+
+# ── Program seeding ──────────────────────────────────────────────────────
+
+_PROGRAM_TEMPLATES = [
+    {"name": "Computer Science", "department": "Computer Science", "has_research_opps": True, "has_coop": False, "rank_offset": 0},
+    {"name": "Data Science", "department": "Computer Science", "has_research_opps": True, "has_coop": False, "rank_offset": 8},
+    {"name": "Electrical & Computer Engineering", "department": "Electrical Engineering", "has_research_opps": True, "has_coop": True, "rank_offset": 3},
+    {"name": "Mechanical Engineering", "department": "Mechanical Engineering", "has_research_opps": True, "has_coop": True, "rank_offset": 5},
+    {"name": "M.Eng in Computer Science", "department": "Computer Science", "has_research_opps": False, "has_coop": True, "rank_offset": 12},
+    {"name": "Economics", "department": "Economics", "has_research_opps": True, "has_coop": False, "rank_offset": 10},
+    {"name": "Business Administration", "department": "Business", "has_research_opps": False, "has_coop": True, "rank_offset": 15},
+    {"name": "Finance", "department": "Business", "has_research_opps": False, "has_coop": True, "rank_offset": 18},
+    {"name": "Mathematics", "department": "Mathematics", "has_research_opps": True, "has_coop": False, "rank_offset": 4},
+    {"name": "Physics", "department": "Physics", "has_research_opps": True, "has_coop": False, "rank_offset": 6},
+    {"name": "Statistics", "department": "Statistics", "has_research_opps": True, "has_coop": False, "rank_offset": 9},
+]
+
+
+@router.post("/programs")
+async def seed_programs(session: AsyncSession = Depends(get_session)):
+    """Seed realistic programs for all schools. Idempotent — skips schools that already have programs."""
+    from sqlalchemy.orm import selectinload
+
+    result = await session.execute(
+        select(School).options(selectinload(School.programs))
+    )
+    schools = list(result.scalars().all())
+
+    created = 0
+    for school in schools:
+        if school.programs:
+            continue
+
+        rank = school.us_news_rank
+        for tmpl in _PROGRAM_TEMPLATES:
+            prog_rank = None
+            if rank is not None:
+                r = rank + tmpl["rank_offset"]
+                prog_rank = r if r <= 150 else None
+            session.add(Program(
+                school_id=school.id,
+                name=tmpl["name"],
+                department=tmpl["department"],
+                us_news_rank=prog_rank,
+                has_research_opps=tmpl["has_research_opps"],
+                has_coop=tmpl["has_coop"],
+                avg_class_size=25 + tmpl["rank_offset"],
+            ))
+            created += 1
+
+    await session.flush()
+    return {"programs_created": created}

@@ -1,5 +1,6 @@
 import React, { Suspense, lazy, useState, useRef, useEffect } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
+import { useNavigate } from 'react-router';
 import { Sidebar } from './components/Sidebar';
 import { AnimatedWorkspacePage } from './components/WorkspaceMotion';
 import { PageFallback } from './components/PageFallback';
@@ -12,7 +13,6 @@ const LazyResourcesPanel = lazy(() => import('./components/ResourcesPanel').then
 const LazyOffersPanel = lazy(() => import('./components/OffersPanel').then((module) => ({ default: module.OffersPanel })));
 const LazyDecisionsPanel = lazy(() => import('./components/DecisionsPanel').then((module) => ({ default: module.DecisionsPanel })));
 const LazyHistoryPanel = lazy(() => import('./components/HistoryPanel').then((module) => ({ default: module.HistoryPanel })));
-const LazyProfilePanel = lazy(() => import('./components/ProfilePanel').then((module) => ({ default: module.ProfilePanel })));
 
 function MainContent({ activeNav, studentId, sessionId }: { activeNav: string; studentId: string | null; sessionId: string | null }) {
   switch (activeNav) {
@@ -28,8 +28,6 @@ function MainContent({ activeNav, studentId, sessionId }: { activeNav: string; s
       return <LazyDecisionsPanel studentId={studentId} />;
     case 'history':
       return <LazyHistoryPanel />;
-    case 'profile':
-      return <LazyProfilePanel studentId={studentId} />;
     default:
       return <LazySchoolListPanel studentId={studentId} />;
   }
@@ -42,6 +40,7 @@ function TopBar({
   isMobile: boolean;
   onOpenMobileNav: () => void;
 }) {
+  const navigate = useNavigate();
   const { studentName, locale, setLocale, setActiveNav, setStudentId, setStudentName, setSessionId, t } = useApp();
   const [avatarOpen, setAvatarOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -117,7 +116,7 @@ function TopBar({
               </div>
 
               <button
-                onClick={() => { setActiveNav('profile'); setAvatarOpen(false); }}
+                onClick={() => { navigate('/profile'); setAvatarOpen(false); }}
                 className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-on-surface transition-colors hover:bg-surface-container-high/40"
               >
                 <span className="material-symbols-outlined text-lg text-on-surface-variant">person</span>
@@ -172,7 +171,6 @@ export default function App() {
       offers: t.off_title,
       decisions: t.dec_title,
       history: t.hist_title,
-      profile: t.prof_title,
     };
     const sectionTitle = pageTitles[activeNav] ?? t.nav_advisor;
 

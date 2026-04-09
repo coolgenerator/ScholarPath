@@ -189,10 +189,10 @@ export function LandingPage() {
               </Link>
             )}
             <Link
-              to="/register"
+              to="/login"
               className="inline-flex items-center gap-2 rounded-full bg-[#17304b] px-5 py-2.5 text-sm font-bold text-white shadow-[0_18px_36px_rgba(12,27,45,0.24)] transition hover:-translate-y-0.5 hover:bg-[#0f2237]"
             >
-              开始建档
+              登录 / 注册
               <span className="material-symbols-outlined text-[18px]">north_east</span>
             </Link>
           </div>
@@ -217,18 +217,25 @@ export function LandingPage() {
 
               <MarketingStaggerItem className="flex flex-col gap-3 sm:flex-row">
                 <Link
-                  to="/register"
+                  to="/login"
                   className="inline-flex items-center justify-center gap-2 rounded-full bg-[linear-gradient(135deg,#17304b,#0f2237)] px-6 py-4 text-sm font-black text-white shadow-[0_24px_54px_rgba(12,27,45,0.26)] transition hover:-translate-y-0.5 hover:brightness-110"
                 >
-                  创建档案并进入 workspace
+                  登录并进入 workspace
                   <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
                 </Link>
-                {resumePath && (
+                {resumePath ? (
                   <Link
                     to={resumePath}
                     className="inline-flex items-center justify-center rounded-full border border-[#17304b]/10 bg-white/78 px-6 py-4 text-sm font-bold text-[#17304b] shadow-[0_16px_36px_rgba(15,23,42,0.08)] backdrop-blur transition hover:-translate-y-0.5"
                   >
                     继续已有 workspace
+                  </Link>
+                ) : (
+                  <Link
+                    to="/register"
+                    className="inline-flex items-center justify-center rounded-full border border-[#17304b]/10 bg-white/78 px-6 py-4 text-sm font-bold text-[#17304b] shadow-[0_16px_36px_rgba(15,23,42,0.08)] backdrop-blur transition hover:-translate-y-0.5"
+                  >
+                    直接建档
                   </Link>
                 )}
               </MarketingStaggerItem>
@@ -457,10 +464,10 @@ export function LandingPage() {
               <MarketingStagger className="flex flex-col gap-3 sm:flex-row lg:flex-col" delay={0.06} mode="view">
                 <MarketingStaggerItem amount={12}>
                   <Link
-                    to="/register"
+                    to="/login"
                     className="inline-flex items-center justify-center gap-2 rounded-full bg-white px-6 py-4 text-sm font-black text-[#17304b] shadow-[0_18px_40px_rgba(8,17,28,0.18)] transition hover:-translate-y-0.5"
                   >
-                    进入建档页
+                    登录 / 注册
                     <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
                   </Link>
                 </MarketingStaggerItem>

@@ -1,8 +1,12 @@
-import React, { Suspense, lazy, useState, useMemo } from 'react';
+import React, { Suspense, lazy, useState, useMemo, useEffect } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
+import { ClaimsGraphCard } from './ClaimsGraphCard';
+import { CommunityReportCard } from './CommunityReportCard';
 import { useApp } from '../../context/AppContext';
 import { useEvaluations } from '../../hooks/useEvaluations';
+import { useOffers } from '../../hooks/useOffers';
 import { useSimulations } from '../../hooks/useSimulations';
+import { portfolioApi } from '../../lib/api/portfolio';
 import { WhatIfDeltaCard } from './StructuredMessageCards';
 import type {
   EvaluationWithSchool,
@@ -23,6 +27,7 @@ import { DashboardSegmentedGroup, DashboardSegmentedItem } from './ui/dashboard-
 import { AnimatedWorkspacePage, MotionItem, MotionSection, MotionStagger, MotionSurface } from './WorkspaceMotion';
 
 const LazyCausalDagD3 = lazy(() => import('./CausalDagD3').then((module) => ({ default: module.CausalDagD3 })));
+const LazyComparisonReportPanel = lazy(() => import('./ComparisonReportPanel').then((module) => ({ default: module.ComparisonReportPanel })));
 
 // ─── Priority Dimensions ───
 
@@ -81,7 +86,7 @@ function formatPercent(v: number): string {
   return `${Math.round(v * 100)}%`;
 }
 
-interface RankedSchool {
+export interface RankedSchool {
   eval: EvaluationWithSchool;
   weightedScore: number;
   rank: number;
@@ -129,23 +134,20 @@ function PrioritySlider({ priority, value, onChange, isCn }: {
   isCn: boolean;
 }) {
   return (
-    <div className="flex items-center gap-4">
-      <div className="w-8 h-8 rounded-lg bg-primary/5 flex items-center justify-center shrink-0">
-        <span className="material-symbols-outlined text-primary text-base">{priority.icon}</span>
-      </div>
+    <div className="flex items-center gap-3">
+      <span className="material-symbols-outlined text-primary text-base shrink-0">{priority.icon}</span>
       <div className="flex-1 min-w-0">
-        <div className="flex justify-between items-center mb-1">
-          <span className="text-xs font-bold text-on-surface">{isCn ? priority.labelCn : priority.label}</span>
-          <span className="text-xs font-black text-primary">{value}%</span>
+        <div className="flex justify-between items-center">
+          <span className="text-[11px] font-bold text-on-surface">{isCn ? priority.labelCn : priority.label}</span>
+          <span className="text-[11px] font-black text-primary tabular-nums">{value}%</span>
         </div>
         <input
           type="range"
           min={0} max={100} step={5}
           value={value}
           onChange={(e) => onChange(Number(e.target.value))}
-          className="w-full h-1.5 bg-surface-container-high/40 rounded-full appearance-none cursor-pointer accent-primary"
+          className="w-full h-1 bg-surface-container-high/40 rounded-full appearance-none cursor-pointer accent-primary"
         />
-        <p className="text-[10px] text-on-surface-variant/50 mt-0.5">{isCn ? priority.descCn : priority.desc}</p>
       </div>
     </div>
   );
@@ -159,9 +161,44 @@ const RANK_STYLES = [
   'bg-primary/60 text-white',
 ];
 
-function RankedSchoolCard({ item, isCn }: { item: RankedSchool; isCn: boolean }) {
+// Map priority dimension IDs to claim topics
+const WEIGHT_TO_TOPICS: Record<string, string[]> = {
+  academic: ['academic'],
+  financial: ['financial'],
+  career: ['career'],
+  life: ['campus_life', 'vibe'],
+};
+
+function RankedSchoolCard({ item, isCn, majors, onAgentAnalyze, weights }: { item: RankedSchool; isCn: boolean; majors: string[]; onAgentAnalyze?: (schoolName: string) => void; weights?: Record<string, number> }) {
   const [expanded, setExpanded] = useState(false);
+  const [showCommunity, setShowCommunity] = useState(false);
+
+  // Derive relevant topics from user's priority weights (show topics where weight > 40%)
+  const relevantTopics = useMemo(() => {
+    if (!weights) return undefined;
+    const topics: string[] = [];
+    for (const [dim, w] of Object.entries(weights)) {
+      if (w >= 40 && WEIGHT_TO_TOPICS[dim]) {
+        topics.push(...WEIGHT_TO_TOPICS[dim]);
+      }
+    }
+    return topics.length > 0 ? topics : undefined;
+  }, [weights]);
   const ev = item.eval;
+
+  // Find matching programs for the student's intended majors
+  const matchedPrograms = useMemo(() => {
+    if (!ev.school?.programs?.length || !majors.length) return [];
+    const matches = [];
+    for (const major of majors) {
+      const ml = major.toLowerCase();
+      const found = ev.school.programs.find(
+        (p) => p.name.toLowerCase().includes(ml) || p.department.toLowerCase().includes(ml),
+      );
+      if (found && !matches.some((m) => m.id === found.id)) matches.push(found);
+    }
+    return matches;
+  }, [ev.school?.programs, majors]);
 
   return (
     <motion.div layout className="dashboard-surface dashboard-hover-lift">
@@ -184,13 +221,33 @@ function RankedSchoolCard({ item, isCn }: { item: RankedSchool; isCn: boolean })
               <span className="text-xs text-on-surface-variant/50 truncate">{ev.school.name_cn}</span>
             )}
           </div>
-          <div className="flex items-center gap-2 mt-1">
-            <span className="text-[10px] text-on-surface-variant/60">
+          <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+            {matchedPrograms.length > 0 ? matchedPrograms.map((prog) => (
+              <span key={prog.id} className="inline-flex items-center gap-1 text-[10px] font-bold text-primary bg-primary/8 px-1.5 py-0.5 rounded">
+                <span className="material-symbols-outlined text-[10px]">school</span>
+                {prog.name}
+                {prog.us_news_rank && (
+                  <span className="text-[9px] text-primary/70">#{prog.us_news_rank}</span>
+                )}
+              </span>
+            )) : majors.length > 0 ? (
+              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-on-surface-variant/60 bg-surface-container-high/40 px-1.5 py-0.5 rounded">
+                <span className="material-symbols-outlined text-[10px]">school</span>
+                {majors[0]}
+              </span>
+            ) : null}
+            {matchedPrograms.some((p) => p.has_research_opps) && (
+              <span className="text-[9px] text-tertiary bg-tertiary/8 px-1.5 py-0.5 rounded font-bold">
+                {isCn ? '科研' : 'Research'}
+              </span>
+            )}
+            {matchedPrograms.some((p) => p.has_coop) && (
+              <span className="text-[9px] text-secondary bg-secondary/8 px-1.5 py-0.5 rounded font-bold">
+                Co-op
+              </span>
+            )}
+            <span className="text-[10px] text-on-surface-variant/50">
               {ev.school?.city}, {ev.school?.state}
-            </span>
-            <span className="text-[10px] text-on-surface-variant/40">•</span>
-            <span className="text-[10px] text-on-surface-variant/60">
-              {isCn ? '关键因素' : 'Top factor'}: {item.topFactor.label}
             </span>
           </div>
         </div>
@@ -288,6 +345,34 @@ function RankedSchoolCard({ item, isCn }: { item: RankedSchool; isCn: boolean })
               </div>
               <p className="text-sm text-on-surface/80 leading-relaxed">{ev.reasoning}</p>
             </div>
+          )}
+
+          {/* Community Insights (expandable) */}
+          <div>
+            <button
+              onClick={() => setShowCommunity(!showCommunity)}
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-outline-variant/12 bg-surface-container-lowest py-2 text-[11px] font-bold text-on-surface-variant/60 transition hover:bg-surface-container-low hover:text-on-surface-variant"
+            >
+              <span className="material-symbols-outlined text-sm">{showCommunity ? 'expand_less' : 'forum'}</span>
+              {showCommunity ? (isCn ? '收起社媒评价' : 'Collapse') : (isCn ? '查看社媒真实评价' : 'Community Reviews')}
+            </button>
+            {showCommunity && (
+              <div className="mt-3 space-y-3">
+                <CommunityReportCard schoolId={ev.school_id} />
+                <ClaimsGraphCard schoolId={ev.school_id} relevantTopics={relevantTopics} />
+              </div>
+            )}
+          </div>
+
+          {/* Agent deep analysis button */}
+          {onAgentAnalyze && (
+            <button
+              onClick={() => onAgentAnalyze(ev.school?.name ?? '')}
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary/5 border border-primary/15 py-2.5 text-xs font-bold text-primary transition hover:bg-primary/10"
+            >
+              <span className="material-symbols-outlined text-sm">auto_awesome</span>
+              {isCn ? 'AI 深度分析这所学校' : 'AI Deep Analysis'}
+            </button>
           )}
           </div>
         </motion.div>
@@ -557,6 +642,45 @@ function ScenarioDraftCard({
   );
 }
 
+// ─── Community Insight Row (expandable per school) ───
+
+function CommunityInsightRow({ schoolId, schoolName, schoolNameCn, rank }: {
+  schoolId: string;
+  schoolName: string;
+  schoolNameCn?: string;
+  rank: number;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className="rounded-xl border border-outline-variant/10 bg-white overflow-hidden">
+      <button
+        className="flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-surface-container-high/20"
+        onClick={() => setExpanded(!expanded)}
+      >
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-black text-primary">
+          {rank}
+        </span>
+        <div className="flex-1 min-w-0">
+          <span className="text-sm font-bold text-on-surface">{schoolName}</span>
+          {schoolNameCn && <span className="ml-2 text-xs text-on-surface-variant/50">{schoolNameCn}</span>}
+        </div>
+        <span className="material-symbols-outlined text-sm text-on-surface-variant/40 transition-transform" style={{ transform: expanded ? 'rotate(180deg)' : '' }}>
+          expand_more
+        </span>
+      </button>
+      {expanded && (
+        <div className="px-4 pb-4 space-y-3 border-t border-outline-variant/8">
+          <div className="pt-3">
+            <CommunityReportCard schoolId={schoolId} />
+          </div>
+          <ClaimsGraphCard schoolId={schoolId} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Causal DAG Section ───
 
 function CausalDagSection({ ranked, studentId, isCn, t }: {
@@ -659,9 +783,10 @@ interface DecisionsPanelProps {
 }
 
 export function DecisionsPanel({ studentId }: DecisionsPanelProps) {
-  const { t, locale } = useApp();
+  const { t, locale, setActiveNav } = useApp();
   const isCn = locale === 'zh';
   const { tieredList, isLoading } = useEvaluations(studentId);
+  const { offers } = useOffers(studentId);
   const {
     comparisonResult,
     isLoading: isComparingScenarios,
@@ -670,6 +795,15 @@ export function DecisionsPanel({ studentId }: DecisionsPanelProps) {
     clearComparison,
   } = useSimulations();
 
+  const [majors, setMajors] = useState<string[]>([]);
+  useEffect(() => {
+    if (!studentId) return;
+    portfolioApi.get(studentId).then((p) => {
+      setMajors(p.academics.intended_majors ?? []);
+    }).catch(() => {});
+  }, [studentId]);
+
+  const [viewMode, setViewMode] = useState<'ranking' | 'comparison'>('ranking');
   const [weights, setWeights] = useState<Record<string, number>>({
     academic: 50,
     financial: 50,
@@ -684,12 +818,46 @@ export function DecisionsPanel({ studentId }: DecisionsPanelProps) {
 
   const allEvals = useMemo<EvaluationWithSchool[]>(() => {
     if (!tieredList) return [];
-    return [...tieredList.reach, ...tieredList.target, ...tieredList.safety, ...tieredList.likely];
+    const all = [...tieredList.reach, ...tieredList.target, ...tieredList.safety, ...tieredList.likely];
+    // Deduplicate by school_id — keep highest overall_score per school
+    const best = new Map<string, EvaluationWithSchool>();
+    for (const ev of all) {
+      const prev = best.get(ev.school_id);
+      if (!prev || ev.overall_score > prev.overall_score) {
+        best.set(ev.school_id, ev);
+      }
+    }
+    return Array.from(best.values());
   }, [tieredList]);
 
   const ranked = useMemo(
     () => computeRanking(allEvals, weights, isCn),
     [allEvals, weights, isCn],
+  );
+
+  const handleAgentAnalyze = (schoolName: string) => {
+    const msg = isCn
+      ? `请帮我深度分析 ${schoolName}，结合社区评价、因果数据、我的档案，给出综合建议。`
+      : `Please do a deep analysis of ${schoolName}, combining community reviews, causal data, and my profile.`;
+    localStorage.setItem('sp_pending_advisor_message', msg);
+    setActiveNav('advisor');
+  };
+
+  // Split into admitted (have offers with status=admitted) vs prospect
+  const admittedSchoolIds = useMemo(() => {
+    return new Set(offers.filter((o) => o.status === 'admitted').map((o) => o.school_id));
+  }, [offers]);
+
+  const rankedAdmitted = useMemo(
+    () => ranked.filter((item) => admittedSchoolIds.has(item.eval.school_id))
+      .map((item, idx) => ({ ...item, rank: idx + 1 })),
+    [ranked, admittedSchoolIds],
+  );
+
+  const rankedProspect = useMemo(
+    () => ranked.filter((item) => !admittedSchoolIds.has(item.eval.school_id))
+      .map((item, idx) => ({ ...item, rank: idx + 1 })),
+    [ranked, admittedSchoolIds],
   );
   const scenarioSchoolOptions = useMemo<ScenarioSchoolOption[]>(() => {
     const seen = new Set<string>();
@@ -798,10 +966,44 @@ export function DecisionsPanel({ studentId }: DecisionsPanelProps) {
         </MotionSection>
       </header>
 
+      {/* View mode tabs */}
+      <div className="border-b border-outline-variant/10 px-4 py-2 sm:px-6 lg:px-8">
+        <DashboardSegmentedGroup
+          type="single"
+          value={viewMode}
+          onValueChange={(v) => v && setViewMode(v as 'ranking' | 'comparison')}
+          className="inline-flex"
+          size="compact"
+        >
+          <DashboardSegmentedItem value="ranking" className="gap-1.5">
+            <span className="material-symbols-outlined text-sm">leaderboard</span>
+            {isCn ? '快速排名' : 'Quick Ranking'}
+          </DashboardSegmentedItem>
+          <DashboardSegmentedItem value="comparison" className="gap-1.5">
+            <span className="material-symbols-outlined text-sm">compare</span>
+            {isCn ? '深度对比' : 'Deep Comparison'}
+          </DashboardSegmentedItem>
+        </DashboardSegmentedGroup>
+      </div>
+
+      {viewMode === 'comparison' ? (
+        <div className="flex-1 overflow-y-auto px-4 py-5 sm:px-6 lg:px-8">
+          <Suspense fallback={<div className="animate-pulse bg-surface-container-high/60 rounded-2xl h-64" />}>
+            <LazyComparisonReportPanel
+              studentId={studentId}
+              rankedSchools={ranked}
+              majors={majors}
+              admittedSchoolIds={admittedSchoolIds}
+              isCn={isCn}
+              t={t}
+            />
+          </Suspense>
+        </div>
+      ) : (
       <div className="flex-1 overflow-y-auto">
         <div className="flex h-full flex-col lg:flex-row">
           {/* Left: Priority Controls */}
-          <MotionStagger className="w-full shrink-0 border-b border-outline-variant/10 p-4 space-y-6 overflow-y-auto sm:p-6 lg:w-80 lg:border-b-0 lg:border-r" delay={0.03} stagger={0.06}>
+          <MotionStagger className="w-full shrink-0 border-b border-outline-variant/10 p-4 space-y-4 overflow-y-auto sm:p-5 lg:w-72 lg:border-b-0 lg:border-r" delay={0.03} stagger={0.06}>
             {/* Quick presets */}
             <MotionItem role="toolbar">
             <div>
@@ -835,11 +1037,11 @@ export function DecisionsPanel({ studentId }: DecisionsPanelProps) {
 
             {/* Priority sliders */}
             <MotionItem role="section">
-            <MotionSurface className="p-4 sm:p-5">
-              <div className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-3">
+            <MotionSurface className="p-4">
+              <div className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-2">
                 {isCn ? '调整你的优先级' : 'Your Priorities'}
               </div>
-              <div className="space-y-5">
+              <div className="space-y-3">
                 {PRIORITIES.map((p) => (
                   <PrioritySlider
                     key={p.id}
@@ -851,23 +1053,6 @@ export function DecisionsPanel({ studentId }: DecisionsPanelProps) {
                 ))}
               </div>
             </MotionSurface>
-            </MotionItem>
-
-            {/* How it works */}
-            <MotionItem role="section">
-            <div className="dashboard-surface-soft p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="material-symbols-outlined text-primary text-sm">info</span>
-                <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">
-                  {isCn ? '工作原理' : 'How it works'}
-                </span>
-              </div>
-              <p className="text-[11px] text-on-surface-variant/60 leading-relaxed">
-                {isCn
-                  ? '根据你设定的优先级权重，因果推理引擎会重新计算每所学校的综合匹配度。展开任一学校卡片，可以看到每个维度的得分×权重的详细拆解。'
-                  : 'The causal inference engine re-weights each school\'s fit scores based on your priorities. Expand any school card to see the detailed score × weight breakdown for each dimension.'}
-              </p>
-            </div>
             </MotionItem>
 
             <MotionItem role="section">
@@ -1009,14 +1194,44 @@ export function DecisionsPanel({ studentId }: DecisionsPanelProps) {
               </MotionSection>
             )}
 
-            {!isLoading && ranked.length > 0 && (
-              <MotionStagger className="space-y-2" delay={0.1} stagger={0.06}>
-                {ranked.map((item) => (
-                  <MotionItem key={item.eval.id} role="surface">
-                    <RankedSchoolCard item={item} isCn={isCn} />
-                  </MotionItem>
-                ))}
-              </MotionStagger>
+            {/* Admitted section */}
+            {!isLoading && rankedAdmitted.length > 0 && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 px-1">
+                  <span className="material-symbols-outlined text-tertiary text-lg">verified</span>
+                  <h2 className="font-headline text-sm font-black text-on-surface">
+                    {isCn ? '已拿到 Offer' : 'Admitted'}
+                  </h2>
+                  <span className="text-[10px] font-bold text-on-surface-variant/50">{rankedAdmitted.length}</span>
+                </div>
+                <MotionStagger className="space-y-2" delay={0.1} stagger={0.06}>
+                  {rankedAdmitted.map((item) => (
+                    <MotionItem key={item.eval.id} role="surface">
+                      <RankedSchoolCard item={item} isCn={isCn} majors={majors} onAgentAnalyze={handleAgentAnalyze} weights={weights} />
+                    </MotionItem>
+                  ))}
+                </MotionStagger>
+              </div>
+            )}
+
+            {/* Prospect section */}
+            {!isLoading && rankedProspect.length > 0 && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 px-1">
+                  <span className="material-symbols-outlined text-on-surface-variant/60 text-lg">explore</span>
+                  <h2 className="font-headline text-sm font-black text-on-surface">
+                    {isCn ? '待申请 / 评估中' : 'Prospects'}
+                  </h2>
+                  <span className="text-[10px] font-bold text-on-surface-variant/50">{rankedProspect.length}</span>
+                </div>
+                <MotionStagger className="space-y-2" delay={0.1} stagger={0.06}>
+                  {rankedProspect.map((item) => (
+                    <MotionItem key={item.eval.id} role="surface">
+                      <RankedSchoolCard item={item} isCn={isCn} majors={majors} onAgentAnalyze={handleAgentAnalyze} weights={weights} />
+                    </MotionItem>
+                  ))}
+                </MotionStagger>
+              </div>
             )}
 
             {/* Causal DAG Section */}
@@ -1026,10 +1241,41 @@ export function DecisionsPanel({ studentId }: DecisionsPanelProps) {
               </MotionSection>
             )}
 
+            {/* Community Insights for top schools */}
+            {!isLoading && ranked.length > 0 && (
+              <MotionSection delay={0.14}>
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 px-1">
+                    <span className="material-symbols-outlined text-primary text-lg">forum</span>
+                    <h2 className="font-headline text-sm font-black text-on-surface">
+                      {isCn ? '社区深度洞察' : 'Community Insights'}
+                    </h2>
+                  </div>
+                  <p className="text-xs text-on-surface-variant/60 px-1">
+                    {isCn
+                      ? '来自 Reddit、小红书、知乎等社区的真实评价和争议分析。点击展开查看详情。'
+                      : 'Real reviews and controversy analysis from Reddit, Xiaohongshu, Zhihu, and more.'}
+                  </p>
+                  <div className="space-y-2">
+                    {ranked.slice(0, 10).map((item) => (
+                      <CommunityInsightRow
+                        key={item.eval.school_id}
+                        schoolId={item.eval.school_id}
+                        schoolName={item.eval.school?.name ?? ''}
+                        schoolNameCn={item.eval.school?.name_cn ?? undefined}
+                        rank={item.rank}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </MotionSection>
+            )}
+
             <div className="h-12" />
           </div>
         </div>
       </div>
+      )}
     </section>
     </AnimatedWorkspacePage>
   );

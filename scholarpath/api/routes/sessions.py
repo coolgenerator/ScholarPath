@@ -20,7 +20,7 @@ class SessionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    student_id: uuid.UUID
+    student_id: uuid.UUID | None = None
     session_id: str
     title: str
     preview: str | None = None
@@ -41,6 +41,18 @@ class SessionUpdate(BaseModel):
     preview: str | None = None
     message_count: int | None = None
     school_count: int | None = None
+
+
+@router.get("/recent", response_model=list[SessionResponse])
+async def list_recent_sessions(session: SessionDep) -> list:
+    """List all chat sessions (regardless of student), most recent first."""
+    stmt = (
+        select(ChatSession)
+        .order_by(ChatSession.last_active_at.desc())
+        .limit(50)
+    )
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
 
 
 @router.get("/student/{student_id}", response_model=list[SessionResponse])

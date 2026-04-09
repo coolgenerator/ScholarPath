@@ -19,6 +19,13 @@ function saveSet(key: string, set: Set<string>) {
 }
 
 interface AppContextValue {
+  // Auth
+  authToken: string | null;
+  userId: string | null;
+  isAuthenticated: boolean;
+  login: (token: string, userId: string, studentId: string | null) => void;
+  logout: () => void;
+  // Student / session
   studentId: string | null;
   setStudentId: (id: string | null) => void;
   sessionId: string;
@@ -47,6 +54,16 @@ const AppContext = createContext<AppContextValue | null>(null);
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
+
+  // ---- Auth state ----
+  const [authToken, setAuthTokenState] = useState<string | null>(() => {
+    return localStorage.getItem('sp_auth_token') || null;
+  });
+  const [userId, setUserIdState] = useState<string | null>(() => {
+    return localStorage.getItem('sp_user_id') || null;
+  });
+
+  const isAuthenticated = authToken !== null;
 
   // Extract sessionId and nav from URL: /s/:sessionId/:nav
   function parseUrl() {
@@ -119,13 +136,34 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     else localStorage.removeItem('sp_student_name');
   }, []);
 
+  const login = useCallback((token: string, uid: string, sid: string | null) => {
+    setAuthTokenState(token);
+    setUserIdState(uid);
+    localStorage.setItem('sp_auth_token', token);
+    localStorage.setItem('sp_user_id', uid);
+    if (sid) {
+      setStudentIdState(sid);
+      localStorage.setItem('sp_student_id', sid);
+    }
+  }, []);
+
+  const logout = useCallback(() => {
+    setAuthTokenState(null);
+    setUserIdState(null);
+    resetStudentIdentity();
+    localStorage.removeItem('sp_auth_token');
+    localStorage.removeItem('sp_user_id');
+    navigate('/login');
+  }, [navigate, resetStudentIdentity]);
+
   // Sync URL when sessionId or activeNav changes
   const setActiveNav = useCallback((nav: string) => {
     setActiveNavState(nav);
   }, []);
 
-  // Push URL on state changes
+  // Push URL on state changes — only when inside /s/ workspace routes
   useEffect(() => {
+    if (!location.pathname.startsWith('/s/') && !location.pathname.startsWith('/s')) return;
     const target = sessionId ? `/s/${sessionId}/${activeNav}` : `/s/new/${activeNav}`;
     if (location.pathname !== target) {
       navigate(target, { replace: true });
@@ -250,6 +288,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo(
     () => ({
+      authToken,
+      userId,
+      isAuthenticated,
+      login,
+      logout,
       studentId: resolvedStudentId,
       setStudentId,
       sessionId,
@@ -269,7 +312,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setLocale,
       t,
     }),
-    [resolvedStudentId, sessionId, setStudentId, setSessionId, clearSession, resolvedStudentName, activeNav, favoriteSchoolIds, blacklistedSchoolIds, toggleFavorite, toggleBlacklist, sidebarCollapsed, toggleSidebar, locale, setLocale, t],
+    [authToken, userId, isAuthenticated, login, logout, resolvedStudentId, sessionId, setStudentId, setSessionId, clearSession, resolvedStudentName, activeNav, favoriteSchoolIds, blacklistedSchoolIds, toggleFavorite, toggleBlacklist, sidebarCollapsed, toggleSidebar, locale, setLocale, t],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

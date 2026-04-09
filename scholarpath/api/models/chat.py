@@ -77,6 +77,7 @@ class ChatBlock(BaseModel):
         "offer_compare",
         "what_if",
         "guided_questions",
+        "disambiguation",
         "profile_snapshot",
         "profile_patch_proposal",
         "profile_patch_result",

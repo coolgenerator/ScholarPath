@@ -162,13 +162,12 @@ async def route_turn_http(
             base_memory = ChatMemory(redis)
             journal = base_memory.begin_turn_journal()
             try:
-                if student_id:
-                    await _ensure_chat_session(
-                        session,
-                        student_id=student_id,
-                        session_id=session_id,
-                        first_message=message,
-                    )
+                await _ensure_chat_session(
+                    session,
+                    student_id=student_id,
+                    session_id=session_id,
+                    first_message=message,
+                )
 
                 agent = ChatAgent(llm=llm, session=session, memory=journal)
 
@@ -374,13 +373,12 @@ async def chat_websocket(
                     base_memory = ChatMemory(redis_pool)
                     journal = base_memory.begin_turn_journal()
                     try:
-                        if student_id:
-                            await _ensure_chat_session(
-                                session,
-                                student_id=student_id,
-                                session_id=session_id,
-                                first_message=message.content,
-                            )
+                        await _ensure_chat_session(
+                            session,
+                            student_id=student_id,
+                            session_id=session_id,
+                            first_message=message.content,
+                        )
 
                         agent = ChatAgent(llm=llm, session=session, memory=journal)
 

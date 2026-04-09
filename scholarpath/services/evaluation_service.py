@@ -13,7 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from scholarpath.causal import AdmissionDAGBuilder, NoisyORPropagator
-from scholarpath.db.models import School, SchoolEvaluation, Student, Tier
+from scholarpath.db.models import CareerOutcomeProxy, School, SchoolEvaluation, Student, Tier
+from scholarpath.db.models.metro_area import MetroAreaProfile
 from scholarpath.exceptions import ScholarPathError
 from scholarpath.llm.client import LLMClient
 from scholarpath.llm.prompts import (
@@ -30,13 +31,16 @@ from scholarpath.services.student_service import get_student
 
 logger = logging.getLogger(__name__)
 
-# Weight vector for overall score computation.
-_DIMENSION_WEIGHTS: dict[str, float] = {
-    "academic_fit": 0.30,
-    "financial_fit": 0.25,
-    "career_fit": 0.25,
-    "life_fit": 0.20,
+# Weight vectors per degree level for overall score computation.
+_WEIGHTS_BY_DEGREE: dict[str, dict[str, float]] = {
+    "undergraduate": {"academic_fit": 0.30, "financial_fit": 0.25, "career_fit": 0.25, "life_fit": 0.20},
+    "masters":       {"academic_fit": 0.25, "financial_fit": 0.25, "career_fit": 0.30, "life_fit": 0.20},
+    "phd":           {"academic_fit": 0.20, "financial_fit": 0.15, "career_fit": 0.40, "life_fit": 0.25},
 }
+
+
+def _get_dimension_weights(degree_level: str) -> dict[str, float]:
+    return _WEIGHTS_BY_DEGREE.get(degree_level, _WEIGHTS_BY_DEGREE["undergraduate"])
 
 
 async def evaluate_school_fit(
@@ -74,22 +78,31 @@ async def evaluate_school_fit(
     school = await session.get(
         School,
         school_id,
-        options=[selectinload(School.programs)],
+        options=[selectinload(School.programs), selectinload(School.metro_area)],
     )
     if school is None:
         raise ScholarPathError(f"School {school_id} not found")
 
+    # Load career outcome proxies for this school
+    proxy_result = await session.execute(
+        select(CareerOutcomeProxy).where(CareerOutcomeProxy.school_id == school_id)
+    )
+    career_proxies = list(proxy_result.scalars().all())
+
     # --- Compute dimension scores ---
     academic = _compute_academic_fit(student, school)
     financial = _compute_financial_fit(student, school)
-    career = _compute_career_fit(student, school)
+    career, orientation_scores = _compute_career_fit(
+        student, school, school.metro_area, career_proxies,
+    )
     life = _compute_life_fit(student, school)
 
+    weights = _get_dimension_weights(getattr(student, "degree_level", "undergraduate"))
     overall = (
-        _DIMENSION_WEIGHTS["academic_fit"] * academic
-        + _DIMENSION_WEIGHTS["financial_fit"] * financial
-        + _DIMENSION_WEIGHTS["career_fit"] * career
-        + _DIMENSION_WEIGHTS["life_fit"] * life
+        weights["academic_fit"] * academic
+        + weights["financial_fit"] * financial
+        + weights["career_fit"] * career
+        + weights["life_fit"] * life
     )
 
     # --- Admission probability via causal DAG ---
@@ -142,13 +155,18 @@ async def evaluate_school_fit(
         admission_probability=round(admission_prob, 4),
         reasoning=reasoning,
         fit_details={
-            "weights": _DIMENSION_WEIGHTS,
+            "weights": weights,
             "raw_scores": {
                 "academic_fit": academic,
                 "financial_fit": financial,
                 "career_fit": career,
                 "life_fit": life,
             },
+            "orientation_scores": {
+                k: {"score": round(v.score, 4), "l1": round(v.layer1.value, 4), "l2": round(v.layer2.value, 4), "l3": round(v.layer3.value, 4)}
+                for k, v in orientation_scores.items()
+            },
+            "metro_signals": _extract_metro_signals(school.metro_area),
         },
     )
     session.add(evaluation)
@@ -185,13 +203,21 @@ async def get_tiered_list(
     )
     evaluations = list(result.scalars().all())
 
+    # Deduplicate: keep only the highest-scored evaluation per school
+    seen_schools: set[uuid.UUID] = set()
+    unique_evaluations: list[SchoolEvaluation] = []
+    for ev in evaluations:
+        if ev.school_id not in seen_schools:
+            seen_schools.add(ev.school_id)
+            unique_evaluations.append(ev)
+
     tiered: dict[str, list[SchoolEvaluation]] = {
         Tier.REACH.value: [],
         Tier.TARGET.value: [],
         Tier.SAFETY.value: [],
         Tier.LIKELY.value: [],
     }
-    for ev in evaluations:
+    for ev in unique_evaluations:
         bucket = tiered.get(ev.tier)
         if bucket is not None:
             bucket.append(ev)
@@ -327,24 +353,50 @@ def _compute_financial_fit(student: Student, school: School) -> float:
     return max(0.0, min(1.0, ratio * 0.6 + 0.1))
 
 
-def _compute_career_fit(student: Student, school: School) -> float:
-    """Score career fit (0-1): placeholder heuristic based on available data."""
-    score = 0.5
+def _compute_career_fit(
+    student: Student,
+    school: School,
+    metro: MetroAreaProfile | None,
+    proxies: list[CareerOutcomeProxy],
+) -> tuple[float, dict]:
+    """Score career fit (0-1) using the three-layer orientation scoring engine.
 
-    # Graduation rate is a proxy for outcomes
-    if school.graduation_rate_4yr:
-        score = 0.4 * score + 0.6 * school.graduation_rate_4yr
+    Returns (career_fit_score, orientation_scores_dict).
+    """
+    from scholarpath.services.career_orientation import (
+        CareerOrientation,
+        compute_all_orientations,
+    )
 
-    # Student-faculty ratio: lower is better
-    if school.student_faculty_ratio:
-        ratio_score = max(0.0, min(1.0, 1.0 - school.student_faculty_ratio / 30.0))
-        score = 0.7 * score + 0.3 * ratio_score
+    scorecard_earnings: int | None = None
+    if school.metadata_:
+        scorecard_earnings = school.metadata_.get("scorecard_earnings")
 
-    return score
+    orientation_results = compute_all_orientations(
+        school=school,
+        programs=list(school.programs) if school.programs else [],
+        metro=metro,
+        proxies=proxies,
+        scorecard_earnings=scorecard_earnings,
+    )
+
+    # If the student has a career_goal preference, weight it more heavily
+    prefs = get_student_canonical_preferences(student)
+    career_goal = prefs.get("career_goal")
+
+    if career_goal and career_goal in orientation_results:
+        primary = orientation_results[career_goal].score
+        others = [v.score for k, v in orientation_results.items() if k != career_goal]
+        others_avg = sum(others) / max(1, len(others))
+        score = 0.60 * primary + 0.40 * others_avg
+    else:
+        score = sum(v.score for v in orientation_results.values()) / max(1, len(orientation_results))
+
+    return max(0.0, min(1.0, score)), orientation_results
 
 
 def _compute_life_fit(student: Student, school: School) -> float:
-    """Score life fit (0-1): location, campus, community preferences."""
+    """Score life fit (0-1): location, campus, community, and metro signals."""
     score = 0.5
 
     prefs = get_student_canonical_preferences(student)
@@ -379,7 +431,41 @@ def _compute_life_fit(student: Student, school: School) -> float:
             score += 0.15
             break
 
+    # Metro area signals
+    metro = school.metro_area if hasattr(school, "metro_area") else None
+    if metro:
+        # Cost of living alignment with budget
+        if metro.cost_of_living_index and student.budget_usd:
+            col_score = max(0.0, min(1.0, 1.0 - (metro.cost_of_living_index - 80) / 80))
+            score = 0.75 * score + 0.25 * col_score
+
+        # Safety
+        if metro.safety_index:
+            score = 0.85 * score + 0.15 * metro.safety_index
+
+        # Cultural fit for international students
+        citizenship = getattr(student, "citizenship", None)
+        if citizenship and citizenship != "US" and metro.asian_population_pct:
+            cultural_score = min(1.0, metro.asian_population_pct / 15.0)
+            score = 0.85 * score + 0.15 * cultural_score
+
     return max(0.0, min(1.0, score))
+
+
+def _extract_metro_signals(metro: MetroAreaProfile | None) -> dict | None:
+    """Extract metro signals for fit_details JSON."""
+    if not metro:
+        return None
+    return {
+        "city": metro.city,
+        "state": metro.state,
+        "cost_of_living_index": metro.cost_of_living_index,
+        "safety_index": metro.safety_index,
+        "tech_employer_count": metro.tech_employer_count,
+        "asian_population_pct": metro.asian_population_pct,
+        "finance_hub_distance_km": metro.finance_hub_distance_km,
+        "nsf_funding_total": metro.nsf_funding_total,
+    }
 
 
 def _estimate_admission_probability(student: Student, school: School) -> float:

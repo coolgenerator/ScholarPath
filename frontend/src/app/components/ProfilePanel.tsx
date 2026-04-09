@@ -121,9 +121,16 @@ function ProfileMetric({
   );
 }
 
+const DEGREE_LEVEL_LABELS: Record<string, string> = {
+  undergraduate: '本科',
+  masters: '硕士',
+  phd: '博士',
+};
+
 function buildDraftFromPortfolio(portfolio: StudentPortfolioResponse): Record<string, any> {
   return {
     name: portfolio.identity.name,
+    degree_level: portfolio.identity.degree_level ?? 'undergraduate',
     gpa: String(portfolio.academics.gpa),
     gpa_scale: portfolio.academics.gpa_scale,
     sat_total: String(portfolio.academics.sat_total ?? ''),
@@ -138,6 +145,13 @@ function buildDraftFromPortfolio(portfolio: StudentPortfolioResponse): Record<st
     target_year: String(portfolio.identity.target_year),
     ed_preference: portfolio.strategy.ed_preference ?? '',
     need_financial_aid: portfolio.finance.need_financial_aid,
+    // Personal dimensions
+    career_goal: portfolio.preferences?.career_goal ?? '',
+    interests: portfolio.preferences?.interests ?? [],
+    location: portfolio.preferences?.location ?? [],
+    size: portfolio.preferences?.size ?? [],
+    culture: portfolio.preferences?.culture ?? [],
+    research_vs_teaching: portfolio.preferences?.research_vs_teaching ?? '',
   };
 }
 
@@ -175,11 +189,38 @@ export function ProfilePanel({ studentId }: ProfilePanelProps) {
     }
   }, [studentId, loadPortfolio]);
 
+  const emptyDraft: Record<string, any> = {
+    name: '',
+    degree_level: 'undergraduate',
+    gpa: '',
+    gpa_scale: '4.0',
+    sat_total: '',
+    act_composite: '',
+    toefl_total: '',
+    curriculum_type: 'AP',
+    intended_majors: [],
+    ap_courses: [],
+    extracurriculars: [],
+    awards: [],
+    budget_usd: '',
+    target_year: '2027',
+    ed_preference: '',
+    need_financial_aid: true,
+    career_goal: '',
+    interests: [],
+    location: [],
+    size: [],
+    culture: [],
+    research_vs_teaching: '',
+  };
+
   useEffect(() => {
     if (portfolio) {
       setDraft(buildDraftFromPortfolio(portfolio));
+    } else if (!studentId) {
+      setDraft(emptyDraft);
     }
-  }, [portfolio]);
+  }, [portfolio, studentId]);
 
   const handleSave = useCallback(async () => {
     if (!studentId) return;
@@ -188,6 +229,7 @@ export function ProfilePanel({ studentId }: ProfilePanelProps) {
       await portfolioApi.patch(studentId, {
         identity: {
           name: draft.name,
+          degree_level: draft.degree_level || 'undergraduate',
           target_year: Number(draft.target_year) || 2027,
         },
         academics: {
@@ -210,6 +252,14 @@ export function ProfilePanel({ studentId }: ProfilePanelProps) {
         },
         strategy: {
           ed_preference: draft.ed_preference || null,
+        },
+        preferences: {
+          career_goal: draft.career_goal || null,
+          interests: draft.interests?.length ? draft.interests : null,
+          location: draft.location?.length ? draft.location : null,
+          size: draft.size?.length ? draft.size : null,
+          culture: draft.culture?.length ? draft.culture : null,
+          research_vs_teaching: draft.research_vs_teaching || null,
         },
       });
       setStudentName(draft.name);
@@ -243,6 +293,7 @@ export function ProfilePanel({ studentId }: ProfilePanelProps) {
                 onClick={() => {
                   setEditMode(false);
                   if (portfolio) setDraft(buildDraftFromPortfolio(portfolio));
+                  else setDraft({...emptyDraft});
                 }}
                 className="px-4 py-2 text-on-surface-variant text-xs font-bold rounded-xl hover:bg-surface-container-high transition-colors"
               >
@@ -280,33 +331,8 @@ export function ProfilePanel({ studentId }: ProfilePanelProps) {
           </div>
         )}
 
-        {/* No portfolio */}
-        {!isLoading && !portfolio && (
-          <div className="flex flex-col items-center justify-center py-24 text-center">
-            <div className="w-20 h-20 rounded-3xl bg-surface-container-high/40 flex items-center justify-center mb-6">
-              <span className="material-symbols-outlined text-4xl text-on-surface-variant/50">person_off</span>
-            </div>
-            <h3 className="font-headline text-xl font-black text-on-surface mb-2">{t.prof_no_profile}</h3>
-            <p className="text-sm text-on-surface-variant/70 max-w-sm leading-relaxed">
-              {error
-                ? `${t.prof_load_failed}: ${error.message}`
-                : studentId
-                  ? t.prof_loading_profile
-                  : t.prof_no_profile_desc}
-            </p>
-            {studentId && (
-              <button
-                onClick={() => loadPortfolio(studentId)}
-                className="mt-4 px-4 py-2 bg-primary/5 text-primary text-xs font-bold rounded-xl border border-primary/15 hover:bg-primary/10 transition-colors"
-              >
-                {t.prof_retry}
-              </button>
-            )}
-          </div>
-        )}
-
         {/* Profile content */}
-        {!isLoading && portfolio && (
+        {!isLoading && (
           <MotionStagger className="space-y-6" delay={0.02} stagger={0.08}>
             <MotionItem role="section">
               <div className="workspace-hero overflow-hidden p-6 sm:p-7 lg:p-8">
@@ -326,10 +352,10 @@ export function ProfilePanel({ studentId }: ProfilePanelProps) {
                             onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
                           />
                         ) : (
-                          <h2 className="mt-2 font-headline text-3xl font-black tracking-tight text-on-surface">{portfolio.identity.name}</h2>
+                          <h2 className="mt-2 font-headline text-3xl font-black tracking-tight text-on-surface">{p('name') || t.prof_no_profile}</h2>
                         )}
                         <p className="mt-2 max-w-2xl text-sm leading-relaxed text-on-surface-variant/72">
-                          {portfolio.academics.curriculum_type} • {t.prof_target_short} {portfolio.identity.target_year} • {portfolio.finance.need_financial_aid ? t.prof_need_aid : t.prof_no_aid}
+                          {DEGREE_LEVEL_LABELS[p('degree_level')] ?? '本科'} • {p('curriculum_type')} • {t.prof_target_short} {p('target_year')} • {draft.need_financial_aid ? t.prof_need_aid : t.prof_no_aid}
                         </p>
                         <div className="mt-3 flex flex-wrap gap-2">
                           <span className="dashboard-inline-chip">
@@ -344,7 +370,7 @@ export function ProfilePanel({ studentId }: ProfilePanelProps) {
                             <span className="material-symbols-outlined text-sm text-on-surface-variant">savings</span>
                             {summaryBudget}
                           </span>
-                          {portfolio.completion.profile_completed && (
+                          {portfolio?.completion.profile_completed && (
                             <span className="dashboard-inline-chip border-tertiary/15 bg-tertiary/8 text-tertiary">
                               <span className="material-symbols-outlined text-sm" style={{ fontVariationSettings: "'FILL' 1" }}>verified</span>
                               {t.common_overall} {completionPct}%
@@ -354,7 +380,25 @@ export function ProfilePanel({ studentId }: ProfilePanelProps) {
                       </div>
                     </div>
 
-                    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+                      {editMode ? (
+                        <div>
+                          <DashboardFieldLabel className="text-[9px]">申请阶段</DashboardFieldLabel>
+                          <DashboardSegmentedGroup
+                            type="single"
+                            value={p('degree_level') || 'undergraduate'}
+                            onValueChange={(v) => v && setDraft((d) => ({ ...d, degree_level: v }))}
+                            className="grid grid-cols-3 gap-1 mt-1"
+                            size="compact"
+                          >
+                            <DashboardSegmentedItem value="undergraduate" className="justify-center text-[10px]">本科</DashboardSegmentedItem>
+                            <DashboardSegmentedItem value="masters" className="justify-center text-[10px]">硕士</DashboardSegmentedItem>
+                            <DashboardSegmentedItem value="phd" className="justify-center text-[10px]">博士</DashboardSegmentedItem>
+                          </DashboardSegmentedGroup>
+                        </div>
+                      ) : (
+                        <Field label="申请阶段" value={DEGREE_LEVEL_LABELS[p('degree_level')] ?? '本科'} editMode={false} />
+                      )}
                       <Field label={t.prof_gpa} value={p('gpa')} editMode={editMode} type="number" onChange={(v) => setDraft((d) => ({ ...d, gpa: v }))} />
                       <Field label={t.prof_gpa_scale} value={p('gpa_scale')} editMode={editMode} onChange={(v) => setDraft((d) => ({ ...d, gpa_scale: v }))} />
                       <Field label={t.prof_target_year} value={p('target_year')} editMode={editMode} type="number" onChange={(v) => setDraft((d) => ({ ...d, target_year: v }))} />
@@ -365,7 +409,7 @@ export function ProfilePanel({ studentId }: ProfilePanelProps) {
                   <div className="grid gap-3 sm:grid-cols-2">
                     <ProfileMetric label={t.prof_test_scores} value={summaryTests} />
                     <ProfileMetric label={t.prof_budget} value={summaryBudget} accent="text-tertiary" />
-                    <ProfileMetric label={t.prof_strategy} value={(portfolio.strategy.ed_preference || 'RD').toUpperCase()} accent="text-on-surface" />
+                    <ProfileMetric label={t.prof_strategy} value={(draft.ed_preference || portfolio?.strategy.ed_preference || 'RD').toUpperCase()} accent="text-on-surface" />
                     <ProfileMetric label={t.common_overall} value={`${completionPct}%`} accent="text-primary" />
                   </div>
                 </div>
@@ -386,7 +430,7 @@ export function ProfilePanel({ studentId }: ProfilePanelProps) {
                   {editMode ? (
                     <DashboardInput type="number" variant="metric" value={p('sat_total')} onChange={(e) => setDraft((d) => ({ ...d, sat_total: e.target.value }))} />
                   ) : (
-                    <div className="text-2xl font-black text-on-surface">{portfolio.academics.sat_total ?? '\u2014'}</div>
+                    <div className="text-2xl font-black text-on-surface">{p('sat_total') || '\u2014'}</div>
                   )}
                 </div>
                 <div className="text-center p-4 bg-surface-container-low/40 rounded-2xl border border-outline-variant/5">
@@ -394,7 +438,7 @@ export function ProfilePanel({ studentId }: ProfilePanelProps) {
                   {editMode ? (
                     <DashboardInput type="number" variant="metric" value={p('act_composite')} onChange={(e) => setDraft((d) => ({ ...d, act_composite: e.target.value }))} />
                   ) : (
-                    <div className="text-2xl font-black text-on-surface">{portfolio.academics.act_composite ?? '\u2014'}</div>
+                    <div className="text-2xl font-black text-on-surface">{p('act_composite') || '\u2014'}</div>
                   )}
                 </div>
                 <div className="text-center p-4 bg-surface-container-low/40 rounded-2xl border border-outline-variant/5">
@@ -402,7 +446,7 @@ export function ProfilePanel({ studentId }: ProfilePanelProps) {
                   {editMode ? (
                     <DashboardInput type="number" variant="metric" value={p('toefl_total')} onChange={(e) => setDraft((d) => ({ ...d, toefl_total: e.target.value }))} />
                   ) : (
-                    <div className="text-2xl font-black text-on-surface">{portfolio.academics.toefl_total ?? '\u2014'}</div>
+                    <div className="text-2xl font-black text-on-surface">{p('toefl_total') || '\u2014'}</div>
                   )}
                 </div>
               </div>
@@ -467,7 +511,7 @@ export function ProfilePanel({ studentId }: ProfilePanelProps) {
                       ))}
                     </DashboardSegmentedGroup>
                   ) : (
-                    <div className="text-sm font-bold text-on-surface py-2">{portfolio.finance.need_financial_aid ? t.common_yes : t.common_no}</div>
+                    <div className="text-sm font-bold text-on-surface py-2">{draft.need_financial_aid ? t.common_yes : t.common_no}</div>
                   )}
                 </div>
               </div>
@@ -505,8 +549,71 @@ export function ProfilePanel({ studentId }: ProfilePanelProps) {
                     ))}
                   </DashboardSegmentedGroup>
                 ) : (
-                  <div className="text-sm font-bold text-on-surface py-2 uppercase">{portfolio.strategy.ed_preference || t.prof_not_set}</div>
+                  <div className="text-sm font-bold text-on-surface py-2 uppercase">{draft.ed_preference || t.prof_not_set}</div>
                 )}
+              </div>
+              </MotionSurface>
+            </MotionItem>
+
+            {/* Career & Aspirations */}
+            <MotionItem role="section">
+              <MotionSurface className="p-6 sm:p-7">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+                  <span className="material-symbols-outlined text-primary text-xl">rocket_launch</span>
+                </div>
+                <h3 className="font-headline text-base font-black text-on-surface">职业目标与梦想</h3>
+              </div>
+              <div className="space-y-5">
+                <div>
+                  <DashboardFieldLabel className="text-[9px]">职业方向</DashboardFieldLabel>
+                  {editMode ? (
+                    <DashboardInput
+                      value={draft.career_goal ?? ''}
+                      onChange={(e) => setDraft((d) => ({ ...d, career_goal: e.target.value }))}
+                      placeholder="例如：成为 AI 研究员、进入投行、创业..."
+                    />
+                  ) : (
+                    <div className="text-sm font-bold text-on-surface py-2">{draft.career_goal || '\u2014'}</div>
+                  )}
+                </div>
+                <div>
+                  <DashboardFieldLabel className="text-[9px]">学术偏好</DashboardFieldLabel>
+                  {editMode ? (
+                    <DashboardSegmentedGroup
+                      type="single"
+                      value={draft.research_vs_teaching || ''}
+                      onValueChange={(v) => v && setDraft((d) => ({ ...d, research_vs_teaching: v }))}
+                      className="pt-1"
+                    >
+                      <DashboardSegmentedItem value="research" accent="primary" className="min-w-[5rem] justify-center">偏研究型</DashboardSegmentedItem>
+                      <DashboardSegmentedItem value="teaching" accent="primary" className="min-w-[5rem] justify-center">偏教学型</DashboardSegmentedItem>
+                      <DashboardSegmentedItem value="balanced" accent="primary" className="min-w-[5rem] justify-center">均衡</DashboardSegmentedItem>
+                    </DashboardSegmentedGroup>
+                  ) : (
+                    <div className="text-sm font-bold text-on-surface py-2">
+                      {{ research: '偏研究型', teaching: '偏教学型', balanced: '均衡' }[draft.research_vs_teaching as string] || '\u2014'}
+                    </div>
+                  )}
+                </div>
+              </div>
+              </MotionSurface>
+            </MotionItem>
+
+            {/* Personal Interests & Life Preferences */}
+            <MotionItem role="section">
+              <MotionSurface className="p-6 sm:p-7">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-10 h-10 rounded-xl bg-tertiary/10 flex items-center justify-center">
+                  <span className="material-symbols-outlined text-tertiary text-xl">self_improvement</span>
+                </div>
+                <h3 className="font-headline text-base font-black text-on-surface">生活偏好与兴趣</h3>
+              </div>
+              <div className="space-y-5">
+                <TagList label="个人兴趣" items={draft.interests ?? []} editMode={editMode} placeholder="如：篮球、摄影、编程..." onChange={(v) => setDraft((d) => ({ ...d, interests: v }))} />
+                <TagList label="理想地区" items={draft.location ?? []} editMode={editMode} placeholder="如：加州、东海岸..." onChange={(v) => setDraft((d) => ({ ...d, location: v }))} />
+                <TagList label="校园规模偏好" items={draft.size ?? []} editMode={editMode} placeholder="如：小型、中型、大型" onChange={(v) => setDraft((d) => ({ ...d, size: v }))} />
+                <TagList label="校园文化" items={draft.culture ?? []} editMode={editMode} placeholder="如：多元化、学术氛围浓、社交活跃..." onChange={(v) => setDraft((d) => ({ ...d, culture: v }))} />
               </div>
               </MotionSurface>
             </MotionItem>

@@ -38,13 +38,11 @@ export function HistoryPanel() {
   });
 
   useEffect(() => {
-    if (!studentId) {
-      setIsLoading(false);
-      return;
-    }
     setIsLoading(true);
-    sessionsApi
-      .list(studentId)
+    const fetcher = studentId
+      ? sessionsApi.list(studentId)
+      : sessionsApi.listRecent();
+    fetcher
       .then((data) => setSessions(data))
       .catch(() => {})
       .finally(() => setIsLoading(false));

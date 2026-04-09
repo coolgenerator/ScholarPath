@@ -14,6 +14,7 @@ class OfferCreate(BaseModel):
 
     school_id: uuid.UUID
     status: str = Field(..., examples=["admitted", "waitlisted", "denied", "deferred"])
+    program: str | None = Field(None, max_length=200, examples=["Computer Science", "Economics"])
 
     # Cost of Attendance (user-reported)
     tuition: int | None = None
@@ -38,6 +39,7 @@ class OfferUpdate(BaseModel):
     """Schema for updating an existing offer. All fields optional."""
 
     status: str | None = None
+    program: str | None = Field(None, max_length=200)
 
     tuition: int | None = None
     room_and_board: int | None = None
@@ -68,6 +70,7 @@ class OfferResponse(BaseModel):
     school_name: str | None = None
 
     status: str
+    program: str | None = None
 
     # Cost of Attendance
     tuition: int | None = None

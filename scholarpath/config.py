@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     LLM_MODES_JSON: str = ""
     LLM_ACTIVE_MODE: str = ""
 
+    # College Scorecard API (US Dept of Education)
+    COLLEGE_SCORECARD_API_KEY: str = ""
+
     # Rate limiting
     LLM_RATE_LIMIT_RPM: int = 100  # max requests per minute
     LLM_REQUEST_TIMEOUT_SECONDS: float = 4.5  # per-request timeout to unblock failover within capability budget
@@ -95,6 +98,12 @@ class Settings(BaseSettings):
     GOOGLE_API_KEY: str = ""
     EMBEDDING_MODEL: str = "gemini-embedding-001"
     EMBEDDING_DIMENSION: int = 3072  # gemini-embedding-001 outputs 3072-dim vectors
+
+    # Auth
+    AUTH_SECRET_KEY: str = "change-me-in-production"
+    AUTH_TOKEN_EXPIRE_HOURS: int = 24
+    AUTH_OTP_TTL_SECONDS: int = 600
+    AUTH_OTP_MAX_ATTEMPTS: int = 5
 
     # CORS
     CORS_ORIGINS: str = '["http://localhost:5173"]'

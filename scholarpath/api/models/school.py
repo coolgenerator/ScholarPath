@@ -39,6 +39,8 @@ class SchoolResponse(BaseModel):
     size_category: str
 
     us_news_rank: int | None = None
+    qs_world_rank: int | None = None
+    forbes_rank: int | None = None
     acceptance_rate: float | None = None
 
     sat_25: int | None = None

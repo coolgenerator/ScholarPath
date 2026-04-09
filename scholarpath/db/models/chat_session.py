@@ -17,7 +17,7 @@ class ChatSession(UUIDPrimaryKey, Base):
 
     __tablename__ = "chat_sessions"
 
-    student_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("students.id"))
+    student_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("students.id"), nullable=True)
     session_id: Mapped[str] = mapped_column(String(100), unique=True, index=True)
 
     title: Mapped[str] = mapped_column(String(300), default="New Session")

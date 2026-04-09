@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 
 from fastapi import APIRouter, HTTPException, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 
 from scholarpath.api.deps import AppLLMDep, SessionDep
+from scholarpath.api.models.comparison import (
+    CompareReportRequest,
+    CompareReportResponse,
+)
 from scholarpath.api.models.evaluation import (
     EvaluationResponse,
     TieredSchoolList,
@@ -15,6 +21,10 @@ from scholarpath.api.models.evaluation import (
 from scholarpath.db.models.evaluation import SchoolEvaluation
 from scholarpath.db.models.school import School
 from scholarpath.db.models.student import Student
+from scholarpath.services.comparison_service import (
+    generate_comparison_report,
+    generate_comparison_report_stream,
+)
 from scholarpath.services.evaluation_service import (
     evaluate_school_fit as evaluate_school_fit_service,
     get_tiered_list as get_tiered_list_service,
@@ -103,4 +113,61 @@ async def get_tiered_list(
         target=tiered.get("target", []),
         safety=tiered.get("safety", []),
         likely=tiered.get("likely", []),
+    )
+
+
+@router.post(
+    "/students/{student_id}/compare-report",
+    response_model=CompareReportResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def compare_report(
+    student_id: uuid.UUID,
+    body: CompareReportRequest,
+    llm: AppLLMDep,
+    session: SessionDep,
+) -> CompareReportResponse:
+    """Generate a multi-school comparison report with orientation scores and causal graphs."""
+    await _require_student(session, student_id)
+    return await generate_comparison_report(
+        session=session,
+        llm=llm,
+        student_id=student_id,
+        school_ids=body.school_ids,
+        orientations=body.orientations,
+    )
+
+
+@router.post(
+    "/students/{student_id}/compare-report/stream",
+    status_code=status.HTTP_200_OK,
+)
+async def compare_report_stream(
+    student_id: uuid.UUID,
+    body: CompareReportRequest,
+    llm: AppLLMDep,
+    session: SessionDep,
+) -> StreamingResponse:
+    """Streaming comparison report — yields NDJSON lines progressively.
+
+    Each line is a JSON object with ``event`` and ``data`` fields:
+    - ``{"event": "orientation", "data": {...}}`` for each completed orientation
+    - ``{"event": "recommendation", "data": {...}}`` at the end
+    - ``{"event": "error", "data": {"message": "..."}}`` on failure
+    """
+    await _require_student(session, student_id)
+
+    async def _stream():
+        async for chunk in generate_comparison_report_stream(
+            session=session,
+            llm=llm,
+            student_id=student_id,
+            school_ids=body.school_ids,
+            orientations=body.orientations,
+        ):
+            yield json.dumps(chunk, ensure_ascii=False, default=str) + "\n"
+
+    return StreamingResponse(
+        _stream(),
+        media_type="application/x-ndjson",
     )

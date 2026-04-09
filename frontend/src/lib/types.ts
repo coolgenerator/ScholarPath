@@ -22,6 +22,8 @@ export interface SchoolResponse {
   school_type: string;
   size_category: string;
   us_news_rank?: number | null;
+  qs_world_rank?: number | null;
+  forbes_rank?: number | null;
   acceptance_rate?: number | null;
   sat_25?: number | null;
   sat_75?: number | null;
@@ -47,21 +49,24 @@ export interface SchoolListResponse {
 
 export interface StudentCreate {
   name: string;
-  gpa: number;
-  gpa_scale: string;
+  gpa?: number | null;
+  gpa_scale?: string | null;
   sat_total?: number | null;
   act_composite?: number | null;
   toefl_total?: number | null;
-  curriculum_type: string;
+  curriculum_type?: string | null;
   ap_courses?: string[] | null;
   extracurriculars?: unknown[] | Record<string, unknown> | null;
   awards?: unknown[] | Record<string, unknown> | null;
   intended_majors: string[];
+  citizenship?: string | null;
+  residency_state?: string | null;
   budget_usd?: number | null;
   need_financial_aid?: boolean | null;
   preferences?: Record<string, unknown> | null;
+  degree_level?: string | null;
   ed_preference?: string | null;
-  target_year: number;
+  target_year?: number | null;
 }
 
 export interface StudentUpdate {
@@ -79,6 +84,7 @@ export interface StudentUpdate {
   budget_usd?: number | null;
   need_financial_aid?: boolean | null;
   preferences?: Record<string, unknown> | null;
+  degree_level?: string | null;
   ed_preference?: string | null;
   target_year?: number | null;
 }
@@ -100,6 +106,7 @@ export interface StudentResponse {
   budget_usd: number;
   need_financial_aid: boolean;
   preferences?: Record<string, unknown> | null;
+  degree_level: string;
   ed_preference?: string | null;
   target_year: number;
   profile_completed: boolean;
@@ -107,6 +114,7 @@ export interface StudentResponse {
 
 export interface PortfolioIdentity {
   name: string;
+  degree_level: string;
   target_year: number;
 }
 
@@ -147,6 +155,8 @@ export interface PortfolioPreferences {
   target_schools?: string[] | null;
   financial_aid_type?: string | null;
   ui_preference_tags?: string[] | null;
+  application_level?: string | null;    // undergrad / graduate
+  application_stage?: string | null;    // researching / applying / admitted
 }
 
 export interface PortfolioCompletion {
@@ -206,6 +216,7 @@ export interface EvaluationWithSchool extends EvaluationResponse {
 export interface OfferCreate {
   school_id: UUID;
   status: string;
+  program?: string | null;
   tuition?: number | null;
   room_and_board?: number | null;
   books_supplies?: number | null;
@@ -223,6 +234,7 @@ export interface OfferCreate {
 
 export interface OfferUpdate {
   status?: string | null;
+  program?: string | null;
   tuition?: number | null;
   room_and_board?: number | null;
   books_supplies?: number | null;
@@ -245,6 +257,7 @@ export interface OfferResponse {
   school_id: UUID;
   school_name?: string | null;
   status: string;
+  program?: string | null;
   tuition?: number | null;
   room_and_board?: number | null;
   books_supplies?: number | null;
@@ -380,6 +393,7 @@ export interface ChatBlockWire {
     | 'offer_compare'
     | 'what_if'
     | 'guided_questions'
+    | 'disambiguation'
     | 'profile_snapshot'
     | 'profile_patch_proposal'
     | 'profile_patch_result'
@@ -642,14 +656,136 @@ export interface WhatIfViewModel {
   suggestions: string[];
 }
 
+export interface CommunityDimension {
+  label_cn: string;
+  score: number;
+  summary: string;
+  key_quotes: string[];
+}
+
+export interface CommunityReportResponse {
+  school_id: UUID;
+  review_count: number;
+  overall_score: number | null;
+  overall_summary: string | null;
+  dimensions: Record<string, CommunityDimension>;
+  generated_at: string;
+}
+
+// Claims graph types
+export interface ClaimEvidence {
+  quote: string;
+  url?: string;
+}
+
+export interface ClaimItem {
+  id: string;
+  text: string;
+  text_cn: string;
+  topic: 'academic' | 'campus_life' | 'career' | 'financial' | 'vibe';
+  sentiment: 'positive' | 'negative' | 'neutral';
+  strength: number;
+  source_count: number;
+  evidence: ClaimEvidence[] | string[];
+}
+
+export interface Controversy {
+  claim_a: string;
+  claim_b: string;
+  aspect: string;
+  severity: 'low' | 'medium' | 'high';
+  analysis: string;
+  analysis_en: string;
+}
+
+export interface ClaimsGraphResponse {
+  school_id: UUID;
+  claims: ClaimItem[];
+  graph: {
+    elements: {
+      nodes: Array<{ data: Record<string, any> }>;
+      edges: Array<{ data: Record<string, any> }>;
+    };
+    metadata: Record<string, any>;
+  };
+  controversies: Controversy[];
+  generated_at: string | null;
+  model_version: string;
+}
+
+export interface DisambiguationData {
+  field: string;
+  original_value: string;
+  title: string;
+  options: Array<{ label: string; value: string }>;
+}
+
 export type RichMessageBlock =
   | { type: 'answerSynthesis'; data: AnswerSynthesisPayload }
   | { type: 'recommendation'; data: RecommendationData }
   | { type: 'offerCompare'; data: OfferCompareViewModel }
   | { type: 'whatIf'; data: WhatIfViewModel }
   | { type: 'guidedQuestions'; data: GuidedQuestion[] }
+  | { type: 'disambiguation'; data: DisambiguationData }
   | { type: 'profileSnapshot'; data: ProfileSnapshotPayload }
   | { type: 'profilePatchProposal'; data: ProfilePatchProposalPayload }
   | { type: 'profilePatchResult'; data: ProfilePatchResultPayload }
   | { type: 'text'; data: { text: string } }
   | { type: 'error'; data: { message: string } };
+
+// ── Multi-School Comparison Report ──────────────────────────────────────
+
+export interface OrientationLayerDetail {
+  value: number;
+  confidence: number;
+  signals: Record<string, unknown>;
+}
+
+export interface SchoolOrientationScore {
+  school_id: UUID;
+  school_name: string;
+  score: number;
+  l1: OrientationLayerDetail;
+  l2: OrientationLayerDetail;
+  l3: OrientationLayerDetail;
+}
+
+export interface OrientationComparison {
+  orientation: string;
+  schools: SchoolOrientationScore[];
+  narrative: string;
+}
+
+export interface CausalFactorNode {
+  id: string;
+  label: string;
+  layer: string;
+  values: Record<string, number>;
+}
+
+export interface CausalFactorEdge {
+  source: string;
+  target: string;
+  strength: number;
+  mechanism: string;
+}
+
+export interface OrientationCausalGraph {
+  orientation: string;
+  nodes: CausalFactorNode[];
+  edges: CausalFactorEdge[];
+}
+
+export interface CompareReportRequest {
+  school_ids: string[];
+  orientations?: string[];
+}
+
+export interface CompareReportResponse {
+  student_id: UUID;
+  school_ids: UUID[];
+  orientations: OrientationComparison[];
+  causal_graphs: OrientationCausalGraph[];
+  recommendation: string;
+  confidence: number;
+}
